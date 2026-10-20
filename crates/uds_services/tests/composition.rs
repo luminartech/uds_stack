@@ -335,10 +335,9 @@ uds_server! {
 
 const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
-/// The construction that matters: a multi-kilobyte server in a `static`, built in place
-/// with no stack temporary. This is what `Storage::EMPTY` being an associated const buys.
-/// The cell is what makes it steppable: it hands out the one `&'static mut` that
-/// `Server::step` needs, where a plain `static` would be read-only.
+/// A multi-kilobyte server in a `static`, built in place with no stack temporary. The
+/// cell hands out the one `&'static mut` that `Server::step` needs, where a plain
+/// `static` would be read-only.
 static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
     Ecu::new(),
     FakeTransport,
@@ -346,18 +345,9 @@ static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
     PARAMS,
 ));
 
-/// The in-flight buffer is dominated by `TransferData` — the same constant the server
-/// must advertise as `maxNumberOfBlockLength`. The response buffer is dominated by a
-/// four-identifier read, because this server is download-only and never sends a block.
-///
-/// `ReadDTCInformation` is the other contender and loses: this server declares
-/// [`DtcReportKind::SeverityList`], whose six-byte records make it the widest of the two
-/// layouts it answers, for `3 + 10 * 6 = 63` against the read's 77. Under the
-/// `DTC_RECORD_LEN` this replaced, the obvious declaration of `4` would have folded in
-/// `3 + 10 * 4 = 43` and left a severity report twenty bytes short of its own buffer.
-///
-/// **If these fail, the macro's bound arms are wrong, not these numbers.** Read a failure
-/// as the design being wrong about a bound.
+/// The in-flight buffer is `TransferData`'s, the constant the server advertises as
+/// `maxNumberOfBlockLength`. The response buffer is a four-identifier read's, 77 bytes,
+/// against `ReadDTCInformation`'s 63 for ten [`DtcReportKind::SeverityList`] records.
 #[test]
 fn the_buffers_are_derived_from_the_declared_maxima() {
     let mut store = <<EcuServices as ServiceSet>::Store as Storage>::EMPTY;
@@ -373,7 +363,7 @@ fn the_buffers_are_derived_from_the_declared_maxima() {
     );
 }
 
-/// ``UDSSVC_ARCH_0006`` — `serviceNotSupported` is decided from the assembly list.
+/// ``UDSSVC_ARCH_0006``: `serviceNotSupported` is decided from the assembly list.
 #[test]
 fn the_assembled_list_answers_service_supported() {
     assert!(EcuServices::supports(UdsServiceType::ReadDataByIdentifier));
@@ -393,7 +383,7 @@ fn the_assembled_list_answers_service_supported() {
     )));
 }
 
-/// ``UDSSVC_ARCH_0033`` — Annex A permission is per service and declared.
+/// ``UDSSVC_ARCH_0033``: Annex A permission is per service and declared.
 #[test]
 fn response_pending_permission_follows_the_declaration() {
     assert!(EcuServices::may_respond_pending(
@@ -405,23 +395,16 @@ fn response_pending_permission_follows_the_declaration() {
     assert!(!EcuServices::may_respond_pending(
         UdsServiceType::WriteDataByIdentifier
     ));
-    // 0x3E is false because the trait carries no constant to declare otherwise, not
-    // because this server declared it so. Nothing an application writes can flip it.
+    // 0x3E is false because the trait carries no constant to declare otherwise.
     assert!(!EcuServices::may_respond_pending(
         UdsServiceType::TesterPresent
     ));
 }
 
 /// The one message clause 8.7.6 admits mid-service is a **functionally addressed**
-/// suppressed `TesterPresent`, `3E 80` exactly. The same bytes physically addressed are
-/// not admitted, which is the distinction the classifier could not draw while its only
-/// argument was the request.
-///
-/// The 0x01 assertion covers the clause's other exception, a request in 0x00-0x0F. No
-/// server `uds_server!` can assemble reaches it — the lowest SID in `__uds_sids!` is
-/// 0x10, because that range is OBD territory and `uds_protocol` does not model it — so
-/// what this pins is that such a request is ordinary occupancy here, owing
-/// busyRepeatRequest like any other.
+/// suppressed `TesterPresent`, `3E 80` exactly; the same bytes physically addressed are
+/// not admitted. A request in 0x00-0x0F, the clause's other exception, is ordinary
+/// occupancy here: no server `uds_server!` assembles has a service in that range.
 #[test]
 fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
     fn ai(ta_type: TaType) -> Ai {
@@ -461,13 +444,9 @@ fn the_server_in_a_static_can_be_stepped() {
     );
 }
 
-/// The handler seam speaks `uds_protocol`'s vocabulary, so a sub-function is a named
-/// value rather than a byte. The two `CommunicationControl` sub-function bytes were the
-/// hazard this retyping removes: as `u8`s they sat adjacent in the signature and swapping
-/// them compiled, and as unrelated enums the swap is a type error.
-///
-/// `ReadDtcInformation` is the other half of the change: its report type carries its own
-/// parameters, so the handler no longer receives — or has to parse — a `&[u8]` beside it.
+/// The handler seam speaks `uds_protocol`'s vocabulary: `CommunicationControl`'s
+/// sub-functions are unrelated enums, so swapping them is a type error, and
+/// `ReadDtcInformation`'s report type carries its own parameters.
 #[test]
 fn the_handler_seam_is_typed_not_byte_shaped() {
     fn poll_once<F: Future>(mut f: core::pin::Pin<&mut F>) -> Option<F::Output> {
@@ -489,7 +468,7 @@ fn the_handler_seam_is_typed_not_byte_shaped() {
     )));
     assert_eq!(denied, Some(Err(Nrc::ConditionsNotCorrect)));
 
-    // `SubnetNumber` distinguishes these two, where the old `Option<u16>` could not.
+    // `SubnetNumber` distinguishes these two.
     assert_ne!(SubnetNumber::ReceivedOn, SubnetNumber::AllConnectedNetworks);
 
     let mut buffer = [0_u8; 8];
@@ -544,7 +523,7 @@ static TESTER: Tester = Tester::new(
 /// the server folded in for `ReadDataByIdentifier`.
 ///
 /// **If these disagree, one side of the vocabulary moved without the other.** That is the
-/// compile error one identifier catalogue serving both roles exists to produce.
+/// compile error one identifier catalog serving both roles exists to produce.
 #[test]
 fn the_client_buffers_are_derived_from_the_same_declaration() {
     let mut store = <<TesterVocabulary as ClientSet>::Store as ClientStorage>::EMPTY;
@@ -594,7 +573,7 @@ async fn read_the_vin(tester: &mut Tester) -> Result<&'static str, ClientError<(
                 let _ = error;
                 "unreadable"
             }
-            _ => "unrecognised",
+            _ => "unrecognized",
         },
     )
 }

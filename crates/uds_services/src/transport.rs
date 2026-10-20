@@ -1,56 +1,52 @@
 //! The seam below this crate.
 //!
-//! ``UDSSVC_ARCH_0029`` — this crate calls out to a transport, so this crate declares
-//! what it calls. The trait is a transport's whole obligation to the stack: carry bytes
-//! both ways, say what the peer will accept, say what timing it dictates, and tell the
-//! time. It carries no notion of a service, a data identifier or a negative response
-//! code, and nothing in it is `DoIP`-shaped, which is the test of whether it is the
-//! right seam. It serves both roles.
+//! ``UDSSVC_ARCH_0029``: this crate calls out to a transport, so this crate declares
+//! what it calls. The trait is a transport's whole obligation to the stack, for both
+//! roles: carry bytes both ways, say what the peer will accept, say what timing it
+//! dictates, and tell the time. It carries no notion of a service, a data identifier or
+//! a negative response code, and nothing in it is `DoIP`-shaped.
 
 pub use uds_session::{Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp};
 
 /// What the transport reports, or that the driver's deadline passed first.
 ///
-/// **The lifetime is the driver's buffer, never the transport.** A message arrives as the
-/// subslice of the supplied buffer that it occupies, so the borrow ends when the buffer's
-/// does — which is what lets the driver call [`UdsTransport::t_data_req`] while the
-/// request bytes that provoked the response are still live. Reporting a length instead
-/// would put that tie in prose: the driver would have to re-slice its own buffer and
-/// defend against a length larger than what it lent.
+/// A message arrives as the subslice of the supplied buffer that it occupies, so the
+/// borrow is the buffer's, not the transport's, and the driver calls
+/// [`UdsTransport::t_data_req`] while the request bytes that provoked the response are
+/// still live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TransportEvent<'b> {
     /// A complete inbound message.
     DataInd {
-        /// Addressing, with the peer's `S_AI[SA]` — the only way to tell functional
-        /// responses apart.
+        /// Addressing, with the peer's `S_AI[SA]`, which tells functional responses
+        /// apart.
         ai: Ai,
         /// The message, in the buffer the driver supplied.
         data: &'b [u8],
     },
     /// A message longer than the supplied buffer, truncated to what fit.
     ///
-    /// A variant rather than a flag on [`Self::DataInd`], because destructuring
-    /// `DataInd { ai, data, .. }` is idiomatic and would silently discard a flag,
-    /// leaving a fragment decoded as a message. Reached when the driver is serving a
-    /// request and offers only the small concurrent buffer, where by clause 8.7.6 the
-    /// server is occupied and owes `busyRepeatRequest` (0x21) — a decision needing only
-    /// the service identifier and the addressing.
+    /// A variant rather than a flag on [`Self::DataInd`], so that destructuring
+    /// `DataInd { ai, data, .. }` cannot decode a fragment as a message. The normal
+    /// outcome while the driver is serving a request and offers only the small
+    /// concurrent buffer: by clause 8.7.6 the server is occupied and owes
+    /// `busyRepeatRequest` (0x21), decided from the service identifier and the
+    /// addressing alone.
     DataTooLong {
         /// Addressing.
         ai: Ai,
         /// What fit.
         data: &'b [u8],
-        /// How long the message actually was, where the transport knows. `DoIP` reads
-        /// it from the generic header before the payload, so it is free there; a
-        /// transport that cannot know without reading the whole message reports `None`
-        /// rather than inventing one.
+        /// How long the message was, where the transport knows (`DoIP` reads it from the
+        /// generic header); `None` where it cannot know without reading the whole
+        /// message.
         declared: Option<usize>,
     },
     /// The outcome of a requested transmission.
     ///
-    /// Raised from the acknowledgement rather than from the socket write returning,
-    /// because the acknowledgement is what starts `tP_Client`
+    /// Raised from the acknowledgment rather than from the socket write returning,
+    /// because the acknowledgment is what starts `tP_Client`
     /// (ISO 14229-2:2021 REQ 5.9).
     DataConf {
         /// The addressing of the transmission being confirmed.
@@ -58,17 +54,13 @@ pub enum TransportEvent<'b> {
         /// The outcome.
         result: SResult,
     },
-    /// A periodic response — ISO 14229-5:2022 REQ 7.16's `0x8004` payload type.
+    /// A periodic response, ISO 14229-5:2022 REQ 7.16's `0x8004` payload type.
     ///
-    /// **Cannot be a [`Self::DataInd`].** ISO 14229-5:2022 REQ 7.20 requires a periodic
-    /// response not to reset `tS3_Server`, and `DataInd` is exactly what feeds the session
-    /// layer and resets it — so delivering one as a `DataInd` is a conformance failure, not
-    /// a shortcut. `DoIP`-specific in its *payload type* but not in its shape: a CAN
-    /// binding implementing periodic responses reports the same three things.
-    ///
-    /// The driver carries this variant and does nothing with it yet:
-    /// `ReadDataByPeriodicIdentifier` (0x2A) has no `uds_protocol` message type, so no
-    /// server can implement it and no client can decode the result.
+    /// Never a [`Self::DataInd`]: ISO 14229-5:2022 REQ 7.20 requires a periodic response
+    /// not to reset `tS3_Server`, and `DataInd` is what feeds the session layer and
+    /// resets it. The driver does nothing with it: `ReadDataByPeriodicIdentifier` (0x2A)
+    /// has no `uds_protocol` message type, so no server can implement it and no client
+    /// can decode the result.
     Periodic {
         /// Addressing, with the responding server's `S_AI[SA]`.
         ai: Ai,
@@ -79,27 +71,22 @@ pub enum TransportEvent<'b> {
     },
     /// The connection to `peer` went away.
     ///
-    /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a close **part of the normal
-    /// `DiagnosticSessionControl` and `ECUReset` flows**: the server initiates one after
-    /// sending every positive `ECUReset` response, and after the positive
-    /// `DiagnosticSessionControl` response sent with [`AfterSend::ServerLeaves`], before
-    /// executing the service. So a close is not a failure and must not arrive as `Err`.
-    /// A transport with no connections never emits this, exactly as one that never
-    /// truncates never emits [`Self::DataTooLong`].
+    /// Not a failure, so never an `Err`: ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a
+    /// close part of the normal `DiagnosticSessionControl` and `ECUReset` flows, the
+    /// server closing after every positive `ECUReset` response and after the positive
+    /// `DiagnosticSessionControl` response sent with [`AfterSend::ServerLeaves`]. A
+    /// transport with no connections never emits this.
     ///
-    /// **Reported once per close.** It is an edge, not a state: after it, the next
-    /// [`UdsTransport::next_event`] waits for an event or the deadline as usual, and a
-    /// transport whose connection layer keeps reporting a closed connection until it
-    /// reconnects reports it here once. A request handed to the transport meanwhile is
-    /// still confirmed, failed, as the trait requires.
+    /// Reported once per close, as an edge: the next [`UdsTransport::next_event`] waits
+    /// for an event or the deadline as usual, and a request handed to the transport
+    /// meanwhile is still confirmed, failed, as the trait requires.
     Closed {
         /// The peer whose connection closed: for a server, the client whose requests
         /// it carried; for a client, the server it sent them to. Only an exchange with
         /// this peer ends, a client's functional request counting as one with every
-        /// peer, since any of them may be answering it. A transport carrying several
-        /// peers' connections reports each close as its own peer's, and one that cannot
-        /// name the peer of a connection reports no close for it, because nothing is
-        /// waiting on a connection whose peer never spoke.
+        /// peer. A transport carrying several peers' connections reports each close as
+        /// its own peer's, and one that cannot name the peer of a connection reports no
+        /// close for it.
         peer: Address,
         /// Whether the close was one the standard prescribes, which ends the server's
         /// session: for a server, one it owed its client; for a client, one following the
@@ -107,37 +94,29 @@ pub enum TransportEvent<'b> {
         /// (ISO 14229-5:2022 REQ 7.9, REQ 7.11). Any other close, a failure or a connection
         /// given up, ends a connection and not a session.
         ///
-        /// **Informational: re-establishing the connection is never this crate's.**
-        /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have the client open a new connection
-        /// and activate routing again, so a server is reconnected *to* and never
-        /// reconnects, and a client's own reconnection is its transport's business
-        /// below this seam (``UDSSVC_ARCH_0002``). Nothing here asks a transport to
-        /// reconnect, and no method to do so exists.
+        /// Informational: ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have the client open a
+        /// new connection, so a server never reconnects, and a client's reconnection is
+        /// its transport's, below this seam (``UDSSVC_ARCH_0002``).
         expected: bool,
     },
     /// The deadline the driver supplied passed before anything arrived.
     ///
-    /// **Not itself an overrun.** The driver ticks the session layer and acts on what
-    /// that reports; `uds_session::ServerOutput::ResponseOverrun` is the output that
-    /// says a response-pending is due.
+    /// Not itself an overrun: the driver ticks the session layer, and
+    /// `uds_session::ServerOutput::ResponseOverrun` is the output that says a
+    /// response-pending is due.
     Deadline,
 }
 
 /// What follows a message handed to [`UdsTransport::t_data_req`].
 ///
 /// The server says it; a transport acts on it. Whether a session change leaves the
-/// software the server runs is a property of the server implementation — an application
-/// jumping to its bootloader for `10 02`, a bootloader restarting the application for
-/// `10 01` (ISO 14229-1:2020 10.2.2.2 Table 25) — and not of the response's octets, so a
-/// transport cannot derive it. ISO 14229-5:2022 REQ 7.9 has a `DoIP` server close the TCP
-/// connection after the `DiagnosticSessionControl` positive response "if the TCP connection
-/// is disconnected due to a session change", so a `DoIP` transport closes on
-/// [`Self::ServerLeaves`] and not otherwise.
-///
-/// **`ECUReset` is never flagged.** ISO 14229-5:2022 REQ 7.11 closes the connection after
-/// *every* `ECUReset` positive response, with no condition — including the resets that
-/// restart nothing — so a `DoIP` transport keys that close on the `0x51` itself. Flagging
-/// resets here would make an unconditional close depend on a fact it does not depend on.
+/// software the server runs (ISO 14229-1:2020 10.2.2.2 Table 25) is the server's to know,
+/// not derivable from the response's octets. ISO 14229-5:2022 REQ 7.9 has a `DoIP` server
+/// close the TCP connection after a `DiagnosticSessionControl` positive response "if the
+/// TCP connection is disconnected due to a session change", so a `DoIP` transport closes
+/// on [`Self::ServerLeaves`] and not otherwise. `ECUReset` is never flagged: REQ 7.11
+/// closes after *every* `ECUReset` positive response, so a `DoIP` transport keys that
+/// close on the `0x51` itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AfterSend {
@@ -151,10 +130,9 @@ pub enum AfterSend {
 
 /// A transport's obligation to the stack.
 ///
-/// ``UDSSVC_ARCH_0030`` for the asynchrony — the trait is `async` and the runtime is
-/// the caller's. ``UDSSVC_ARCH_0041`` for the time: a transport that can report an
-/// inbound event *or* a timer expiry already measures time, so asking it for the clock
-/// adds no capability and avoids two implementors holding two timebases.
+/// The trait is `async` and the runtime is the caller's (``UDSSVC_ARCH_0030``). The
+/// transport tells the time (``UDSSVC_ARCH_0041``): one that can report an inbound event
+/// *or* a timer expiry already measures it.
 ///
 /// Four obligations the signatures cannot state, which the drivers rely on:
 ///
@@ -163,42 +141,34 @@ pub enum AfterSend {
 ///   is dropped must not be lost: it is delivered by a later call.
 /// - **Every accepted [`Self::t_data_req`] is followed by exactly one
 ///   [`TransportEvent::DataConf`] for the same [`Ai`]**, including a failed one when the
-///   connection closes before the transmission completed. That a transport reports a
-///   `T_Data.conf` for every `T_Data.req` is an assumption of use: an association whose
+///   connection closes before the transmission completed. An association whose
 ///   confirmation never arrives has no server exit (``UDSS_LLR_0060``), and the driver
 ///   waits on it.
 /// - **A [`Self::t_data_req`] future dropped before it completes has accepted its
 ///   request or done nothing.** An accepted request is owed its
-///   [`TransportEvent::DataConf`] as any other is; one not accepted is never sent. A
-///   transmission begun and then abandoned without either would leave a confirmation
-///   nothing can supply.
+///   [`TransportEvent::DataConf`] as any other is; one not accepted is never sent.
 /// - **That [`TransportEvent::DataConf`] comes before any message answering the
 ///   request.** The session layer opens a request's response window at its confirmation,
-///   so a client takes nothing earlier as its answer. A transmission is complete before
-///   its server can answer it, on `DoIP` as on CAN.
+///   so a client takes nothing earlier as its answer.
 pub trait UdsTransport {
     /// What this transport's failures are. Never interpreted by this crate.
     ///
-    /// `Debug` is the one bound, because it surfaces from [`crate::Server::step`] and
-    /// every client method: a caller that receives one and cannot render it has an error
-    /// it can only discard. Not interpreting a transport's failures and not being able to
-    /// print them are different commitments, and this crate makes only the first. On
-    /// `no_std` there is no wider trait to ask for.
+    /// `Debug` is the one bound: the error surfaces from [`crate::Server::step`] and
+    /// every client method, and a caller has to be able to render it.
     type Error: core::fmt::Debug;
 
     /// The largest `A_PDU` this transport can carry, where its protocol caps it.
     ///
-    /// Participates in the const fold at [`crate::uds_server`]'s expansion site. The
-    /// default, for a transport with no cap, is then ignored; a `DoIP` transport takes
-    /// its entity's message buffer.
+    /// Joins the const fold at [`crate::uds_server`]'s expansion site. The default, for
+    /// a transport with no cap, is then ignored; a `DoIP` transport takes its entity's
+    /// message buffer.
     const MAX_PDU: usize = usize::MAX;
 
-    /// `T_Data.req` — hand a `T_PDU` to the transport.
+    /// `T_Data.req`: hand a `T_PDU` to the transport.
     ///
     /// An `Ok` is an acceptance, and obliges exactly one [`TransportEvent::DataConf`]
-    /// for `ai` later — failed, where the connection closed first. Dropped before it
-    /// completes, the future has accepted the request or done nothing. See the trait's
-    /// doc.
+    /// for `ai` later, failed where the connection closed first. Dropped before it
+    /// completes, the future has accepted the request or done nothing.
     ///
     /// # Arguments
     ///
@@ -220,27 +190,21 @@ pub trait UdsTransport {
     /// Fill `buffer` with the next inbound message, or return
     /// [`TransportEvent::Deadline`] when `deadline` passes first.
     ///
-    /// The event borrows `buffer`, not the transport, so `&mut self` is released when the
-    /// returned future completes and the driver may transmit while the request is live.
-    /// A message is reported as the subslice it occupies; there is no length to overstate.
+    /// The event borrows `buffer`, not the transport, so the driver may transmit while
+    /// the request is live. A message is reported as the subslice it occupies.
     ///
-    /// `deadline` is `uds_session::Server::next_deadline`'s value passed through
-    /// untouched, and the transport is the side that compares it with the clock. The
-    /// clock wraps (``UDSS_LLR_0019``), so the comparison is
-    /// [`now.has_reached(deadline)`](Timestamp::has_reached) and the time left to wait
-    /// is [`now.until(deadline)`](Timestamp::until), never a comparison of the raw counts,
-    /// which is wrong either side of the wrap and either spins or misses the deadline by
-    /// 49.7 days. The deadline may already have been reached when this is
-    /// called, and `until` is then zero. `None` means no timer is running: wait for an
-    /// event alone.
+    /// The clock wraps (``UDSS_LLR_0019``), so the transport compares `deadline` with it
+    /// through [`now.has_reached(deadline)`](Timestamp::has_reached) and waits
+    /// [`now.until(deadline)`](Timestamp::until), never by comparing the raw counts. The
+    /// deadline may already have been reached when this is called, and `until` is then
+    /// zero. `None` means no timer is running: wait for an event alone.
     ///
     /// A driver serving a request offers only its small concurrent buffer, so
     /// [`TransportEvent::DataTooLong`] is the normal outcome there rather than a fault.
     ///
-    /// **Cancel-safe.** The driver drops this future, often unpolled, whenever the
-    /// handler it races wins. Dropping it must lose nothing: a message partly read is
-    /// kept and delivered by a later call, and a future that consumed input on creation
-    /// rather than on its first poll would lose that input.
+    /// **Must be cancel-safe.** The driver drops this future, often unpolled, whenever
+    /// the handler it races wins: a message partly read is kept and delivered by a later
+    /// call, and the future consumes no input before its first poll.
     ///
     /// # Errors
     ///
@@ -257,20 +221,16 @@ pub trait UdsTransport {
     /// conformant and leaves the response buffer as the only bound. MDS is defined for
     /// *requests*, so a server asking what it may send is asking about the client.
     ///
-    /// There is deliberately no `inbound_max`. A request longer than the server's
-    /// in-flight buffer still reaches the server, as [`TransportEvent::DataTooLong`],
-    /// so the pipeline answers it in ISO 14229-1's order: an unsupported service
-    /// `0x11` before a wrong length `0x13`. A transport refuses only what it cannot
-    /// hold itself.
+    /// There is no `inbound_max`: a request longer than the server's in-flight buffer
+    /// still reaches the server, as [`TransportEvent::DataTooLong`], so the pipeline
+    /// answers it in ISO 14229-1's order, an unsupported service `0x11` before a wrong
+    /// length `0x13`. A transport refuses only what it cannot hold itself.
     fn outbound_max(&self) -> Option<usize>;
 
-    /// The `tP_Client` reload pair this transport dictates.
-    ///
-    /// The pair alone: a transport dictates it — `DoIP` has no `T_DataSOM.ind`, hence
-    /// `tP6` rather than `tP2`. `tP3` spacing is not part of it; the client configures it
-    /// in [`crate::ClientTiming`]. ISO 14229-2:2021 Table 4 sets its minimum per transport,
-    /// from the same network delay, and its footnotes d and e leave the maximum to the
-    /// client.
+    /// The `tP_Client` reload pair this transport dictates (`DoIP` has no `T_DataSOM.ind`,
+    /// hence `tP6` rather than `tP2`). `tP3` spacing is not part of it; the client
+    /// configures that in [`crate::ClientTiming`]. ISO 14229-2:2021 Table 4 sets the
+    /// minimum per transport, and its footnotes d and e leave the maximum to the client.
     fn channel_timing(&self) -> Reloads;
 
     /// Monotonic milliseconds, 32-bit and wrapping.
@@ -290,10 +250,9 @@ pub trait UdsTransport {
 /// A transport a client sends over: a [`UdsTransport`] whose connection the client can
 /// end.
 ///
-/// Ending a session is the client's alone. A server is closed *to*, and the one close it
-/// makes, the prescribed close of ISO 14229-5:2022 REQ 7.9 and REQ 7.11, its transport
-/// makes itself on [`AfterSend::ServerLeaves`] or a positive `ECUReset` response. So
-/// [`crate::Client`] needs this and [`crate::Server`] does not.
+/// Only a client ends a session. The one close a server makes, the prescribed close of
+/// ISO 14229-5:2022 REQ 7.9 and REQ 7.11, its transport makes itself on
+/// [`AfterSend::ServerLeaves`] or a positive `ECUReset` response.
 pub trait ClientTransport: UdsTransport {
     /// Ends the connection to the server gracefully, if there is one.
     ///
@@ -372,14 +331,10 @@ mod tests {
         }
     }
 
-    /// ``UDSSVC_ARCH_0029`` as amended — the event borrows the *buffer*, so the driver
-    /// answers a request while its bytes are still live. This is the shape `Server::step`
-    /// needs and the one a borrow of the transport would forbid: an event tied to
-    /// `&mut self` keeps the transport mutably borrowed for as long as the request lives,
-    /// and `t_data_req` could never be called to answer it.
-    ///
-    /// This is a compile-time assertion wearing a test's clothes. It fails by not
-    /// building.
+    /// ``UDSSVC_ARCH_0029``: the event borrows the *buffer*, so the driver answers a
+    /// request while its bytes are still live. An event tied to `&mut self` would keep
+    /// the transport borrowed for as long as the request lives, and `t_data_req` could
+    /// never be called to answer it. This fails by not building.
     #[test]
     fn a_request_can_be_answered_while_its_bytes_are_live() {
         let mut buffer = [0_u8; 8];
@@ -395,10 +350,8 @@ mod tests {
         assert_eq!(poll_once(sent), Some(Ok(3)));
     }
 
-    /// A truncated message is a distinct variant rather than a flag on `DataInd`.
-    /// Destructuring `DataInd { ai, data, .. }` would silently discard a flag and
-    /// decode a fragment as a message; a swallowed variant only drops a message the
-    /// client is already required to repeat. One fails safe, the other dangerous.
+    /// A truncated message is a distinct variant rather than a flag on `DataInd`, so
+    /// destructuring `DataInd { ai, data, .. }` cannot decode a fragment as a message.
     #[test]
     fn truncation_is_a_variant_an_ordinary_arm_cannot_absorb() {
         let whole = TransportEvent::DataInd {

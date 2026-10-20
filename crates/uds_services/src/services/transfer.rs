@@ -1,4 +1,4 @@
-//! Upload and download — ISO 14229-1:2020 clause 15.
+//! Upload and download, ISO 14229-1:2020 clause 15.
 
 use crate::{Access, ResponseSink, Sessions};
 use uds_protocol::{
@@ -7,24 +7,19 @@ use uds_protocol::{
 
 /// What a transfer is being requested for.
 ///
-/// ``UDSSVC_ARCH_0036`` puts direction here rather than in a separate field, because a
-/// repeated block is handled differently by direction: a repeated download is answered
-/// without calling the handler, and a repeated upload will call it again. A
-/// `RequestUpload` variant joins these when that service is served.
+/// ``UDSSVC_ARCH_0036`` puts direction here: a repeated download block is answered
+/// without calling the handler, where a repeated upload block would call it again.
 ///
-/// Address and size arrive decoded. Their wire widths are declared by the
-/// `addressAndLengthFormatIdentifier`, which `uds_protocol` reads to size the fields —
-/// so the widths are a decoding concern that is already settled by the time a handler is
-/// called, and the identifier itself never reaches one. Each is up to eight bytes wide,
-/// so each is a [`u64`]; a request declaring a wider one is answered `requestOutOfRange`
-/// (0x31) before any handler is asked.
+/// Address and size arrive decoded, each up to eight bytes wide and so a [`u64`]; the
+/// `addressAndLengthFormatIdentifier` that declared their widths is `uds_protocol`'s to
+/// read and never reaches a handler. A request declaring a wider one is answered
+/// `requestOutOfRange` (0x31) before any handler is asked.
 ///
-/// Not [`Hash`]: [`RequestFileTransferRequest`] is not, and a transfer request is a thing
-/// to match on rather than a key to look one up by.
+/// Not [`Hash`]: [`RequestFileTransferRequest`] is not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransferRequest<'a> {
-    /// `RequestDownload` (0x34) — the client sends data to the server.
+    /// `RequestDownload` (0x34): the client sends data to the server.
     Download {
         /// `dataFormatIdentifier`; see [`DataFormatIdentifier`], whose
         /// [`NONE`](DataFormatIdentifier::NONE) is the uncompressed, unencrypted case.
@@ -39,25 +34,20 @@ pub enum TransferRequest<'a> {
     File(RequestFileTransferRequest<'a>),
 }
 
-/// The download services (0x34, 0x36, 0x37). `RequestUpload` (0x35) and
-/// `RequestFileTransfer` (0x38) are not served: both are `serviceNotSupported` (0x11).
+/// The download services (0x34, 0x36, 0x37), one trait because they are one state
+/// machine. `RequestUpload` (0x35) and `RequestFileTransfer` (0x38) are not served: both
+/// are `serviceNotSupported` (0x11).
 ///
-/// ``UDSSVC_ARCH_0036`` — the transfer lifecycle is a state machine this crate owns:
-/// which requests are admissible in which order, the block sequence counter and its
-/// `wrongBlockSequenceCounter` (0x73), the `0xFF → 0x00` roll, and rejecting a
-/// `TransferData` with no transfer in progress. One trait rather than four, because the
-/// services are one state machine and implementing three of them would be meaningless.
-///
-/// A response lost after it settled is not undone: the client's repeat is answered from
-/// the state the lost response left. ``UDSSVC_ARCH_0036`` draws the transfer's states and
-/// tabulates each lost response's repeat.
-///
-/// Unless another listed service needs more, the response buffer is 6 bytes, so the
-/// `transferResponseParameterRecord` [`Self::block`] writes after `76 <counter>` is at
-/// most 4 bytes and the one [`Self::exit`] writes after `77` at most 5; a longer one is
-/// `responseTooLong` (0x14).
+/// ``UDSSVC_ARCH_0036``: the transfer lifecycle is this crate's, which requests are
+/// admissible in which order, the block sequence counter with its 0x73 and its
+/// `0xFF -> 0x00` roll, and a `TransferData` with no transfer in progress. A response
+/// lost after it settled is not undone: the client's repeat is answered from the state
+/// the lost response left. Unless another listed service needs more, the response
+/// buffer is 6 bytes, so the `transferResponseParameterRecord` [`Self::block`] writes
+/// after `76 <counter>` is at most 4 bytes and the one [`Self::exit`] writes after `77`
+/// at most 5; a longer one is `responseTooLong` (0x14).
 pub trait DataTransfer {
-    /// ``UDSSVC_ARCH_0033`` — erasing flash before a download usually needs one.
+    /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
     /// The most data bytes one `TransferData` block carries, excluding the service
@@ -98,8 +88,7 @@ pub trait DataTransfer {
     /// ISO 14229-1:2020 Figure 31, in its order: `None` is `requestOutOfRange` (0x31), an
     /// active session outside [`Access::sessions`] is 0x31 too, as for an identifier
     /// (Figures 26 and 30), and none of [`Access::levels`] unlocked is
-    /// `securityAccessDenied` (0x33).
-    /// [`Self::begin`] is asked only after all three pass.
+    /// `securityAccessDenied` (0x33). [`Self::begin`] is asked only after all three pass.
     ///
     /// # Arguments
     ///
@@ -113,7 +102,7 @@ pub trait DataTransfer {
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] — `requestOutOfRange` (0x31) for an unwritable
+    /// The [`NegativeResponseCode`]: `requestOutOfRange` (0x31) for an unwritable
     /// region, `uploadDownloadNotAccepted` (0x70) where conditions forbid it.
     fn begin(
         &mut self,
@@ -121,15 +110,12 @@ pub trait DataTransfer {
     ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
 
     /// Accept one block of a download, writing any `transferResponseParameterRecord` into
-    /// `out`.
-    ///
-    /// The block sequence counter is **not** a parameter: validating it and answering
-    /// `wrongBlockSequenceCounter` (0x73) is this crate's, and a handler that received
-    /// the counter could disagree with the state machine maintaining it.
+    /// `out`. The block sequence counter is not a parameter: validating it and answering
+    /// `wrongBlockSequenceCounter` (0x73) is this crate's.
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] — `generalProgrammingFailure` (0x72) where the write
+    /// The [`NegativeResponseCode`]: `generalProgrammingFailure` (0x72) where the write
     /// failed, `transferDataSuspended` (0x71) where it cannot continue, which ends the
     /// transfer.
     ///
@@ -146,8 +132,8 @@ pub trait DataTransfer {
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] where the transfer cannot complete — a checksum
-    /// failure is the usual case.
+    /// The [`NegativeResponseCode`] where the transfer cannot complete, such as a
+    /// checksum failure.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -204,9 +190,8 @@ mod tests {
         }
     }
 
-    /// Decision 4 of the design: the advertised `maxNumberOfBlockLength` is
-    /// `MAX_BLOCK_LEN + 2` (15.2.3.2), the length of the in-flight buffer that must hold
-    /// the block.
+    /// The advertised `maxNumberOfBlockLength` is `MAX_BLOCK_LEN + 2` (15.2.3.2), the
+    /// length of the in-flight buffer that holds the block.
     #[test]
     fn the_block_length_gives_both_the_buffer_and_the_advertisement() {
         const BLOCK: usize = <Ecu as DataTransfer>::MAX_BLOCK_LEN;

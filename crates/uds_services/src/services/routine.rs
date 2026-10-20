@@ -1,38 +1,28 @@
-//! Routine — ISO 14229-1:2020 clause 14.
+//! Routine, ISO 14229-1:2020 clause 14.
 
 use crate::{Access, ResponseSink, RoutineIdentifier};
 use uds_protocol::{NegativeResponseCode, RoutineControlSubFunction};
 
 /// `RoutineControl` (0x31).
 ///
-/// ``UDSSVC_ARCH_0007`` — Figure 5 excludes service identifier 0x31 from the centralised
-/// sub-function stage, because a routine's sub-function is meaningful only together with
-/// its routine identifier: whether `stopRoutine` is supported is a property of the
-/// routine, not of the service. **Three methods rather than one with a sub-function
-/// parameter**, so that asymmetry is visible in the type rather than documented. Settles
-/// open question 5. Whether a routine supports a sub-function at all is nonetheless also a
-/// lookup, [`Self::supports`], because Figure 30 answers it before the option record's
-/// length is checked, and the pipeline must not hand a method a record longer than
-/// [`Self::MAX_OPTION_LEN`]. It is separate from [`Self::access`] because Figure 30 asks
-/// it after the routine's security check, and keyed by routine for the reason above.
+/// ``UDSSVC_ARCH_0007``: Figure 5 excludes 0x31 from the centralized sub-function stage,
+/// since whether `stopRoutine` is supported is a property of the routine, so each
+/// sub-function is its own method and [`Self::supports`] is keyed by routine.
 ///
-/// ISO 14229-1:2020 clause 14.2, Figure 30 — the pipeline settles, in order: a request
+/// ISO 14229-1:2020 clause 14.2, Figure 30: the pipeline settles, in order, a request
 /// shorter than its routine identifier (0x13), an identifier
 /// [`RoutineIdentifier::from_u16`] rejects or [`Self::access`] does not admit in the
 /// active session (0x31), a routine none of whose levels is unlocked (0x33), a
-/// `routineControlType` Table 426 reserves or [`Self::supports`] refuses for this routine
-/// (0x12), and an option record longer than [`Self::MAX_OPTION_LEN`] (0x13). Only then
-/// is the sub-function's method asked, and Figure 30's remaining checks are its own: the
-/// record's length for this routine (0x13),
-/// conditions (0x22), the record's content (0x31) and the request sequence (0x24). Each
-/// method writes `routineInfo` and any `routineStatusRecord` into its `out`, after the
-/// `71`, the echoed `routineControlType` and the identifier the pipeline wrote (Table
-/// 428).
+/// `routineControlType` Table 426 reserves or [`Self::supports`] refuses (0x12), and an
+/// option record longer than [`Self::MAX_OPTION_LEN`] (0x13). The sub-function's method
+/// then decides Figure 30's remaining checks (0x13, 0x22, 0x31, 0x24) and writes
+/// `routineInfo` and any `routineStatusRecord` after the `71`, the echoed
+/// `routineControlType` and the identifier the pipeline wrote (Table 428).
 pub trait RoutineControl {
     /// This application's routine identifier enumeration.
     type Rid: RoutineIdentifier;
 
-    /// ``UDSSVC_ARCH_0033`` — a routine outrunning `tP2_Server` is the paradigm case.
+    /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
     /// The longest option record this server accepts; a longer one is
@@ -42,7 +32,7 @@ pub trait RoutineControl {
     /// Where `routine` is available and which levels unlock it, or `None` where this
     /// server does not define it.
     ///
-    /// Figure 30 — `None`, or an active session outside [`Access::sessions`], settles the
+    /// Figure 30: `None`, or an active session outside [`Access::sessions`], settles the
     /// request `requestOutOfRange` (0x31); none of [`Access::levels`] unlocked settles it
     /// `securityAccessDenied` (0x33). Both come before [`Self::supports`] is asked.
     ///
@@ -53,11 +43,11 @@ pub trait RoutineControl {
 
     /// Whether `routine` supports `control` at all.
     ///
-    /// Figure 30, "`SubFunction` supported for `routineIdentifier`?" — asked only for a
+    /// Figure 30, "`SubFunction` supported for `routineIdentifier`?": asked only for a
     /// `routine` [`Self::access`] admitted, and only for `startRoutine`, `stopRoutine`
-    /// and `requestRoutineResults`: a reserved `routineControlType` is 0x12 without being
-    /// asked. A `false` settles the request `subFunctionNotSupported` (0x12) before the
-    /// option record's length is checked and without the matching method being asked.
+    /// and `requestRoutineResults`, a reserved `routineControlType` being 0x12 without
+    /// this asked. A `false` settles the request `subFunctionNotSupported` (0x12) before
+    /// the option record's length is checked and without the matching method being asked.
     ///
     /// # Arguments
     ///
@@ -182,15 +172,9 @@ mod tests {
         }
     }
 
-    /// ``UDSSVC_ARCH_0007`` — Figure 5 excludes 0x31 from the centralised sub-function
-    /// stage, because whether `stopRoutine` is supported is a property of the *routine*,
-    /// not of the service. Three separate methods make that asymmetry structural, and
-    /// `supports` answers 0x12 for the pair. Settles open question 5.
-    ///
-    /// This is a trait-bound check and nothing more: it establishes that `start`, `stop`
-    /// and `results` are each required, because the fixture above satisfies
-    /// `RoutineControl` only by implementing all three. No 0x12 behaviour is observed
-    /// here; `tests/stages.rs` observes it through the pipeline.
+    /// ``UDSSVC_ARCH_0007``: `start`, `stop` and `results` are each required. A
+    /// trait-bound check only; `tests/stages.rs` observes the 0x12 behavior through the
+    /// pipeline.
     #[test]
     fn routine_control_requires_start_stop_and_results_separately() {
         fn assert_three_methods<T: RoutineControl>() {}

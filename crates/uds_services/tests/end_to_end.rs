@@ -554,19 +554,16 @@ fn a_final_response_after_a_pending_whose_confirmation_is_late_is_still_delivere
     assert_eq!(t.sent(1).map(|s| s.after), Some(3));
 }
 
-/// ``UDSS_LLR_0108``, ``UDSS_LLR_0109`` — a slow request from the same tester whose
+/// ``UDSS_LLR_0108``, ``UDSS_LLR_0109``: a slow request from the same tester whose
 /// indication precedes the previous response's confirmation keeps its `tP2_Server`, so
 /// it still gets its `7F 22 78` and then its answer.
 ///
 /// `3E 00` is answered at once and `7E 00` left unconfirmed; the slow read arrives at
-/// 10 ms, so its `tP2_Server` runs to 60 ms. `7E 00`'s `DataConf` arrives mid-handler:
-/// it frees the one association (`peers = 1`) and answers nothing, so the deadline the
-/// handler is raced against is still 60 ms. It is scripted before that deadline because
-/// the 0x78 shares `7E 00`'s addressing and ``UDSS_LLR_0061`` would refuse it while
-/// `7E 00` was outstanding; likewise, had it come after the read finished, the final
-/// response would have waited for it in `await_confirmation`. The handler pends three
-/// times — the late confirmation, the deadline, the 0x78's confirmation — and its
-/// final response is accepted at once.
+/// 10 ms, so its `tP2_Server` runs to 60 ms. `7E 00`'s `DataConf` arrives mid-handler,
+/// before that deadline, since the 0x78 shares its addressing and ``UDSS_LLR_0061``
+/// would refuse it while `7E 00` was outstanding. The handler pends three times (the
+/// late confirmation, the deadline, the 0x78's confirmation) and its final response is
+/// accepted at once.
 #[test]
 fn a_request_before_the_previous_confirmation_keeps_its_response_timer() {
     let mut ecu = Ecu::new();

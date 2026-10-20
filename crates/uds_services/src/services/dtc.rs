@@ -1,4 +1,4 @@
-//! Stored data transmission — ISO 14229-1:2020 clause 12.
+//! Stored data transmission, ISO 14229-1:2020 clause 12.
 
 use crate::{Access, ResponseSink};
 use uds_protocol::{
@@ -7,33 +7,30 @@ use uds_protocol::{
 
 /// Which shape of `ReadDTCInformation` response a report type produces.
 ///
-/// Each ISO 14229-1:2020 clause 12.3 report type named here has one of seven response
-/// layouts, and the layout fixes the header and record widths — they are not the
-/// application's to choose. A server declares the layouts it answers in
-/// [`ReadDtcInformation::REPORTS`] and [`crate::uds_server`] folds the widest of them into
-/// the response buffer.
-///
-/// Each corresponds to one or more of [`uds_protocol::ReadDtcInfoResponse`]'s variants,
-/// which is where the widths below are read from rather than restated.
+/// Each ISO 14229-1:2020 clause 12.3 report type has one of seven response layouts, and
+/// the layout fixes the header and record widths. A server declares the layouts it
+/// answers in [`ReadDtcInformation::REPORTS`] and [`crate::uds_server`] folds the widest
+/// of them into the response buffer. Each corresponds to one or more of
+/// [`uds_protocol::ReadDtcInfoResponse`]'s variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DtcReportKind {
-    /// A count and no records — sub-functions `0x01` and `0x07`.
+    /// A count and no records: sub-functions `0x01` and `0x07`.
     Count,
-    /// `(DTC, status)` pairs — `0x02`, `0x0A`-`0x0E`, `0x15`.
+    /// `(DTC, status)` pairs: `0x02`, `0x0A`-`0x0E`, `0x15`.
     DtcList,
-    /// `(DTC, fault detection counter)` pairs — `0x14`.
+    /// `(DTC, fault detection counter)` pairs: `0x14`.
     FaultDetectionCounters,
     /// `DTCAndSeverityRecord`s, which carry a severity and a `DTCFunctionalUnit` byte
-    /// that [`Self::DtcList`]'s records do not — `0x08` and `0x09`.
+    /// that [`Self::DtcList`]'s records do not: `0x08` and `0x09`.
     SeverityList,
-    /// WWH-OBD severity records — `0x42`.
+    /// WWH-OBD severity records: `0x42`.
     WwhObdSeverity,
-    /// One DTC's snapshot records, raw — `0x04`. Bounded in bytes, not records: a
+    /// One DTC's snapshot records, raw: `0x04`. Bounded in bytes, not records, since a
     /// record's width is the application's identifiers' to know. A client reads it; a
     /// server cannot list it in [`ReadDtcInformation::REPORTS`].
     SnapshotRecords,
-    /// One DTC's extended data records, raw — `0x06`. Bounded in bytes, and read only by
+    /// One DTC's extended data records, raw: `0x06`. Bounded in bytes, and read only by
     /// a client, as [`Self::SnapshotRecords`] is.
     ExtDataRecords,
 }
@@ -74,37 +71,28 @@ impl DtcReportKind {
 /// implements is the application's. Figure 6's questions are asked of the report type
 /// alone, a [`ReadDtcInfoReportType`], before the request's parameters are decoded; the
 /// report then arrives decoded as a [`ReadDtcInfoSubFunction`], which carries that report
-/// type's own parameters — a status mask, a record number, a
-/// [`DtcRecord`] — so a handler matches on the report it was asked for rather than
-/// parsing the bytes behind it.
+/// type's own parameters (a status mask, a record number, a [`DtcRecord`]).
 pub trait ReadDtcInformation {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
-    /// The most DTC records this server returns in one response.
-    ///
-    /// Folded into the response buffer. A server with more stored DTCs than this cannot
-    /// report them all in one message, which is a deployment decision rather than a
-    /// defect — clause 12.3 provides paged report types for that case.
+    /// The most DTC records this server returns in one response, folded into the
+    /// response buffer. Clause 12.3 provides paged report types for a server with more
+    /// stored DTCs than one message holds.
     const MAX_DTCS: usize;
 
     /// The response layouts this server answers; see [`DtcReportKind`].
     ///
     /// [`crate::uds_server`] folds `max(header + MAX_DTCS * record)` over these into the
-    /// response buffer. Declaring the layouts rather than a width is what makes the
-    /// buffer right: a server answering [`DtcReportKind::SeverityList`] needs six-byte
-    /// records where [`DtcReportKind::DtcList`] needs four, and neither width is the
-    /// application's to know.
-    ///
-    /// The assembly fails to compile where this lists a layout whose
-    /// [`DtcReportKind::record_len`] is `None`: [`MAX_DTCS`](Self::MAX_DTCS) does not
-    /// bound it.
+    /// response buffer, each layout fixing its own record width. The assembly fails to
+    /// compile where this lists a layout whose [`DtcReportKind::record_len`] is `None`:
+    /// [`MAX_DTCS`](Self::MAX_DTCS) does not bound it.
     const REPORTS: &'static [DtcReportKind];
 
     /// Where `report` is available and which levels unlock it, or `None` where this
     /// server does not support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007``: in that order, `None`
     /// settles the request `subFunctionNotSupported` (0x12), an active session outside
     /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
     /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each before the
@@ -122,22 +110,20 @@ pub trait ReadDtcInformation {
     /// # Arguments
     ///
     /// * `request` - the report type and its parameters; see
-    ///   [`ReadDtcInfoSubFunction`], whose [`report_type`] [`Self::access`] admitted.
-    ///   There is no separate parameter slice: a report type's parameters are
-    ///   fixed-width and ride on its variant, so a malformed one is rejected with
+    ///   [`ReadDtcInfoSubFunction`], whose [`report_type`] [`Self::access`] admitted. A
+    ///   report type's parameters are fixed-width, so a malformed one is rejected with
     ///   `incorrectMessageLengthOrInvalidFormat` (0x13) before it reaches here.
     /// * `out` - where the response is written after the `59` service identifier and
-    ///   the echoed report type, which the pipeline writes: everything after `59 xx` is
-    ///   the handler's, whatever the report type's layout puts first. Clause 12.3.3 gives
-    ///   each report type's layout; [`DtcReportKind::header_len`] counts the pipeline's
-    ///   two bytes with the rest of the header.
+    ///   the echoed report type, which the pipeline writes. Clause 12.3.3 gives each
+    ///   report type's layout; [`DtcReportKind::header_len`] counts the pipeline's two
+    ///   bytes with the rest of the header.
     ///
     /// [`report_type`]: ReadDtcInfoSubFunction::report_type
     ///
     /// # Errors
     ///
     /// The [`NegativeResponseCode`] where the report cannot be given, clause 12.3.4:
-    /// `requestOutOfRange` (0x31) for a `DTCMaskRecord` the server does not recognise or
+    /// `requestOutOfRange` (0x31) for a `DTCMaskRecord` the server does not recognize or
     /// an invalid record number.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
@@ -152,10 +138,10 @@ pub trait ReadDtcInformation {
 
 /// `ClearDiagnosticInformation` (0x14).
 ///
-/// ISO 14229-1:2020 clause 12.2, Figure 28 — the pipeline settles a request that is not
+/// ISO 14229-1:2020 clause 12.2, Figure 28: the pipeline settles a request that is not
 /// four or five bytes (0x13); every other check is the handler's.
 pub trait ClearDiagnosticInformation {
-    /// ``UDSSVC_ARCH_0033`` — clearing stored data is frequently slow enough to need one.
+    /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
     /// Clear the DTCs `group` selects, optionally restricted to one memory.

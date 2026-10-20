@@ -1,21 +1,14 @@
 //! The traits an application implements.
 //!
-//! ``UDSSVC_ARCH_0012`` — each service is its own trait, so the assembly in
-//! [`crate::uds_server`] knows exactly which a server supports. A single large trait with
-//! defaulted methods would make "supported" mean "did not override", which is not a
-//! distinction clause 8.7 can act on: `serviceNotSupported` (0x11) is decided from a
-//! list, and the assembly is that list.
+//! ``UDSSVC_ARCH_0012``: each service is its own trait, so the assembly in
+//! [`crate::uds_server`] is the list `serviceNotSupported` (0x11) is decided from. Every
+//! handler returns `Result<(), NegativeResponseCode>`, `uds_protocol`'s code, and writes
+//! into a [`ResponseSink`].
 //!
-//! Every handler returns `Result<(), NegativeResponseCode>` and writes into a
-//! [`ResponseSink`]. The negative response code is `uds_protocol`'s;
-//! this crate defines none.
-//!
-//! **A service trait whose handler can be in progress declares `MAY_RESPOND_PENDING`
-//! with no default**, so omitting it fails to compile. A default of `false` would let a
-//! forgotten declaration silently mean "never 0x78", which is a conformance decision
-//! nobody made. [`DiagnosticSessionControl`] and [`TesterPresent`] do not declare it:
-//! neither is ever awaited, so no response-pending can come due and the constant would
-//! have had one possible value and no effect.
+//! A service trait whose handler can be in progress declares `MAY_RESPOND_PENDING` with
+//! no default, so omitting it fails to compile. [`DiagnosticSessionControl`] and
+//! [`TesterPresent`] do not declare it: neither is ever awaited, so no response-pending
+//! can come due.
 
 use crate::pipeline::Settling;
 use crate::state::ProtocolState;
@@ -71,11 +64,10 @@ impl From<Option<DiagnosticSessionType>> for Effect {
 
 /// What clause 8.7 decided, and which effect the response carries.
 ///
-/// ``UDSSVC_ARCH_0016`` — a negative response is written bytes and arrives as
-/// [`Responded::Yes`]; silence is a distinguishable outcome because only it is a reason
-/// not to transmit. The effect rides on both arms because a suppressed
-/// `DiagnosticSessionControl` still changes session, through the completion report
-/// (``UDSS_LLR_0086``, ``UDSS_LLR_0098``).
+/// ``UDSSVC_ARCH_0016``: a negative response is written bytes and arrives as
+/// [`Responded::Yes`]; silence is the one outcome that is a reason not to transmit. The
+/// effect rides on both arms because a suppressed `DiagnosticSessionControl` still
+/// changes session, through the completion report (``UDSS_LLR_0086``, ``UDSS_LLR_0098``).
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Responded {
@@ -104,20 +96,14 @@ impl Responded {
 
 /// What a request's handler left, before clause 8.7's last stages have run.
 ///
-/// ``UDSSVC_ARCH_0016`` — [`ServiceSet::dispatch`] returns this, and the driver hands it
+/// ``UDSSVC_ARCH_0016``: [`ServiceSet::dispatch`] returns this, and the driver hands it
 /// to the pipeline's `settle`, which applies "response fits" (``UDSSVC_ARCH_0017``) and
 /// ``UDSSVC_ARCH_0009``'s three suppression rules and yields the [`Responded`] the driver
-/// acts on. **The driver settles, not `dispatch`, because rule 3's input is known only to
-/// the driver**: whether a `requestCorrectlyReceivedResponsePending` (0x78) for this
-/// request was accepted for transmission is learned in the driver's loop while the
-/// handler runs, and it is final only once the handler has finished. Settling after the
-/// handler future completes reads it then, as a plain `bool`, with nothing shared between
-/// the handler and the loop.
+/// acts on. The driver settles because rule 3's input, whether a 0x78 for this request
+/// was accepted for transmission, is final only once the handler has finished.
 ///
-/// Public only because the trait an application's assembly implements names it; an
-/// application never builds or reads one. Its fields are private and its constructors
-/// hidden, for [`crate::uds_server`]'s emitted `dispatch` alone, which decides nothing:
-/// it records which of three shapes the request took — no service identifier
+/// Public only because the assembly's trait names it; an application never builds or
+/// reads one. It records which of three shapes the request took: no service identifier
 /// (``UDSSVC_ARCH_0005``), a code the common stages settled, or a service stage's outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unsettled(Shape);
@@ -192,9 +178,8 @@ impl Unsettled {
 
 /// A change of diagnostic session, classified.
 ///
-/// ``UDSSVC_ARCH_0038`` — ISO 14229-1:2020 clause 10.2 Figure 7's key names these four
-/// cases, and which occurred determines what configuration state resets. Classifying it
-/// here is what stops every application reimplementing Table 23.
+/// ``UDSSVC_ARCH_0038``: ISO 14229-1:2020 clause 10.2 Figure 7's key names these four
+/// cases, and which occurred determines what configuration state resets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionTransition {
     /// Default to default: a re-entry.
@@ -250,14 +235,10 @@ impl<'a> Received<'a> {
 
 /// One application's assembled service implementations.
 ///
-/// ``UDSSVC_ARCH_0013`` — implemented by [`crate::uds_server`], never by hand, on the
+/// ``UDSSVC_ARCH_0013``: implemented by [`crate::uds_server`], never by hand, on the
 /// marker type it generates in the invoking crate. The application, [`Self::App`], may
-/// live in any crate.
-///
-/// Sealed through [`crate::sealed`]. The whole derivation argument — that
-/// [`Self::Store`]'s lengths are folded from this application's declared maxima — holds
-/// only while the macro is what chooses them; a hand-written impl can pick any lengths it
-/// likes and still advertise the declared maxima on the wire.
+/// live in any crate. Sealed through [`crate::sealed`], so that [`Self::Store`]'s lengths
+/// are always the ones the macro folded from this application's declared maxima.
 pub trait ServiceSet: crate::sealed::Sealed {
     /// The application whose service traits this assembly calls.
     #[doc(hidden)]
@@ -274,10 +255,10 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// Run the clause 8.7 pipeline for `request` up to its last stages, writing any
     /// response into `out`, and return the handler's outcome [`Unsettled`].
     ///
-    /// ``UDSSVC_ARCH_0004`` — a function of the request, its addressing and this crate's
-    /// state, with no transport, clock or session layer involved. ``UDSSVC_ARCH_0015`` is
-    /// why `ai` is here. ``UDSSVC_ARCH_0016`` — the driver, not this future, settles the
-    /// result: see [`Unsettled`] for why.
+    /// ``UDSSVC_ARCH_0004``: a function of the request, its addressing
+    /// (``UDSSVC_ARCH_0015``) and this crate's state, with no transport, clock or session
+    /// layer involved. ``UDSSVC_ARCH_0016``: the driver, not this future, settles the
+    /// result; see [`Unsettled`].
     ///
     /// # Arguments
     ///
@@ -300,11 +281,10 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// The server is starting: what Annex I transition 1 owes at start-up.
     ///
     /// [`crate::Server`] calls it on its first step and on the first step after a
-    /// [`Stopped`](crate::Stopped), because [`Server::new`](crate::Server::new) is a
-    /// `const fn` and cannot call into the application. Emitted by the assembly; where
-    /// `SecurityAccess` is listed, it starts the delay of every level whose stored attempt
-    /// count is at its limit (see [`crate::SecurityAccess::delay`]), and otherwise it does
-    /// nothing.
+    /// [`Stopped`](crate::Stopped), since [`Server::new`](crate::Server::new) is `const`.
+    /// Where `SecurityAccess` is listed, it starts the delay of every level whose stored
+    /// attempt count is at its limit (see [`crate::SecurityAccess::delay`]); otherwise it
+    /// does nothing.
     ///
     /// # Arguments
     ///
@@ -313,11 +293,9 @@ pub trait ServiceSet: crate::sealed::Sealed {
     #[doc(hidden)]
     fn start_up(app: &mut Self::App, state: &mut Self::State);
 
-    /// `tS3_Server` expired: return to the default session and tell the application.
-    ///
-    /// ``UDSS_LLR_0100`` reports the expiry; ``UDSSVC_ARCH_0038`` has the application
-    /// told through `DiagnosticSessionControl::on_transition`. Emitted by the assembly,
-    /// because only it knows whether that service is implemented; a no-op where it is not.
+    /// `tS3_Server` expired (``UDSS_LLR_0100``): return to the default session and tell
+    /// the application through `DiagnosticSessionControl::on_transition`
+    /// (``UDSSVC_ARCH_0038``), where that service is listed.
     ///
     /// # Arguments
     ///
@@ -328,9 +306,9 @@ pub trait ServiceSet: crate::sealed::Sealed {
     #[doc(hidden)]
     fn session_timed_out(app: &mut Self::App, state: &mut Self::State);
 
-    /// A response selecting `selected` was confirmed sent: enter it and tell the
-    /// application. ``UDSS_LLR_0085``/``0086`` is the moment; ``UDSSVC_ARCH_0038`` the
-    /// call. Emitted by the assembly, as [`Self::session_timed_out`] is.
+    /// A response selecting `selected` was confirmed sent (``UDSS_LLR_0085``/``0086``):
+    /// enter it and tell the application (``UDSSVC_ARCH_0038``), as
+    /// [`Self::session_timed_out`] does.
     ///
     /// # Arguments
     ///
@@ -346,10 +324,10 @@ pub trait ServiceSet: crate::sealed::Sealed {
     );
 
     /// The response accepting the reset `kind` was confirmed sent, or its suppression
-    /// completed: tell the application, and for [`AfterReset::Restart`] return to the
-    /// default session (telling the application, Figure 7 key 4) and then to
-    /// [`ProtocolState::INITIAL`]. ``UDSSVC_ARCH_0045``. Emitted by the assembly; called
-    /// only where `EcuReset` is listed.
+    /// completed (``UDSSVC_ARCH_0045``): tell the application, and for
+    /// [`AfterReset::Restart`] return to the default session (telling the application,
+    /// Figure 7 key 4) and then to [`ProtocolState::INITIAL`]. Called only where
+    /// `EcuReset` is listed.
     ///
     /// # Arguments
     ///
@@ -393,12 +371,9 @@ pub trait ServiceSet: crate::sealed::Sealed {
     #[doc(hidden)]
     fn leaves_running_software(app: &Self::App, session: DiagnosticSessionType) -> bool;
 
-    /// Whether this server implements `service` at all.
-    ///
-    /// ``UDSSVC_ARCH_0006`` — Figure 5's first mandatory check, and the one only the
-    /// assembly list can answer. A byte that names no service arrives as
-    /// [`UdsServiceType::UnsupportedDiagnosticService`], which no assembly list contains,
-    /// so it answers `false` without a special case.
+    /// Whether this server implements `service` at all: ``UDSSVC_ARCH_0006``, Figure 5's
+    /// first mandatory check. A byte that names no service arrives as
+    /// [`UdsServiceType::UnsupportedDiagnosticService`], which no assembly list contains.
     #[doc(hidden)]
     fn supports(service: UdsServiceType) -> bool;
 
@@ -408,25 +383,17 @@ pub trait ServiceSet: crate::sealed::Sealed {
     #[doc(hidden)]
     fn may_respond_pending(service: UdsServiceType) -> bool;
 
-    /// Whether `request`, addressed this way, may proceed while a service is already in
-    /// progress.
+    /// Whether `request`, addressed `ai`, may proceed while a service is already in
+    /// progress: true for exactly the **functionally addressed** `TesterPresent` `3E 80`,
+    /// the "valid `TesterPresent` message with SPRMIB=true" that ISO 14229-1:2020 8.7.6
+    /// lets bypass the occupied diagnostic protocol instance. [`crate::Server`] answers
+    /// anything else arriving mid-service `busyRepeatRequest` (0x21).
     ///
-    /// True for exactly the **functionally addressed** `TesterPresent` `3E 80`, the
-    /// "valid `TesterPresent` message with SPRMIB=true" that ISO 14229-1:2020 8.7.6 lets
-    /// bypass the occupied diagnostic protocol instance. The addressing is a parameter
-    /// because that condition turns on it and the bytes do not carry it; `ai` is the one
-    /// the driver drained from the transport event alongside `request`.
+    /// Clause 8.7.6's second exception, a request in `0x00`-`0x0F` that aborts the active
+    /// service, cannot arise: that range is OBD, which `uds_protocol` does not model, so
+    /// [`crate::uds_server`] assembles no service in it.
     ///
-    /// Clause 8.7.6 admits a second exception — a request in `0x00`–`0x0F`, which aborts
-    /// the active service — and no assembled server can meet it. That range is OBD
-    /// territory, which `uds_protocol` does not model, so [`crate::uds_server`] can
-    /// assemble no service in it and the case cannot arise. Its absence here is coverage,
-    /// not an omission.
-    ///
-    /// An associated function, because the driver asks while a handler holds the
-    /// services: the answer depends on the assembly, never on a handler's state.
-    /// [`crate::Server`] answers anything else arriving mid-service `busyRepeatRequest`
-    /// (0x21).
+    /// An associated function, because the driver asks while a handler holds the services.
     #[doc(hidden)]
     fn is_concurrent_exception(request: &[u8], ai: Ai) -> bool;
 }
@@ -435,9 +402,8 @@ pub trait ServiceSet: crate::sealed::Sealed {
 mod tests {
     use super::{Effect, Responded};
 
-    /// ``UDSSVC_ARCH_0016`` — silence must be distinguishable from an empty response,
-    /// because only one of them is a reason not to transmit. A `bool` would leave the
-    /// driver guessing which, and this test is what fails if someone replaces it.
+    /// ``UDSSVC_ARCH_0016``: silence is distinguishable from an empty response, because
+    /// only one of them is a reason not to transmit.
     #[test]
     fn silence_and_an_empty_response_are_different_outcomes() {
         assert_ne!(

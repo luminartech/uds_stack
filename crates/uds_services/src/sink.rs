@@ -1,30 +1,19 @@
 //! The one sink a handler writes into.
 //!
 //! ``UDSSVC_ARCH_0017``. Neither `dyn` nor generic: [`crate::storage`] owns the response
-//! buffer, so the sink is never the caller's and there is nothing for a type parameter to
-//! vary. Dispatch stays fully monomorphised, with no vtable.
+//! buffer, so there is nothing for a type parameter to vary.
 
 use automotive_wire_codec::{InsufficientBuffer, Sink, WriteError};
 
 /// A bounded writer over this crate's response buffer.
 ///
-/// The bound is the peer's `outbound_max`, raised to at least [`Self::MIN_BOUND`] and
-/// capped at the buffer's length. Both terms are this crate's, so nothing is fabricated
-/// and nothing is asked of a layer that does not know it — which is what
-/// ``UDSSVC_ARCH_0017`` requires after ISO 13400-2:2019 Table 11 made *Max. data size*
-/// optional.
-///
-/// The floor is there because a negative response must always fit; [`crate::uds_server`]
-/// rejects at compile time an assembly whose response buffer is shorter than it. A write
-/// that would cross the bound is refused whole, and the sink records the refusal before
-/// returning the error, so it is not lost if a handler ignores the result. Such a refusal
-/// means the response was too long, not that nothing was written; the pipeline reads it
-/// after the handler returns and answers `responseTooLong` (0x14) in place of the partial
-/// response.
-///
-/// The bound is not a field. [`Self::new`] truncates the buffer to it, so "written never
-/// exceeds the limit, which never exceeds the buffer" is one slice length rather than an
-/// ordering between two numbers that each method had to be trusted to maintain.
+/// The bound is the peer's `outbound_max` (``UDSSVC_ARCH_0017``), raised to at least
+/// [`Self::MIN_BOUND`] so a negative response always fits, and capped at the buffer's
+/// length; [`crate::uds_server`] rejects at compile time an assembly whose response buffer
+/// is shorter than the floor. A write that would cross the bound is refused whole, and
+/// the sink records the refusal, so a handler that ignores the error loses nothing: the
+/// pipeline reads it after the handler returns and answers `responseTooLong` (0x14) in
+/// place of the partial response.
 ///
 /// # Examples
 ///
@@ -77,9 +66,8 @@ impl<'a> ResponseSink<'a> {
 
     /// Whether any write was refused since creation or the last rewind.
     ///
-    /// ``UDSSVC_ARCH_0017`` — the pipeline reads this after the handler returns and
-    /// settles `responseTooLong` (0x14). A handler ignores `write_all`'s result; the
-    /// refusal is recorded here and decided there.
+    /// ``UDSSVC_ARCH_0017``: the pipeline reads this after the handler returns and
+    /// settles `responseTooLong` (0x14).
     #[must_use]
     pub(crate) const fn refused(&self) -> bool {
         self.refused
@@ -99,10 +87,7 @@ impl<'a> ResponseSink<'a> {
         self.written
     }
 
-    /// What the handler wrote.
-    ///
-    /// The driver needs this because [`Self::new`] moves the slice in, leaving no
-    /// other route back to the bytes it must transmit.
+    /// What the handler wrote: the bytes the driver transmits.
     #[must_use]
     pub fn written_bytes(&self) -> &[u8] {
         self.buffer.get(..self.written).unwrap_or(&[])
@@ -145,9 +130,7 @@ mod tests {
     use uds_protocol::{DtcRecord, DtcStatusMask, Encode};
 
     /// `uds_protocol`'s types encode into an `automotive_wire_codec::Sink`, and this is
-    /// one — so a handler writes a value and its length cannot disagree with its bytes.
-    /// Both traits are re-exported from the crate root so reaching this needs no third
-    /// dependency.
+    /// one.
     #[test]
     fn a_protocol_value_encodes_straight_into_the_sink() {
         let mut buf = [0_u8; 8];
@@ -162,8 +145,8 @@ mod tests {
         assert_eq!(sink.written_bytes(), &[0xC0, 0x01, 0x23, 0x01]);
     }
 
-    /// ``UDSSVC_ARCH_0017`` — with no peer advertisement the buffer alone bounds the
-    /// response, which is a correct outcome rather than a degraded one.
+    /// ``UDSSVC_ARCH_0017``: with no peer advertisement the buffer alone bounds the
+    /// response.
     #[test]
     fn an_unadvertised_maximum_leaves_the_buffer_as_the_bound() {
         let mut buf = [0_u8; 8];
@@ -171,7 +154,7 @@ mod tests {
     }
 
     /// A peer that advertised less lowers the bound; one that advertised more does
-    /// not raise it. The buffer is physical and the advertisement is a claim.
+    /// not raise it.
     #[test]
     fn the_smaller_of_the_two_bounds_wins() {
         let mut buf = [0_u8; 8];
@@ -180,8 +163,7 @@ mod tests {
         assert_eq!(ResponseSink::new(&mut buf, Some(64)).remaining(), 8);
     }
 
-    /// `written_bytes` is how the driver reaches what it must transmit: `new` moves
-    /// the slice in, so there is no other route back to it.
+    /// `written_bytes` is what the driver transmits.
     #[test]
     #[allow(clippy::unwrap_used, reason = "testing success path")]
     fn written_bytes_is_what_the_driver_transmits() {
@@ -193,9 +175,8 @@ mod tests {
         assert_eq!(sink.remaining(), 5);
     }
 
-    /// Over-running is the failure the pipeline turns into responseTooLong (0x14).
-    /// `needed_at_least` is a lower bound by awc's own definition, and 0x14 carries
-    /// no length, so a lower bound is sufficient.
+    /// Over-running reports `needed_at_least` and `available`; 0x14 carries no length,
+    /// so a lower bound is sufficient.
     #[test]
     #[allow(clippy::unwrap_used, reason = "testing success path of first write")]
     #[allow(clippy::panic, reason = "testing failure path")]
@@ -218,8 +199,8 @@ mod tests {
         assert_eq!(sink.written(), 0);
     }
 
-    /// ``UDSSVC_ARCH_0017`` — ISO 14229-1 fixes a negative response at three bytes, so a
-    /// bound below three is not one the protocol admits: it is raised to three.
+    /// ``UDSSVC_ARCH_0017``: ISO 14229-1 fixes a negative response at three bytes, so a
+    /// bound below three is raised to three.
     #[test]
     fn the_bound_is_never_below_three_bytes() {
         let mut buffer = [0_u8; 8];
@@ -230,8 +211,8 @@ mod tests {
         assert_eq!(sink.remaining(), 2); // the buffer itself is the hard limit
     }
 
-    /// ``UDSSVC_ARCH_0017`` — a refused write is recorded for the pipeline to read; the
-    /// handler need not report it. Rewinding discards everything written.
+    /// ``UDSSVC_ARCH_0017``: a refused write is recorded for the pipeline to read, and
+    /// rewinding discards everything written.
     #[test]
     fn a_refused_write_is_recorded_and_rewind_discards() {
         let mut buffer = [0_u8; 4];

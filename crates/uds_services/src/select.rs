@@ -1,19 +1,13 @@
 //! Waiting on two futures at once, in `core` alone.
 //!
-//! ``UDSSVC_ARCH_0016`` promises that a handler outrunning `tP2_Server` yields and the
-//! driver submits a response-pending in that window. Reaching that window means waiting
-//! on "the handler completes **or** the deadline passes", and ``UDSSVC_ARCH_0030``
-//! forbids depending on a runtime, so this crate writes its own. It is the only
-//! machinery here that is not UDS.
+//! The driver waits on "the handler completes **or** the deadline passes" to answer
+//! `requestCorrectlyReceivedResponsePending` in that window (``UDSSVC_ARCH_0016``), and
+//! ``UDSSVC_ARCH_0030`` forbids depending on a runtime for it. Crate-private: the driver
+//! is its only caller.
 //!
-//! **Not public.** The driver is its only caller, and a UDS crate publishing a
-//! general-purpose two-way select would be answering questions about executor semantics
-//! that are no part of what it promises.
-//!
-//! The `Unpin` bounds keep it free of `unsafe`. An `async fn` future is `!Unpin`, but
-//! `Pin<&mut F>` is always `Unpin` and is a `Future` when `F` is, so a caller wraps each
-//! side in [`core::pin::pin!`] and the bound is met safely. The driver additionally uses
-//! `Pin::as_mut` so one handler survives several deadlines.
+//! The `Unpin` bounds keep it free of `unsafe`: an `async fn` future is `!Unpin`, but
+//! `Pin<&mut F>` is `Unpin` and a `Future` when `F` is, so a caller wraps each side in
+//! [`core::pin::pin!`], and `Pin::as_mut` lets one handler survive several deadlines.
 
 use core::future::Future;
 use core::pin::Pin;
@@ -53,10 +47,10 @@ impl<F: Future + Unpin, G: Future + Unpin> Future for Select2<F, G> {
 
 /// Complete when either future does, reporting which.
 ///
-/// `first` is polled first, so it wins a tie. The driver passes the handler as `first`
-/// deliberately: a handler that finished in the same wake as the deadline has a final
-/// response to send, and a response-pending for work already done is a message the
-/// standard does not ask for.
+/// `first` is polled first, so it wins a tie. The driver passes the handler as `first`:
+/// a handler that finished in the same wake as the deadline has a final response to
+/// send, and a response-pending for work already done is a message the standard does
+/// not ask for.
 pub(crate) fn select2<F: Future + Unpin, G: Future + Unpin>(
     first: F,
     second: G,
@@ -120,9 +114,8 @@ mod tests {
         ));
     }
 
-    /// Left is polled first, so it wins a tie — deliberately. A handler that finished
-    /// in the same wake as the deadline has a final response to send, and a
-    /// response-pending for work already done is a message nothing asked for.
+    /// Left is polled first, so it wins a tie: a handler that finished in the same wake
+    /// as the deadline has a final response to send.
     #[test]
     fn the_left_future_wins_a_tie() {
         let waker = Waker::noop();
@@ -143,8 +136,8 @@ mod tests {
         assert!(Pin::new(&mut s).poll(&mut cx).is_pending());
     }
 
-    /// An `async fn` future is `!Unpin`; `core::pin::pin!` is what satisfies the bound
-    /// without `unsafe`. This is the shape the driver uses, so it is compiled here.
+    /// An `async fn` future is `!Unpin`; `core::pin::pin!` satisfies the bound without
+    /// `unsafe`, in the shape the driver uses.
     #[test]
     fn a_pinned_async_block_satisfies_the_unpin_bound() {
         let waker = Waker::noop();
@@ -158,8 +151,8 @@ mod tests {
         ));
     }
 
-    /// The driver polls one handler across several deadlines, so the left future must
-    /// survive being selected on more than once. `Pin::as_mut` is how.
+    /// The left future survives being selected on more than once, through `Pin::as_mut`,
+    /// as the driver polls one handler across several deadlines.
     #[test]
     fn the_left_future_survives_repeated_selection() {
         let waker = Waker::noop();

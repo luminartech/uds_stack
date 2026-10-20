@@ -1,25 +1,18 @@
 //! Assembly, and the const arithmetic it performs.
 //!
-//! ``UDSSVC_ARCH_0013`` — a server is assembled by naming its services, so the set is a
-//! list this crate can read rather than an inference from which methods were overridden.
-//! `serviceNotSupported` (0x11) is decided from a list, and this is that list.
+//! ``UDSSVC_ARCH_0013``: a server is assembled by naming its services, and that list is
+//! what `serviceNotSupported` (0x11) is decided from.
 //!
-//! The macro does something the rest of the crate cannot. An associated const of a
-//! *generic* parameter is not usable as an array length — `[u8; S::MAX_REQUEST]` is
-//! rejected without the unstable `generic_const_exprs` — but at this macro's expansion
-//! site the types are concrete, so `<Ecu as DataTransfer>::MAX_BLOCK_LEN` is an
-//! ordinary const and folding a list of them into an array length is stable Rust. That is
-//! why assembly is a macro and not a blanket impl, and it is how [`crate::Storage`]'s
-//! sizes are derived without the application picking a number.
+//! Assembly is a macro because at its expansion site the types are concrete, so
+//! `<Ecu as DataTransfer>::MAX_BLOCK_LEN` is an ordinary const and folding a list of them
+//! into [`crate::Storage`]'s array lengths is stable Rust; an associated const of a
+//! generic parameter is not usable as an array length.
 
 /// The largest value in `values`, or zero where there are none.
 ///
-/// `#[doc(hidden)]`: macro plumbing. It is `pub` only because [`crate::uds_server`]
-/// expands in the application's crate and has to name it there, the same reason
-/// `__uds_request_bound!` and its siblings are.
-///
-/// Walked by splitting rather than by index: a `const fn` cannot use an iterator, and an
-/// index plus a counter needs two prose invariants that this needs none of.
+/// `#[doc(hidden)]`: macro plumbing, `pub` only because [`crate::uds_server`] expands in
+/// the application's crate and names it there, as `__uds_request_bound!` and its siblings
+/// are.
 #[doc(hidden)]
 #[must_use]
 pub const fn max_of(mut values: &[usize]) -> usize {
@@ -36,8 +29,7 @@ pub const fn max_of(mut values: &[usize]) -> usize {
 /// The smaller of two values. Caps a derived size at
 /// [`crate::UdsTransport::MAX_PDU`].
 ///
-/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. `core::cmp::min` is not `const` on
-/// stable, which is why this exists at all.
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is; `core::cmp::min` is not `const`.
 #[doc(hidden)]
 #[must_use]
 pub const fn min2(a: usize, b: usize) -> usize {
@@ -50,9 +42,8 @@ pub const fn min2(a: usize, b: usize) -> usize {
 /// in bytes, as [`DtcReportKind::record_len`](crate::DtcReportKind::record_len) tells
 /// them apart.
 ///
-/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. Saturating throughout because this
-/// crate denies `arithmetic_side_effects`, and a declared maximum large enough to
-/// overflow `usize` is capped by [`min2`] against
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. Saturating: a declared maximum
+/// large enough to overflow `usize` is capped by [`min2`] against
 /// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) immediately afterwards.
 #[doc(hidden)]
 #[must_use]
@@ -201,7 +192,7 @@ pub const fn assert_client_fits(
 ///
 /// The byte for each is `uds_protocol`'s to know (``UDSSVC_ARCH_0001`` gives it the
 /// format), so this list says only *which services this server implements*, which is
-/// the behaviour half and the fact ``UDSSVC_ARCH_0013`` needs.
+/// the behavior half and the fact ``UDSSVC_ARCH_0013`` needs.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_sids {
@@ -249,10 +240,8 @@ macro_rules! __uds_sids {
 
 /// What one service contributes to the in-flight buffer's length.
 ///
-/// `#[rustfmt::skip]`: rustfmt 1.9.0 does not converge on the two-level associated-type
-/// chains below (`<<$ty as _>::Did as _>::MAX_RECORD_LEN`) — each `cargo fmt` run adds
-/// further indentation to the continuation line rather than reaching a fixed point. The
-/// arms are hand-formatted instead, verified to stay within the crate's 92-column limit.
+/// `#[rustfmt::skip]`: rustfmt does not converge on the two-level associated-type chains
+/// below (`<<$ty as _>::Did as _>::MAX_RECORD_LEN`), so the arms are hand-formatted.
 #[doc(hidden)]
 #[macro_export]
 #[rustfmt::skip]
@@ -294,8 +283,8 @@ macro_rules! __uds_request_bound {
 
 /// What one service contributes to the response buffer's length.
 ///
-/// `#[rustfmt::skip]`: see `__uds_request_bound!`'s note above — the same non-convergent
-/// chain formatting affects the `ReadDataByIdentifier` and `RoutineControl` arms here.
+/// `#[rustfmt::skip]`: as `__uds_request_bound!`, for the `ReadDataByIdentifier` and
+/// `RoutineControl` arms.
 #[doc(hidden)]
 #[macro_export]
 #[rustfmt::skip]
@@ -336,8 +325,8 @@ macro_rules! __uds_response_bound {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_may_pend {
-    // Neither service can be in progress when a deadline passes — see their trait docs —
-    // so neither declares the constant and the answer is not the application's to give.
+    // Neither service can be in progress when a deadline passes (see their trait docs),
+    // so neither declares the constant.
     ($ty:ty, TesterPresent) => {
         false
     };
@@ -496,7 +485,7 @@ macro_rules! __uds_ahead_of_decode {
 /// The checks a listed service's stage makes ahead of the request's total length, for a
 /// request too long to have been received whole: an early `return` of the first one that
 /// fails, from the closure the truncated branch of `dispatch` calls. Only a service whose
-/// stage checks something before the length emits one — an identifier in its
+/// stage checks something before the length emits one: an identifier in its
 /// data-parameters (WDBI, RoutineControl) or the request sequence (SecurityAccess's
 /// and the transfer services' 0x24, `TransferData`'s 0x73 and 0x31); for the others
 /// `begin` has already asked every such question, and the request is 0x13.
@@ -663,25 +652,20 @@ macro_rules! __uds_assert {
 ///
 /// ``UDSSVC_ARCH_0013``, ``UDSSVC_ARCH_0035``.
 ///
-/// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) join the fold.
-/// It introduces no dependency on a binding: the *application* names the type, and it
-/// already depends on both crates, so ``UDSSVC_ARCH_0002`` and ``0003`` are untouched.
-///
+/// `transport = T` lets the transport's [`MAX_PDU`](crate::UdsTransport::MAX_PDU) join
+/// the fold; the *application* names the type, so ``UDSSVC_ARCH_0002`` and ``0003`` hold.
 /// `peers = N` sizes the association array of the `uds_session::Server<N>` the driver
 /// owns. `services = Assembly` names the marker type the macro declares and implements
 /// this crate's sealed [`ServiceSet`](crate::ServiceSet) on, with the application as its
 /// [`App`](crate::ServiceSet::App). `server = Name` is the alias the server is reached
-/// through: the macro emits `type Name = Server<Assembly, Transport, N>`, so the count is
-/// written once, where it acts. Both are private to the invoking module.
-///
-/// The application type may come from any crate: the marker is what is local, so one
+/// through: the macro emits `type Name = Server<Assembly, Transport, N>`. Both are private
+/// to the invoking module. The application type may come from any crate, so one
 /// application shared by firmware, a simulator and tests is assembled in each.
 ///
-/// **Milestone 1 accepts `peers = 1` only**, and any other count fails to compile. The
-/// driver keeps one slot for a `DiagnosticSessionControl` or `ECUReset` response awaiting
-/// its confirmation, and with a second tester that tester's selecting response could
-/// overwrite the slot while the first is still unconfirmed, so the first session would
-/// never be applied. With no peer at all, no response could ever be sent.
+/// `peers = 1` is the only count that compiles: the driver keeps one slot for a
+/// `DiagnosticSessionControl` or `ECUReset` response awaiting its confirmation, and a
+/// second tester's selecting response could overwrite it while the first is still
+/// unconfirmed.
 ///
 /// The assembly also fails to compile where the response buffer, or the transport's
 /// [`MAX_PDU`](crate::UdsTransport::MAX_PDU), is shorter than
@@ -820,32 +804,24 @@ macro_rules! __uds_assert {
 /// ```
 ///
 /// The emitted `dispatch` only routes: `pipeline::begin`, then the listed service's
-/// stage, and it returns what they left as an [`Unsettled`](crate::Unsettled). It calls
-/// `pipeline::settle` nowhere; the driver does, once the handler has finished
-/// (``UDSSVC_ARCH_0016``). Every clause 8.7 decision is the pipeline's.
+/// stage, and it returns what they left as an [`Unsettled`](crate::Unsettled). The driver
+/// calls `pipeline::settle` once the handler has finished (``UDSSVC_ARCH_0016``). Every
+/// clause 8.7 decision is the pipeline's.
 ///
-/// **Figure 6's sub-function questions are answered by one lookup per service trait** —
-/// an [`Access`](crate::Access) for a sub-function the service supports, typed in that
-/// service's own sub-function, carrying the sessions it is available in and the levels
-/// that unlock it (``UDSSVC_ARCH_0007`` rows 2 and 4, then Figure 6's optional 0x33).
-/// `dispatch` hands `pipeline::begin` one closure that routes to the listed service's
-/// trait, and the pipeline decides 0x12, 0x7E or 0x33 from the answer. The lookup is
-/// `access` on [`EcuReset`] and on every other staged service with a sub-function, except
-/// three: `DiagnosticSessionControl` answers with [`supports`] and [`supported_from`],
-/// because whether a session may be entered turns on the session it is entered from;
-/// `SecurityAccess` with [`sessions`], because it is the service that unlocks; and
-/// `TesterPresent` with nothing, because its only sub-function is available everywhere.
-/// `RoutineControl` is not asked here at all: Figure 5 keeps 0x31 out of the
-/// sub-function stage, so its `access` is keyed by routine and asked by its own stage.
+/// Figure 6's sub-function questions are answered by one lookup per service trait, an
+/// [`Access`](crate::Access) for a sub-function the service supports (``UDSSVC_ARCH_0007``
+/// rows 2 and 4, then Figure 6's optional 0x33), from which the pipeline decides 0x12,
+/// 0x7E or 0x33. The lookup is `access` on [`EcuReset`] and on every other staged service
+/// with a sub-function, except three: `DiagnosticSessionControl` answers with
+/// [`supports`] and [`supported_from`], `SecurityAccess` with [`sessions`], and
+/// `TesterPresent` with nothing, its only sub-function being available everywhere.
+/// `RoutineControl` is not asked here: Figure 5 keeps 0x31 out of the sub-function stage,
+/// so its `access` is keyed by routine and asked by its own stage.
 ///
 /// [`supports`]: crate::DiagnosticSessionControl::supports
 /// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
 /// [`sessions`]: crate::SecurityAccess::sessions
 /// [`EcuReset`]: crate::EcuReset
-///
-/// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
-/// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
-/// `{ [ => , > = : ; | as where`.
 ///
 /// # Examples
 ///
@@ -1009,13 +985,12 @@ macro_rules! uds_server {
                 <$transport as $crate::UdsTransport>::MAX_PDU,
             );
             // The only message clause 8.7.6 admits while a service is in progress is a
-            // two-byte TesterPresent. Anything larger is occupancy, and is answered
-            // busyRepeatRequest from its service identifier alone -- so this buffer need
-            // only be wide enough to read that identifier and reject what follows.
+            // two-byte TesterPresent; anything larger is answered busyRepeatRequest from
+            // its service identifier alone, so this buffer is wide enough to read that
+            // identifier.
             const CONCURRENT: usize = 8;
-            // A negative response always fits only if the buffer under the sink holds
-            // one; `ResponseSink::new` can raise its bound to the floor but not past the
-            // buffer.
+            // A negative response fits only if the buffer under the sink holds one:
+            // `ResponseSink::new` raises its bound to the floor but not past the buffer.
             const _: () = ::core::assert!(
                 <$transport as $crate::UdsTransport>::MAX_PDU
                     >= $crate::ResponseSink::MIN_BOUND,
@@ -1026,8 +1001,8 @@ macro_rules! uds_server {
                 "the response buffer cannot hold a negative response",
             );
             $( $crate::__uds_assert!($ty, $transport, $svc); )+
-            // Milestone 1 keeps one slot for a selecting response awaiting confirmation,
-            // so a second peer could overwrite it; zero peers can never answer.
+            // One slot for a selecting response awaiting confirmation, so a second peer
+            // could overwrite it; zero peers can never answer.
             const _: () = ::core::assert!(
                 { $peers } == 1,
                 "milestone 1 supports `peers = 1` only",
@@ -1227,8 +1202,8 @@ macro_rules! uds_server {
 
 /// Assemble a client from the identifier vocabulary it speaks.
 ///
-/// ``UDSSVC_ARCH_0020``, ``UDSSVC_ARCH_0024`` — the same enumeration a server's handlers
-/// are written against names a client's requests, so a vehicle programme that builds both
+/// ``UDSSVC_ARCH_0020``, ``UDSSVC_ARCH_0024``: the same enumeration a server's handlers
+/// are written against names a client's requests, so a vehicle program that builds both
 /// from one definition gets a compile error when only one was updated.
 ///
 /// `vocabulary = Name` names the marker type the macro declares and implements this
@@ -1249,7 +1224,7 @@ macro_rules! uds_server {
 /// compile, naming the limit it cannot carry, as does one with no room for a six-byte
 /// `DiagnosticSessionControl` response ([`crate::Client::diagnostic_session_control`]);
 /// six bytes also hold every negative response. The response buffer is capped at
-/// `MAX_PDU`, since no longer response can arrive.
+/// `MAX_PDU`, since no response longer than that can arrive.
 ///
 /// `client = Name` is the alias the client is reached through, so the channel counts and
 /// the keep-alive mode are written once, here, rather than at every signature that names
@@ -1643,9 +1618,7 @@ mod tests {
         assert_eq!(NONE, 0);
     }
 
-    /// The fold the macro performs, as a `const` so it fails to *compile* rather than
-    /// to run if it ever stops being const-evaluable — which is the property that
-    /// matters.
+    /// The fold the macro performs is const-evaluable: this fails to compile otherwise.
     #[test]
     fn the_maximum_is_const_evaluable() {
         const SIZES: [usize; 3] = [7, 1_026, 300];
@@ -1653,9 +1626,7 @@ mod tests {
         assert_eq!(MAX, 1_026);
     }
 
-    /// An empty set folds to zero rather than panicking. A server with no services is
-    /// useless but not malformed, and a panic in a const is a compile error with a very
-    /// poor message.
+    /// An empty set folds to zero rather than panicking.
     #[test]
     fn an_empty_set_folds_to_zero() {
         const MAX: usize = max_of(&[]);

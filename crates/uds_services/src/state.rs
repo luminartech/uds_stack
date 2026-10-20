@@ -1,24 +1,17 @@
 //! Protocol state this crate keeps and the application cannot reach.
 //!
-//! ``UDSSVC_ARCH_0035`` — bookkeeping ISO 14229-1 needs across requests belongs here, out
-//! of the application's reach: `State`'s fields are private to this crate and the
-//! [`crate::Server`] that holds one keeps it in a private field. The assembly names the
-//! type; the macro expands in the application's crate and could not keep a field private
-//! there, which is why the type is declared here and only *named* by the macro.
+//! ``UDSSVC_ARCH_0035``: the bookkeeping ISO 14229-1 needs across requests is this
+//! crate's. `State`'s fields are private to it, the [`crate::Server`] that holds one keeps
+//! it in a private field, and the macro, which expands in the application's crate, only
+//! names the type.
 
 use crate::{SecurityLevel, Sessions};
 use uds_protocol::DiagnosticSessionType;
 
 /// The state an assembled server keeps between requests. ``UDSSVC_ARCH_0035``.
 ///
-/// Sealed, so the only implementor is [`State`]; `INITIAL` rather than `EMPTY` because
-/// the initial state is not zero — it is `defaultSession`.
-///
-/// The seal is this module's own, not [`crate::sealed`]'s. That one has to be nameable
-/// from the application's crate, because `uds_server!` implements [`crate::ServiceSet`]
-/// there; nothing outside this crate implements `ProtocolState` — the macro only names
-/// [`State`] — so this seal can be one no other crate can reach, and a hand-written
-/// state cannot slip past ``UDSSVC_ARCH_0035``.
+/// Sealed with a seal no other crate can name, so [`State`] is the only implementor.
+/// `INITIAL` rather than `EMPTY`: the initial state is `defaultSession`, not zero.
 ///
 /// Implementing it from outside this crate does not compile, even through the crate-wide
 /// seal the macro uses:

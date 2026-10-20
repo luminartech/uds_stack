@@ -1,37 +1,18 @@
 //! The client role.
 //!
-//! ``UDSSVC_ARCH_0020`` — a client issues requests over the application's own
+//! ``UDSSVC_ARCH_0020``: a client issues requests over the application's own
 //! identifiers, and ``UDSSVC_ARCH_0024`` makes that the same vocabulary a server's
 //! handlers are written against. A client implements no service trait.
+//! ``UDSSVC_ARCH_0021``: a negative response is interpreted here; nothing below reads a
+//! response code.
 //!
-//! ``UDSSVC_ARCH_0021`` — a negative response is interpreted here; nothing below reads
-//! a response code.
-//!
-//! The exchanges themselves run in `client::driver` over `uds_session`'s client role and
-//! [`UdsTransport`], as [`crate::Server`]'s do; `client::encode` holds the sans-io halves
-//! (``UDSSVC_ARCH_0028``).
-//!
-//! [`Client`] has a call for every service the sensor stages, each one physical exchange
-//! with one server: [`Client::read_data_by_identifier`],
-//! [`Client::diagnostic_session_control`], [`Client::write_data_by_identifier`],
-//! [`Client::ecu_reset`], [`Client::security_access_seed`],
-//! [`Client::security_access_key`], [`Client::routine_control`],
-//! [`Client::read_dtc_information`], [`Client::clear_diagnostic_information`],
-//! [`Client::communication_control`] and [`Client::control_dtc_setting`]; the transfer
-//! steps [`Client::request_download`], [`Client::transfer_data`] and
-//! [`Client::request_transfer_exit`]. [`Client::read_data_by_identifier_functional`] is one
-//! functional exchange with every server at once. Beside the exchanges,
-//! [`Client::idle_until`] sends the `TesterPresent` keep-alives as they fall due,
+//! The exchanges run in `client::driver` over `uds_session`'s client role and
+//! [`UdsTransport`]; `client::encode` holds the sans-io halves (``UDSSVC_ARCH_0028``).
+//! [`Client`] has a call for every service a server stages, each one physical exchange
+//! with one server, and the `_functional` calls are one exchange with every server at
+//! once. [`Client::idle_until`] sends the `TesterPresent` keep-alives as they fall due,
 //! [`Client::connection_replaced`] reports why a server's connection was replaced, and
 //! [`Client::close`] ends the session.
-//!
-//! **The storage shape mirrors `uds_session`'s.** That crate splits channels by kind:
-//! `PhysicalSlot` carries no responder table where `FunctionalSlot<R>` does, and a
-//! physical channel's `tS3_Client` is an argument of `open_physical_channel` in physical
-//! keep-alive and absent from it in functional keep-alive.
-//! Mirroring the split costs a third const parameter and buys the same thing it buys
-//! them — a physical-only client pays nothing for responder tables, and a functional
-//! channel cannot be given a session reload it has no use for.
 
 mod driver;
 mod encode;
@@ -66,15 +47,11 @@ pub const KEEP_ALIVE_LEN: usize = encode::KEEP_ALIVE.len();
 
 /// One application's identifier vocabulary, with the storage derived from it.
 ///
-/// ``UDSSVC_ARCH_0013`` for the client half — implemented by [`crate::uds_client`],
+/// ``UDSSVC_ARCH_0013`` for the client half: implemented by [`crate::uds_client`],
 /// never by hand, on the marker type it declares in the invoking crate. The identifier
-/// enumerations, [`Self::Did`] and [`Self::Routine`], may live in any crate: a client has
-/// no handler state, so they and its [`ClientLimits`] are all the application declares,
-/// and they are what the buffer lengths are folded from.
-///
-/// Sealed through [`crate::sealed`], for the reason
-/// [`ServiceSet`](crate::ServiceSet) is: the derivation argument holds only while the
-/// macro is what chooses [`Self::Store`]'s lengths.
+/// enumerations, [`Self::Did`] and [`Self::Routine`], may live in any crate; they and the
+/// [`ClientLimits`] are what the buffer lengths are folded from. Sealed through
+/// [`crate::sealed`], as [`ServiceSet`](crate::ServiceSet) is.
 pub trait ClientSet: crate::sealed::Sealed {
     /// The data identifiers the client's requests name, declared as
     /// [`crate::uds_client`]'s leading type.
@@ -93,10 +70,8 @@ pub trait ClientSet: crate::sealed::Sealed {
 /// identifier vocabularies declare.
 ///
 /// [`crate::uds_client`] folds the client's buffers from these. Built in a `const` from
-/// [`Self::new`] and its setters, and read back through the field each setter sets. A
-/// limit not set keeps its default, which carries nothing beyond the smallest request:
-/// one identifier per read, and no seed, key, option record, DTC record or transfer
-/// block.
+/// [`Self::new`] and its setters. A limit not set keeps its default: one identifier per
+/// read, and no seed, key, option record, DTC record or transfer block.
 ///
 /// A limit a request carries bounds it: a call given more is [`ClientError::Request`],
 /// and nothing is sent. A response longer than the response buffer is
@@ -226,7 +201,7 @@ impl Default for ClientLimits {
 
 /// Why a call produced no response.
 ///
-/// ``UDSSVC_ARCH_0023`` — a timeout is a fault, as are a request that could not be sent
+/// ``UDSSVC_ARCH_0023``: a timeout is a fault, as are a request that could not be sent
 /// and a connection that closed under it. A negative response is not here: it is a
 /// response, [`Response::Negative`] or [`Answer::Negative`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -495,18 +470,14 @@ pub struct ClientTiming {
     /// standard gives no default.
     pub network_delay: u32,
     /// The ceiling on a physically addressed request's repeats under which an expired
-    /// response window is repeated rather than reported as [`ClientError::Timeout`].
-    /// ISO 14229-2:2021 9.7 Table 9 has the client repeat it and leaves performing the
-    /// repeat to the application (``UDSS_LLR_0177`` caps it). Table 9 performs its error
-    /// handling "for a maximum of two times" whatever the error, so the ceiling counts
-    /// every repeat of the request: a failed transmission's repeat leaves one fewer for
-    /// an expired window. A failed transmission is itself repeated under
-    /// [`Self::transmission_repeats`], that cell being the link's, not the request's.
-    /// A functionally addressed request's window is not repeated, so this ceiling does
-    /// not reach it. [`Self::new`] sets [`Repeats::Twice`].
-    /// [`Repeats::Never`] also forgoes the one repeat the standard designs a server to
-    /// absorb, a [`Client::transfer_data`] block with the same counter (ISO 14229-1:2020
-    /// 15.4); set it, call, and restore it where that repeat is wanted.
+    /// response window is repeated rather than reported as [`ClientError::Timeout`]
+    /// (ISO 14229-2:2021 9.7 Table 9, ``UDSS_LLR_0177``). Table 9 caps its error handling
+    /// at two times whatever the error, so the ceiling counts every repeat of the
+    /// request: a failed transmission's repeat, made under
+    /// [`Self::transmission_repeats`], leaves one fewer for an expired window. A
+    /// functionally addressed request's window is not repeated. [`Self::new`] sets
+    /// [`Repeats::Twice`]; [`Repeats::Never`] also forgoes the repeat of a
+    /// [`Client::transfer_data`] block with the same counter (ISO 14229-1:2020 15.4).
     pub repeats: Repeats,
     /// The ceiling on a request's repeats after a failed transmission, physical or
     /// functional; past it the request is [`ClientError::NotSent`]. [`Self::new`] sets
@@ -664,7 +635,7 @@ impl From<RecordError> for MalformedResponse {
 
 /// What one server said.
 ///
-/// ``UDSSVC_ARCH_0021`` — three cases, and none is an error.
+/// ``UDSSVC_ARCH_0021``: three cases, and none is an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Response<V> {
@@ -704,12 +675,9 @@ impl<V> Response<V> {
 
 /// One server's answer to a functionally addressed request.
 ///
-/// ``UDSSVC_ARCH_0022`` — each responding server sets its own source address, and that is
-/// how answers are told apart, so every variant carries one.
-///
-/// There is no "nothing came back" case here, unlike [`Response`]: a server that stays
-/// silent produces no answer at all, which is the response window closing rather than a
-/// value to match on.
+/// ``UDSSVC_ARCH_0022``: each responding server sets its own source address, which is
+/// how answers are told apart, so every variant carries one. A server that stays silent
+/// produces no answer at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Answer<'d, D: DataIdentifier> {
@@ -732,8 +700,7 @@ pub enum Answer<'d, D: DataIdentifier> {
     /// identifiers, or that carries a record the request did not ask for.
     ///
     /// Not a [`UdsTransport::Error`]: the transport delivered the message intact and the
-    /// server answered. What failed is the agreement about what the bytes mean, which is
-    /// a disagreement between two applications rather than a link fault.
+    /// server answered.
     Malformed {
         /// The responding server's `S_AI[SA]`.
         from: Address,
@@ -756,15 +723,10 @@ impl<D: DataIdentifier> Answer<'_, D> {
 
 /// The answers to one functionally addressed request.
 ///
-/// ``UDSSVC_ARCH_0022`` — a functional request reaches every server on the bus, so zero
+/// ``UDSSVC_ARCH_0022``: a functional request reaches every server on the bus, so zero
 /// or more may answer, and by ``UDSSVC_ARCH_0009`` those that do not support it answer
-/// with silence. There is no single response to return, so typing one would force the API
-/// to lie about the common case.
-///
-/// The sequence is **lending**: an answer borrows the receive buffer and is valid only
-/// until the next is taken. ``UDSSVC_ARCH_0017``'s reasoning — an owned sequence
-/// allocates per response. An inherent `async fn` rather than a `Stream`, because a
-/// `Stream` item cannot borrow the receive buffer.
+/// with silence. The sequence is **lending**: an answer borrows the receive buffer and is
+/// valid only until the next is taken (``UDSSVC_ARCH_0017``).
 ///
 /// The request goes out on the first [`Self::next`]. The request in progress is recorded
 /// in the [`Client`], not here, so dropping this part-way is safe: the client's next call
@@ -841,7 +803,7 @@ impl<
 /// One server's answer to a functionally addressed request whose positive response
 /// carries nothing to read, such as [`Client::control_dtc_setting_functional`]'s.
 ///
-/// ``UDSSVC_ARCH_0022`` — each responding server sets its own source address, so every
+/// ``UDSSVC_ARCH_0022``: each responding server sets its own source address, so every
 /// variant carries one. A server that stays silent produces no reply at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -962,20 +924,14 @@ where
 
 /// The identifier/record pairs in one `ReadDataByIdentifier` response.
 ///
-/// ``UDSSVC_ARCH_0026`` — the application declared each identifier's record structure, so
-/// splitting a multi-identifier response needs nothing this crate knows about the data.
-/// A response is a concatenation of `(identifier, record)` with no length prefixes, and
-/// [`DataIdentifier::split_record`] is what makes it walkable.
+/// ``UDSSVC_ARCH_0026``: a response is a concatenation of `(identifier, record)` with no
+/// length prefixes, and [`DataIdentifier::split_record`] is what makes it walkable.
 ///
-/// **Walking one cannot fail.** The whole response is checked when this is built, so a
-/// framing error is one [`MalformedResponse`] reported once — as [`Answer::Malformed`] or
-/// [`Response::Malformed`] — rather than a `Result` at every step of a walk that could
-/// only ever fail once and then end. There is no half-walked response: either every pair
-/// is reachable or none is.
-///
-/// Items borrow the receive buffer, not the iterator, so this is an ordinary [`Iterator`]
-/// rather than a lending one. `Clone` but not `Copy`: a copied iterator silently restarts
-/// the walk, which is the whole hazard `clippy::copy_iterator` names.
+/// Walking one cannot fail: the whole response is checked when this is built, so a
+/// framing error is one [`MalformedResponse`], reported as [`Answer::Malformed`] or
+/// [`Response::Malformed`], and either every pair is reachable or none is. Items borrow
+/// the receive buffer, not the iterator, so this is an ordinary [`Iterator`]. `Clone` but
+/// not `Copy`: a copied iterator silently restarts the walk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "the records are the response; dropping this discards it"]
 pub struct Records<'d, D> {
@@ -984,11 +940,8 @@ pub struct Records<'d, D> {
 }
 
 impl<'d, D: DataIdentifier> Records<'d, D> {
-    /// Check `response` — the bytes after the echoed service identifier — and hold it
-    /// for walking.
-    ///
-    /// Not public: a [`Records`] comes from a read, so the offset this expects is never
-    /// a caller's to get right.
+    /// Check `response`, the bytes after the echoed service identifier, and hold it for
+    /// walking.
     ///
     /// # Errors
     ///
@@ -1024,9 +977,7 @@ impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
         let (identifier, tail) = self.rest.split_first_chunk::<2>()?;
         let did = D::from_u16(u16::from_be_bytes(*identifier))?;
         // `validate` walked this same path already, so none of the three fallible steps
-        // here can fail. Ending the walk is the honest way to say so: this crate denies
-        // both `panic` and `unreachable`, and stopping cannot be worse than the half-walk
-        // the validation exists to prevent.
+        // here fails; a failure would end the walk.
         let (record, rest) = did.split_record(tail).ok()?;
         self.rest = rest;
         Some((did, record))
@@ -1035,23 +986,15 @@ impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
 
 /// A UDS client over any transport.
 ///
-/// ``UDSSVC_ARCH_0028`` — the core is sans-io; awaiting is the layer above it, so the
-/// encode and interpret halves are usable without a transport at all.
+/// ``UDSSVC_ARCH_0028``: the core is sans-io, and awaiting is the layer above it.
 ///
 /// `C` is the identifier vocabulary and, through [`ClientSet::Store`], the buffers folded
 /// from it. `K`, `PHYS`, `FUNC` and `R` mirror `uds_session::Client<K, PHYS, FUNC, R>`:
-/// the keep-alive mode, physical channels, functional channels, and responders per
-/// functional channel. `R` defaults to `0`, as it does there, so a physical-only client
-/// does not write a count for tables it has none of.
-///
-/// An application never spells any of this. [`crate::uds_client`] emits
-/// `type Tester = Client<..>` and that alias is the name at every call site, the same way
-/// [`crate::uds_server`]'s `server = Name` works.
-///
-/// `K` is `uds_session::FunctionalKeepAlive` or `PhysicalKeepAlive`, sealed there to those
-/// two. Holding it in the type is that crate's `UDSS_LLR_0149`: the mode is fixed at
-/// creation, so the methods that supply a `tS3_Client` reload exist only on the mode that
-/// gives one a meaning.
+/// the keep-alive mode (`FunctionalKeepAlive` or `PhysicalKeepAlive`, fixed at creation,
+/// `UDSS_LLR_0149`), physical channels, functional channels, and responders per
+/// functional channel, `R` defaulting to `0`. An application never spells any of this:
+/// [`crate::uds_client`] emits `type Tester = Client<..>`, and that alias is the name at
+/// every call site.
 #[derive(Debug)]
 pub struct Client<
     C: ClientSet,
@@ -1087,16 +1030,11 @@ impl<
 {
     /// A client over `transport`, owning its session-layer and buffer storage by value.
     ///
-    /// A `const fn`, which is load-bearing for the reason
-    /// [`crate::Server::new`] is one: the buffers are inline and a runtime constructor
-    /// would build a stack temporary before the move.
-    ///
-    /// The channel slots are built here rather than supplied, so an application never
-    /// names `uds_session` — the same commitment [`crate::Server::new`] already makes by
-    /// building its own session. Channels are opened as calls need them, one per server
-    /// and kind, with the reloads [`UdsTransport::channel_timing`] dictates. No channel
-    /// handle crosses this API, so two clients cannot confuse each other's, and
-    /// `uds_session`'s handle tag is left at its default.
+    /// A `const fn`, as [`crate::Server::new`] is, so a client whose buffers are inline is
+    /// built in a `static` initializer rather than as a stack temporary. The channel slots
+    /// are built here, so an application never names `uds_session`; channels are opened as
+    /// calls need them, one per server and kind, with the reloads
+    /// [`UdsTransport::channel_timing`] dictates, and no channel handle crosses this API.
     ///
     /// # Arguments
     ///
@@ -1156,9 +1094,7 @@ impl<
     /// Read one or more data identifiers from one server.
     ///
     /// The response comes back as [`Records`], the identifier/record pairs it carries,
-    /// not as the undivided bytes: the application already declared each record's
-    /// structure through [`DataIdentifier::split_record`], so re-walking the response by
-    /// hand would be the caller redoing work this crate can do.
+    /// split by the application's [`DataIdentifier::split_record`].
     ///
     /// A response-pending message (`0x78`) extends the wait to the enhanced response
     /// window, which [`Self::diagnostic_session_control`] sets from the server's own
@@ -1176,7 +1112,7 @@ impl<
     ///
     /// # Errors
     ///
-    /// A negative response is **not** an error — it arrives as [`Response::Negative`].
+    /// A negative response is **not** an error: it arrives as [`Response::Negative`].
     ///
     /// - [`ClientError::Request`] where `identifiers` is empty or too long; nothing is
     ///   sent.
@@ -1221,7 +1157,7 @@ impl<
 
     /// Change one server's diagnostic session.
     ///
-    /// ISO 14229-1:2020 10.2 — the positive response carries the session's
+    /// ISO 14229-1:2020 10.2: the positive response carries the session's
     /// [`SessionTiming`], read in Table 29's units. Its `P2Server_max` and
     /// `P2*Server_max`, each plus [`ClientTiming::network_delay`], become the waits this
     /// client allows for a response from `target` and after a response-pending message
@@ -1681,18 +1617,15 @@ impl<
     }
 
     /// Ask `target` to take a download of `size` bytes to `address` (ISO 14229-1:2020
-    /// 15.2): the first of clause 17's standardized transfer steps. The
+    /// 15.2), the first of clause 17's standardized transfer steps. The
     /// `addressAndLengthFormatIdentifier` declares the narrowest widths that hold
     /// `address` and `size`; [`Self::request_download_with_format`] fixes them instead.
     ///
     /// The response is the server's `maxNumberOfBlockLength`: the length of one
     /// `TransferData` request, service identifier and counter included (Table 443), so
     /// each [`Self::transfer_data`] block carries exactly this minus two data bytes,
-    /// except possibly the last. The server need accept nothing shorter: "A server is
-    /// required to accept transferData requests that are equal in length to its reported
-    /// maxNumberOfBlockLength. It is server specific what transferData request lengths
-    /// less than maxNumberOfBlockLength are accepted (if any)." A block longer than the
-    /// client's [`ClientLimits::max_block_len`] cannot be sent.
+    /// except possibly the last; the server need accept nothing shorter (15.2.3.2). A
+    /// block longer than the client's [`ClientLimits::max_block_len`] cannot be sent.
     ///
     /// The client keeps no transfer state: the caller owns the block sequence counter
     /// and its roll from `0xFF` to `0x00`.
@@ -1794,10 +1727,9 @@ impl<
     /// Send one block of a transfer to `target` (ISO 14229-1:2020 15.4). The response
     /// echoes `counter`, then carries the server's `transferResponseParameterRecord`.
     ///
-    /// This is the one request the standard designs a repeat for: a server that already
-    /// wrote the block answers its repeat, same `counter`, without writing again (15.4).
-    /// A caller holding [`ClientTiming::repeats`] at [`Repeats::Never`] raises it for the
-    /// blocks, through [`Self::timing_mut`], and restores it after.
+    /// A server that already wrote the block answers its repeat, same `counter`, without
+    /// writing again (15.4), so a caller holding [`ClientTiming::repeats`] at
+    /// [`Repeats::Never`] raises it for the blocks through [`Self::timing_mut`].
     ///
     /// # Arguments
     ///
@@ -1885,13 +1817,12 @@ impl<
 
     /// Wait until `until`, sending every keep-alive that falls due meanwhile.
     ///
-    /// The client's `sleep`: a keep-alive is only ever sent from inside a call, so an
-    /// application with a server in a non-default session waits here between requests.
-    /// One that does not still has an overdue keep-alive sent during its next call, since
-    /// the session layer holds it until then: a physical one as soon as that call first
-    /// waits on the transport (to the server the call addresses, the request itself
-    /// stands in for it), the functional one once the call's exchange has ended. What
-    /// arrives meanwhile is handed to the session layer and otherwise discarded.
+    /// A keep-alive is only ever sent from inside a call, so an application with a server
+    /// in a non-default session waits here between requests. One that does not still has
+    /// an overdue keep-alive sent during its next call: a physical one as soon as that
+    /// call first waits on the transport (the request itself stands in for it to the
+    /// server the call addresses), the functional one once the call's exchange has ended.
+    /// What arrives meanwhile is handed to the session layer and otherwise discarded.
     ///
     /// # Arguments
     ///
@@ -1923,35 +1854,27 @@ impl<
     /// the channel to it was opened over.
     ///
     /// A positive [`Self::ecu_reset`] response is reported [`Replaced::SessionLost`] from
-    /// that exchange itself, before the transport reports the close, since the server
-    /// always closes after one (ISO 14229-5:2022 REQ 7.11); the next close the transport
-    /// reports to `target` is that same one, unless the server answers first. Any other
-    /// close is reported once the transport has been polled past it, by
-    /// [`Self::idle_until`] or by any call: [`Replaced::SessionLost`] where the transport
-    /// marks it expected, and [`Replaced::SessionUnknown`] otherwise. The `DoIP`
-    /// transport marks the close that follows a positive `DiagnosticSessionControl`
-    /// (REQ 7.9), a close a server makes only where the change leaves its running
-    /// software, until it acknowledges any request between the response and the close,
-    /// a keep-alive falling due included; that close is then
-    /// [`Replaced::SessionUnknown`]. On a transport whose first poll after a close may be
-    /// `Pending`, as the std `DoIP` stack's is, one poll may not reach it.
+    /// that exchange itself, since the server always closes after one (ISO 14229-5:2022
+    /// REQ 7.11); the next close the transport reports to `target` is that same one,
+    /// unless the server answers first. Any other close is reported once the transport
+    /// has been polled past it, by [`Self::idle_until`] or by any call:
+    /// [`Replaced::SessionLost`] where the transport marks it expected, and
+    /// [`Replaced::SessionUnknown`] otherwise. The `DoIP` transport marks the close that
+    /// follows a positive `DiagnosticSessionControl` (REQ 7.9) until it acknowledges any
+    /// request between the response and the close, a keep-alive included. On a transport
+    /// whose first poll after a close may be `Pending`, one poll may not reach it.
     ///
     /// [`Replaced::SessionUnknown`] is the normal result of a request that went unanswered
-    /// over `DoIP`: its transport puts the first request after it, the repeat
-    /// ISO 14229-2:2021 Table 9 asks for where [`ClientTiming::repeats`] allows one or the
-    /// next call where it does not, on a new connection, so a late answer cannot be taken
-    /// for that request's. It is also the result of a call cancelled after its request
-    /// went.
-    ///
+    /// over `DoIP`, whose transport puts the next request on a new connection so that a
+    /// late answer cannot be taken for it, and of a call canceled after its request went.
     /// Where closes of both kinds happened since the last asking, the answer is
     /// [`Replaced::SessionLost`], once.
     ///
-    /// This first settles what an earlier call left, waiting out a functional window a
-    /// dropped call left open, then takes every event the transport holds at the asking,
-    /// until it reports the asking's time as its deadline or its clock passes it, sends a
-    /// keep-alive that fell due, and answers. Asking clears the report.
-    /// [`Replaced::No`] where no channel to `target` is open, and where the channel was
-    /// withdrawn for another server before the asking.
+    /// This first settles what an earlier call left, then takes every event the transport
+    /// holds at the asking, until it reports the asking's time as its deadline or its
+    /// clock passes it, sends a keep-alive that fell due, and answers. Asking clears the
+    /// report. [`Replaced::No`] where no channel to `target` is open, and where the
+    /// channel was withdrawn for another server before the asking.
     ///
     /// # Arguments
     ///
@@ -2012,12 +1935,10 @@ impl<
 
     /// Read one or more data identifiers from every server on a functional address.
     ///
-    /// ``UDSSVC_ARCH_0022`` — a functional request reaches every server, so zero or
-    /// more may answer and there is no single response to return. The answers come back
-    /// as a lending sequence: this is the only way to obtain a [`Responses`], and
-    /// draining it is how each server's answer is read. Nothing is sent until its first
-    /// [`Responses::next`], which is also where a refusal surfaces. A negative response is
-    /// [`Answer::Negative`], which is not an error.
+    /// ``UDSSVC_ARCH_0022``: zero or more servers answer, so the answers come back as a
+    /// [`Responses`] sequence; nothing is sent until its first [`Responses::next`], which
+    /// is also where a refusal surfaces. A negative response is [`Answer::Negative`],
+    /// which is not an error.
     ///
     /// # Arguments
     ///
@@ -2045,7 +1966,7 @@ impl<
     /// the suppress bit set so that none answers (ISO 14229-1:2020 9.2.2), and awaiting
     /// nothing beyond the transmission's confirmation.
     ///
-    /// ``UDSSVC_ARCH_0009`` and ISO 14229-1:2020 Table 5 — a server that performed the
+    /// ``UDSSVC_ARCH_0009`` and ISO 14229-1:2020 Table 5: a server that performed the
     /// request is silent, as is one that does not support it, so success cannot be told
     /// from silent non-support; a server that refuses it for any other reason still
     /// answers with a negative response, which the [`Replies`] sequence lends, as it
@@ -2078,7 +1999,7 @@ impl<
     /// Set DTC recording on every server on a functional address, with the suppress bit
     /// clear so that each that supports it answers.
     ///
-    /// ``UDSSVC_ARCH_0022`` — zero or more servers answer, so the replies come back as a
+    /// ``UDSSVC_ARCH_0022``: zero or more servers answer, so the replies come back as a
     /// [`Replies`] sequence; nothing is sent until its first [`Replies::next`], which is
     /// also where a refusal surfaces.
     ///
@@ -2243,7 +2164,6 @@ const fn within(len: usize, max: usize) -> Result<(), RequestError> {
     }
 }
 
-/// The bytes `answered` occupies in the response buffer.
 /// The response `answered` holds, with the identifiers of the `ReadDataByIdentifier`
 /// request it answers: the first `count` pairs after the request's service identifier,
 /// which nothing overwrites until the next request is encoded.
@@ -2262,6 +2182,7 @@ fn answered_read<'s, S: ClientStorage>(
     )
 }
 
+/// The bytes `answered` occupies in the response buffer.
 fn answered_bytes<'s, S: ClientStorage>(store: &'s mut S, answered: &Answered) -> &'s [u8] {
     let ClientBuffers { response, .. } = store.split();
     response.get(answered.range.clone()).map_or(&[], |m| m)
@@ -2304,9 +2225,8 @@ mod tests {
         }
     }
 
-    /// ``UDSSVC_ARCH_0021`` — a negative response is a response, and this crate is the
-    /// layer that interprets it: `uds_session` indicates the message and `UdsTransport`
-    /// carries its bytes, and neither reads a response code.
+    /// ``UDSSVC_ARCH_0021``: a negative response is a response, and this crate is the
+    /// layer that interprets it.
     #[test]
     fn a_negative_response_is_a_response_not_an_error() {
         let p: Response<&[u8]> = Response::Positive(&[0x62]);
@@ -2316,10 +2236,8 @@ mod tests {
         assert!(matches!(n, Response::Negative(_)));
     }
 
-    /// ``UDSSVC_ARCH_0022`` — each answer carries the source address of the server that
-    /// produced it. For a functionally addressed request every responding server sets
-    /// its own, and a sequence of decoded responses without their senders would be
-    /// unattributable — so `from` is on every variant and reachable without matching.
+    /// ``UDSSVC_ARCH_0022``: each answer carries the source address of the server that
+    /// produced it, reachable without matching.
     #[test]
     fn every_answer_names_its_sender() {
         let declined: Answer<'_, TestDid> = Answer::Negative {
@@ -2334,13 +2252,8 @@ mod tests {
         assert_eq!(broken.from(), Address(0x0E02));
     }
 
-    /// ``UDSSVC_ARCH_0026`` — the application declared the record widths, so the client
-    /// hands back typed pairs rather than the undivided response. Two identifiers of
-    /// different widths in one response is the case that makes the point: nothing but
-    /// `split_record` can tell where the first record ends.
-    ///
-    /// Walking yields pairs, not `Result`s: the response was checked when the walk was
-    /// built.
+    /// ``UDSSVC_ARCH_0026``: two identifiers of different widths in one response split
+    /// into typed pairs, and walking yields pairs, not `Result`s.
     #[test]
     fn a_response_splits_into_the_records_the_application_declared() {
         // 0xF40D and its one byte, then 0xF190 and its seventeen.
@@ -2370,8 +2283,7 @@ mod tests {
     }
 
     /// A record shorter than the application declared is rejected when the walk is
-    /// built, not discovered part-way through one. The distinction is the point of
-    /// validating: a caller never sees a response half-walked.
+    /// built, not discovered part-way through one.
     #[test]
     fn a_truncated_record_is_rejected_before_the_walk() {
         assert_eq!(
@@ -2380,9 +2292,8 @@ mod tests {
         );
     }
 
-    /// An identifier this application never defined is its own error. On a request that
-    /// is `requestOutOfRange`; in a response it is a server naming something unasked
-    /// for, and it too is caught before any pair is handed out.
+    /// An identifier this application never defined is its own error, caught before any
+    /// pair is handed out.
     #[test]
     fn an_identifier_the_application_does_not_define_is_rejected() {
         assert_eq!(
@@ -2391,10 +2302,8 @@ mod tests {
         );
     }
 
-    /// The records before a bad one are not handed out either. A response whose first
-    /// pair is whole and whose second is truncated is rejected entire — which is what
-    /// "there is no half-walked response" means, and what a per-record `Result` could
-    /// not express.
+    /// The records before a bad one are not handed out either: a response whose first
+    /// pair is whole and whose second is truncated is rejected entire.
     #[test]
     fn a_good_record_before_a_bad_one_is_not_yielded() {
         let response = [0xF4, 0x0D, 0x40, 0xF1, 0x90, 0x00];

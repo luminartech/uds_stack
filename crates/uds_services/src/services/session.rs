@@ -1,6 +1,6 @@
-//! Diagnostics and communication management — ISO 14229-1:2020 clause 10.
+//! Diagnostics and communication management, ISO 14229-1:2020 clause 10.
 //!
-//! ``UDSSVC_ARCH_0012`` — one trait per service.
+//! ``UDSSVC_ARCH_0012``: one trait per service.
 
 use crate::{Access, SessionTransition};
 use uds_protocol::{
@@ -8,7 +8,7 @@ use uds_protocol::{
     NegativeResponseCode, P2StarServerMax, ResetType, SubnetNumber,
 };
 
-/// ``UDSS_LLR_0073`` — the session layer learns only default/non-default.
+/// ``UDSS_LLR_0073``: the session layer learns only default/non-default.
 pub(crate) fn selection_of(
     session: DiagnosticSessionType,
 ) -> uds_session::SessionSelection {
@@ -22,10 +22,9 @@ pub(crate) fn selection_of(
 /// The `P2` pair a session advertises in its `DiagnosticSessionControl` response, and
 /// that [`crate::Server`] enforces while the session is in force.
 ///
-/// ISO 14229-1:2020 clause 10.2 — the positive response carries `P2Server_max` and
-/// `P2*Server_max` for the session being entered, so they are a property of the session.
-/// Held in Table 29's wire form, so every value is advertised exactly and the window
-/// enforced is the one advertised.
+/// ISO 14229-1:2020 clause 10.2: the positive response carries `P2Server_max` and
+/// `P2*Server_max` for the session being entered. Held in Table 29's wire form, so the
+/// window enforced is the one advertised.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SessionTiming {
     /// `P2Server_max`, in 1 ms units.
@@ -52,21 +51,15 @@ impl SessionTiming {
 /// classifies the change before the application sees it, so an application never tracks
 /// a session itself.
 ///
-/// **No `MAY_RESPOND_PENDING`**, unlike the services in ``UDSSVC_ARCH_0033``. A
-/// response-pending is what the driver sends while it is still awaiting a handler, and
-/// nothing here is awaited: [`Self::supports`], [`Self::supported_from`],
-/// [`Self::timing`] and [`Self::leaves_running_software`] are lookups the driver makes
-/// before composing or sending the response, and
-/// [`Self::on_transition`] runs after that response has gone out. There is no window in
-/// which a 0x78 could come due, so the constant would have had one possible value and no
-/// effect.
+/// No `MAY_RESPOND_PENDING`, unlike the services in ``UDSSVC_ARCH_0033``: nothing here is
+/// awaited, so there is no window in which a 0x78 could come due.
 pub trait DiagnosticSessionControl {
     /// The longest positive response beyond the mandatory four timing bytes.
     const MAX_RESPONSE_LEN: usize;
 
     /// Whether this server supports `session` at all, from whichever session.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?",
     /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
     /// `subFunctionNotSupported` (0x12) before [`Self::supported_from`] is asked.
     ///
@@ -80,15 +73,11 @@ pub trait DiagnosticSessionControl {
     /// Whether `session` may be entered from `active`.
     ///
     /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
-    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `session` that
-    /// [`Self::supports`] accepted, so a `false` here is always "supported, but not from
-    /// this session": the pipeline settles it `subFunctionNotSupportedInActiveSession`
-    /// (0x7E), which Annex A reserves for a sub-function "known to be supported in
-    /// another session". A `session` this server never supports is 0x12, however this
-    /// answers.
-    ///
-    /// No default: the table of which session is reachable from which is the
-    /// application's to state. A server that restricts no transition returns `true`.
+    /// for the SID?", ``UDSSVC_ARCH_0007`` row 4. Asked only for a `session` that
+    /// [`Self::supports`] accepted, so a `false` settles the request
+    /// `subFunctionNotSupportedInActiveSession` (0x7E), which Annex A reserves for a
+    /// sub-function "known to be supported in another session". A server that restricts
+    /// no transition returns `true`.
     ///
     /// # Arguments
     ///
@@ -103,10 +92,9 @@ pub trait DiagnosticSessionControl {
     /// The `P2` pair `session` advertises and, while it is in force, the server enforces.
     ///
     /// Asked for the entered session when composing the positive response, and for the
-    /// session in force each time a request arrives: [`crate::Server`] loads the pair
-    /// into the session layer then, so the request's window is the one its session
-    /// advertised, and any session the server is in — the default one included — is
-    /// timed by this and not by the [`ServerParams`](crate::ServerParams) passed to
+    /// session in force each time a request arrives, when [`crate::Server`] loads the pair
+    /// into the session layer. Every session the server is in, the default one included,
+    /// is timed by this and not by the [`ServerParams`](crate::ServerParams) passed to
     /// [`Server::new`](crate::Server::new). The returned pair must keep those params'
     /// `response_pending_lead` well formed
     /// ([`ServerParams::lead_fits`](crate::ServerParams::lead_fits)); the server panics
@@ -120,20 +108,17 @@ pub trait DiagnosticSessionControl {
     /// Whether entering `session` leaves the software this server is running.
     ///
     /// ISO 14229-1:2020 10.2.2.2 Table 25 lets the programming session run in boot
-    /// software, left only by `ECUReset`, `10 01` or a session timeout, with the
-    /// application software restarted where it is valid. So it is each binary's to say:
-    /// an application jumping to its bootloader answers `true` for
-    /// [`ProgrammingSession`](DiagnosticSessionType::ProgrammingSession), and the
+    /// software, so each binary says: an application jumping to its bootloader answers
+    /// `true` for [`ProgrammingSession`](DiagnosticSessionType::ProgrammingSession), the
     /// bootloader `true` for [`DefaultSession`](DiagnosticSessionType::DefaultSession)
-    /// where valid application software exists. A server that programs from within its
-    /// application answers `false` for every session. [`crate::Server`] then hands the
-    /// final positive response [`AfterSend::ServerLeaves`](crate::AfterSend::ServerLeaves),
-    /// on which a connection-oriented transport closes (ISO 14229-5:2022 REQ 7.9).
+    /// where valid application software exists, and a server that programs from within
+    /// its application `false` for every session. [`crate::Server`] hands the final
+    /// positive response [`AfterSend::ServerLeaves`](crate::AfterSend::ServerLeaves), on
+    /// which a connection-oriented transport closes (ISO 14229-5:2022 REQ 7.9).
     ///
-    /// **A suppressed session change sends no response**, so no message carries the fact
-    /// and no orderly close precedes the departure: a server left by `10 82` drops its
-    /// connection unannounced. Nothing here prevents that; a client that needs the close
-    /// must not suppress the response.
+    /// A suppressed session change sends no response, so no orderly close precedes the
+    /// departure: a server left by `10 82` drops its connection unannounced. A client
+    /// that needs the close must not suppress the response.
     ///
     /// # Arguments
     ///
@@ -144,10 +129,8 @@ pub trait DiagnosticSessionControl {
     ///
     /// ``UDSSVC_ARCH_0038``. The application applies what clause 10.2 Figure 7 owes the
     /// state it holds: `transition` says which of the four cases occurred, and `entered`
-    /// which session, because what a case owes can turn on it — `ControlDTCSetting` and
-    /// `CommunicationControl` state is the application's, and resumes on entering a
-    /// session where the service is not supported, and a session may run in other
-    /// software than the one now running (see [`Self::leaves_running_software`]).
+    /// which session, since `ControlDTCSetting` and `CommunicationControl` state resumes
+    /// on entering a session where the service is not supported.
     ///
     /// # Arguments
     ///
@@ -189,13 +172,13 @@ pub enum AfterReset {
 /// identifier and echoed `resetType`; [`Self::reset`] decides whether the reset is
 /// accepted and supplies the `powerDownTime` that follows.
 pub trait EcuReset {
-    /// ``UDSSVC_ARCH_0033`` — a reset legitimately sets this.
+    /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
     /// Where `kind` is available and which levels unlock it, or `None` where this
     /// server does not support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007``: in that order, `None`
     /// settles the request `subFunctionNotSupported` (0x12), an active session outside
     /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
     /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
@@ -207,12 +190,11 @@ pub trait EcuReset {
     ///   variants carry the raw byte for a server that defines its own.
     fn access(&self, kind: ResetType) -> Option<Access>;
 
-    /// Accept or refuse `kind`.
+    /// Accept or refuse `kind`, and say what follows the response: [`AfterReset`].
     ///
     /// **Must not perform the reset before returning.** ISO 14229-1:2020 clause 10.3.1
     /// strongly recommends that the positive response is sent before the reset is
-    /// executed, and it is sent only after this returns `Ok`. Return what follows the
-    /// response: [`AfterReset`].
+    /// executed, and it is sent only after this returns `Ok`.
     ///
     /// # Arguments
     ///
@@ -251,25 +233,14 @@ pub trait EcuReset {
     fn confirmed(&mut self, kind: ResetType);
 }
 
-/// `TesterPresent` (0x3E).
+/// `TesterPresent` (0x3E), for servers that act on it. Restarting `tS3_Server` is the
+/// session layer's (ISO 14229-2, ``UDSSVC_ARCH_0002``), not this trait's.
 ///
-/// Restarting `tS3_Server` is deliberately absent: ISO 14229-2 puts it in the session
-/// layer and ``UDSSVC_ARCH_0002`` keeps it there. This exists for servers that act on it.
-///
-/// **No `MAY_RESPOND_PENDING`**, for the reason
-/// [`DiagnosticSessionControl`] has none: [`Self::on_tester_present`] is synchronous, so
-/// the driver is never awaiting it when a deadline passes and no 0x78 can become due.
-/// Which is as well — a server too busy to answer the message whose only purpose is to
-/// say it is still there has a larger problem than a response-pending.
-///
-/// **No sub-function lookups**, unlike [`DiagnosticSessionControl`]'s
-/// [`supports`](DiagnosticSessionControl::supports) and
-/// [`supported_from`](DiagnosticSessionControl::supported_from). The service's only
-/// sub-function is `zeroSubFunction`, which ISO 14229-1:2020 clause 10.7 makes mandatory,
-/// and clause 10.2's Table 23 makes the service available in the default and every
-/// non-default session. So Figure 6's "supported ever" and "supported in active session"
-/// (``UDSSVC_ARCH_0007`` rows 2 and 4) have nothing deployment-specific to ask: the
-/// pipeline answers row 2 from the byte, and row 4 is always yes.
+/// No `MAY_RESPOND_PENDING`: [`Self::on_tester_present`] is synchronous, so no 0x78 can
+/// come due. No sub-function lookups either: the service's only sub-function is
+/// `zeroSubFunction`, which ISO 14229-1:2020 clause 10.7 makes mandatory and Table 23
+/// makes available in every session, so the pipeline answers ``UDSSVC_ARCH_0007`` row 2
+/// from the byte and row 4 is always yes.
 pub trait TesterPresent {
     /// Called on each accepted `TesterPresent`.
     fn on_tester_present(&mut self);
@@ -283,14 +254,12 @@ pub trait CommunicationControl {
     /// Where `control_type` is available and which levels unlock it, or `None` where this
     /// server does not support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007``: in that order, `None`
     /// settles the request `subFunctionNotSupported` (0x12), an active session outside
     /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
     /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
-    /// [`Self::control`] being asked.
-    ///
-    /// The default session never reaches here: Table 23 refuses the service there with
-    /// 0x7F.
+    /// [`Self::control`] being asked. The default session never reaches here: Table 23
+    /// refuses the service there with 0x7F.
     ///
     /// # Arguments
     ///
@@ -302,9 +271,9 @@ pub trait CommunicationControl {
     /// names.
     ///
     /// Clause 10.5.1: the positive response is owed even where the requested state is
-    /// already in effect. Clause 10.2 Figure 7 resets it on a return to the default
-    /// session and leaves it on any other transition; that state is the application's to
-    /// reset, and `DiagnosticSessionControl::on_transition` tells it the session entered.
+    /// already in effect. Clause 10.2 Figure 7 resets that state on a return to the
+    /// default session, which the application does when
+    /// `DiagnosticSessionControl::on_transition` tells it the session entered.
     ///
     /// # Arguments
     ///
@@ -337,26 +306,21 @@ pub trait ControlDtcSetting {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
-    /// The longest `DTCSettingControlOptionRecord` this server accepts.
-    ///
-    /// Clause 10.8.2.3 leaves the record manufacturer-specific and gives it no fixed
-    /// width, so the ceiling is the application's to state — and stating it is what puts
-    /// this service's real contribution into the derived in-flight buffer rather than the
-    /// catch-all's six bytes. A longer record is `incorrectMessageLengthOrInvalidFormat`
-    /// (0x13) without [`Self::control_dtc_setting`] being asked.
+    /// The longest `DTCSettingControlOptionRecord` this server accepts, folded into the
+    /// in-flight buffer; clause 10.8.2.3 gives the record no fixed width. A longer record
+    /// is `incorrectMessageLengthOrInvalidFormat` (0x13) without
+    /// [`Self::control_dtc_setting`] being asked.
     const MAX_OPTION_RECORD_LEN: usize;
 
     /// Where `setting` is available and which levels unlock it, or `None` where this
     /// server does not support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007``: in that order, `None`
     /// settles the request `subFunctionNotSupported` (0x12), an active session outside
     /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
     /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
-    /// [`Self::control_dtc_setting`] being asked.
-    ///
-    /// The default session never reaches here: Table 23 refuses the service there with
-    /// 0x7F.
+    /// [`Self::control_dtc_setting`] being asked. The default session never reaches
+    /// here: Table 23 refuses the service there with 0x7F.
     ///
     /// # Arguments
     ///
@@ -368,8 +332,8 @@ pub trait ControlDtcSetting {
     ///
     /// Clause 10.8.1: the positive response is owed even where `setting` is already in
     /// effect, and updating resumes on a transition to a session where this service is
-    /// not supported. That state is the application's to resume: it is told the session
-    /// entered by `DiagnosticSessionControl::on_transition`.
+    /// not supported, which the application does when
+    /// `DiagnosticSessionControl::on_transition` tells it the session entered.
     ///
     /// # Arguments
     ///
@@ -454,10 +418,8 @@ mod tests {
         fn confirmed(&mut self, _k: ResetType) {}
     }
 
-    /// ``UDSSVC_ARCH_0038`` — the application receives a classified transition, not a
-    /// sub-function value. Which of Figure 7's four cases occurred determines what
-    /// configuration state resets, and classifying it here stops every application
-    /// reimplementing Table 23.
+    /// ``UDSSVC_ARCH_0038``: the application receives a classified transition, not a
+    /// sub-function value.
     #[test]
     fn the_application_receives_a_classified_transition() {
         let mut ecu = Ecu;
@@ -476,9 +438,8 @@ mod tests {
         ));
     }
 
-    /// P2 values are a property of the session being entered, so the application states
-    /// them and this crate composes the response; the session layer reads them in
-    /// milliseconds, `P2*` being sent in tens of them.
+    /// The application states a session's P2 pair in Table 29's units, and the session
+    /// layer reads both in milliseconds.
     #[test]
     fn a_session_carries_its_own_timing() {
         let t = Ecu.timing(DiagnosticSessionType::ProgrammingSession);

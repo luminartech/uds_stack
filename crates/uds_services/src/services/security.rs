@@ -1,17 +1,14 @@
-//! Security access — ISO 14229-1:2020 clause 10.4 and Annex I.
+//! Security access, ISO 14229-1:2020 clause 10.4 and Annex I.
 //!
-//! ``UDSSVC_ARCH_0037`` — the sequence is Annex I's Figure I.1, a four-state machine with
-//! ten transitions, identical for every server, and it lives here. Its corrected topology
-//! matters: transition 9 is `B → A` and transition 10 is `D → C`, so a failed `sendKey`
-//! **discards the stored seed** and the client must request a new one.
+//! ``UDSSVC_ARCH_0037``: the sequence is Annex I's Figure I.1, a four-state machine with
+//! ten transitions, identical for every server, and it lives here. Transition 9 is
+//! `B -> A` and transition 10 is `D -> C`, so a failed `sendKey` **discards the stored
+//! seed** and the client must request a new one. The application supplies the
+//! cryptography and the non-volatile storage; it never sees a state, never counts an
+//! attempt, and never decides between 0x35 and 0x36.
 //!
-//! The application supplies the cryptography and the non-volatile storage, which are the
-//! two things this crate cannot have. It never sees a state, never counts an attempt, and
-//! never decides between 0x35 and 0x36.
-//!
-//! **There is no `Authentication` trait.** Service 0x29 has no `uds_protocol` message
-//! type in either direction, so it decodes to `Request::Other` and settles 0x11 — a
-//! server that wants it cannot implement it.
+//! There is no `Authentication` trait: service 0x29 has no `uds_protocol` message type
+//! in either direction, so it decodes to `Request::Other` and settles 0x11.
 
 use crate::{ResponseSink, Sessions};
 use core::num::NonZeroU8;
@@ -20,10 +17,9 @@ use uds_protocol::NegativeResponseCode;
 /// How a level's attempts and delay are governed.
 ///
 /// ISO 14229-1:2020 Table I.1 makes the attempt counter and the delay optional, and
-/// states a fallback for declining both — "a random seed shall always be used" — which
-/// [`SecurityAccess::seed`] must honour under [`SecurityPolicy::RandomSeedOnly`]. Whether
-/// a seed is static is otherwise the seed's own property, and [`SecurityAccess::seed`]'s
-/// to decide.
+/// states a fallback for declining both, "a random seed shall always be used", which
+/// [`SecurityAccess::seed`] must honor under [`SecurityPolicy::RandomSeedOnly`]. Whether
+/// a seed is static is otherwise [`SecurityAccess::seed`]'s to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SecurityPolicy {
     /// Neither counter nor delay: Table I.1's fallback, so the seed is always random.
@@ -62,11 +58,9 @@ pub struct SecurityLevel(u8);
 impl SecurityLevel {
     /// The level a `requestSeed` sub-function names, or `None` where it is not one.
     ///
-    /// A `requestSeed` sub-function is odd by construction, and must leave room for its
-    /// `sendKey` partner: a sub-function byte is seven bits, because bit 7 is
-    /// `suppressPosRspMsgIndication`, so both halves of the pair have to fall in
-    /// `0x00`–`0x7F`. `0x7F` itself is rejected because its partner would be `0x80`,
-    /// which is not a sub-function value at all.
+    /// A `requestSeed` sub-function is odd, and its `sendKey` partner has to fall in the
+    /// seven-bit sub-function range too, so `0x7F` is rejected: its partner would be
+    /// `0x80`, which is not a sub-function value.
     ///
     /// # Examples
     ///
@@ -109,8 +103,8 @@ impl SecurityLevel {
 /// Whether a key matched.
 ///
 /// A verdict rather than a `Result`, because a wrong key is a normal outcome of the
-/// exchange. Which negative response it produces — `invalidKey` (0x35) or
-/// `exceedNumberOfAttempts` (0x36) — depends on the attempt count this crate maintains.
+/// exchange. Which negative response it produces, `invalidKey` (0x35) or
+/// `exceedNumberOfAttempts` (0x36), depends on the attempt count this crate maintains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyVerdict {
     /// Correct; Figure I.1 transition 3 or 10.
@@ -122,8 +116,7 @@ pub enum KeyVerdict {
 /// `SecurityAccess` (0x27).
 ///
 /// ``UDSSVC_ARCH_0034`` puts the attempt counter in the stack rather than the
-/// application: clause 10.4 makes it server-global, so a per-application implementation
-/// would be the same code written many times, wrong differently each time.
+/// application: clause 10.4 makes it server-global.
 pub trait SecurityAccess {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
@@ -149,13 +142,12 @@ pub trait SecurityAccess {
     /// The sessions `level` is available in, or `None` where this server does not
     /// support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — asked for the
-    /// `requestSeed` and the `sendKey` of the level alike: `None` settles the request
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007``: asked for the
+    /// `requestSeed` and the `sendKey` of the level alike, `None` settles the request
     /// `subFunctionNotSupported` (0x12), and an active session outside the set
     /// `subFunctionNotSupportedInActiveSession` (0x7E). A set rather than an
-    /// [`Access`](crate::Access) because this is the service that unlocks: no level is
-    /// required to ask for one. The default session never reaches here: Table 23 refuses
-    /// the service there with 0x7F.
+    /// [`Access`](crate::Access): no level is required to ask for one. The default
+    /// session never reaches here: Table 23 refuses the service there with 0x7F.
     ///
     /// # Arguments
     ///
@@ -177,11 +169,9 @@ pub trait SecurityAccess {
     /// * `level` - the level the `requestSeed` names; see [`SecurityLevel`].
     fn preconditions_met(&self, level: SecurityLevel) -> bool;
 
-    /// The attempt count for `level`, as last stored.
-    ///
-    /// The application never computes one — it persists the number this crate hands it,
-    /// because Annex I requires the count to survive a power cycle and only the
-    /// application has non-volatile storage.
+    /// The attempt count for `level`, as last stored. The application persists the
+    /// number this crate hands it, since Annex I requires the count to survive a power
+    /// cycle.
     fn load_attempts(&self, level: SecurityLevel) -> u8;
 
     /// Store the count this crate computed.
@@ -193,10 +183,10 @@ pub trait SecurityAccess {
     /// each `requestSeed` once its pre-conditions are met. [`Delay::Running`] answers the
     /// request `requiredTimeDelayNotExpired` (0x37) (Table I.2 transition 4).
     /// [`Delay::Expired`] has this crate reset the attempt count, as the timer's
-    /// expiry does in Table I.2. [`Delay::Idle`] with the stored count at the limit — the
-    /// state after a restart, which a RAM timer does not survive — has this crate call
-    /// [`Self::start_delay`] (transition 1, "Start `Delay_Timer` … if required on start
-    /// up"). So a lockout outlives a power cycle.
+    /// expiry does in Table I.2. [`Delay::Idle`] with the stored count at the limit, the
+    /// state after a restart, has this crate call [`Self::start_delay`] (transition 1,
+    /// "Start `Delay_Timer` ... if required on start up"), so a lockout outlives a power
+    /// cycle.
     ///
     /// # Arguments
     ///
@@ -209,10 +199,9 @@ pub trait SecurityAccess {
     /// Write a seed for `level` into `out`.
     ///
     /// Never called for an already-unlocked level: Figure I.1 transition 7 fixes that
-    /// answer as an all-zero seed, and this crate supplies it, because it knows what is
-    /// unlocked and the application does not. So the seed written here must not be all
-    /// zero: clause 10.4.1 forbids that for a locked level, and a debug build panics on
-    /// an empty or all-zero seed that `out` accepted.
+    /// answer as an all-zero seed, which this crate supplies. The seed written here must
+    /// not be all zero: clause 10.4.1 forbids that for a locked level, and a debug build
+    /// panics on an empty or all-zero seed that `out` accepted.
     ///
     /// Whether a repeated `requestSeed` gets the same seed is this method's to decide
     /// (Table I.1 `Static_Seed`, vehicle-manufacturer specific). A static seed is returned
@@ -268,10 +257,8 @@ pub trait SecurityAccess {
 mod tests {
     use super::{KeyVerdict, SecurityLevel};
 
-    /// Clause 10.4.2 pairs `requestSeed` (odd) with `sendKey` (the next even value).
-    /// `SecurityLevel` holds the pair, so `yy == xx + 1` is structural and Annex I's
-    /// 0x24 answers only what it is meant to: a `sendKey` for a level whose seed was
-    /// never requested.
+    /// Clause 10.4.2 pairs `requestSeed` (odd) with `sendKey` (the next even value), and
+    /// `SecurityLevel` holds the pair.
     #[test]
     fn a_level_is_the_pair_not_a_raw_sub_function() {
         let l = SecurityLevel::from_request_seed(0x01).expect("0x01 is a requestSeed");
@@ -292,8 +279,7 @@ mod tests {
     }
 
     /// A wrong key is a verdict, not an error: which negative response it produces
-    /// (0x35 or 0x36) depends on the attempt count this crate maintains, so the
-    /// application cannot choose it.
+    /// (0x35 or 0x36) depends on the attempt count this crate maintains.
     #[test]
     fn a_wrong_key_is_a_verdict() {
         assert_ne!(KeyVerdict::Valid, KeyVerdict::Invalid);

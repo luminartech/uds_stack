@@ -3094,7 +3094,7 @@ fn a_refused_reset_is_no_replacement() {
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
 }
 
-/// A server with no open channel was replaced by nothing.
+/// A server with no open channel reports no replacement.
 #[test]
 fn an_unknown_server_was_not_replaced() {
     let mut t = tester(&[Step::At(0)]);

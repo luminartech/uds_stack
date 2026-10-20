@@ -1,31 +1,21 @@
 //! Where the bytes live.
 //!
-//! ``UDSSVC_ARCH_0017`` makes this crate the owner of the buffers. The sizes are not
-//! chosen here and not chosen by the application either: [`crate::uds_server`] folds
-//! each service's declared worst case into the array lengths below, at a site where
-//! the types are concrete and const evaluation is ordinary stable Rust.
+//! ``UDSSVC_ARCH_0017`` makes this crate the owner of the buffers, and
+//! [`crate::uds_server`] folds each service's declared worst case into their lengths.
 //!
-//! **Three buffers, and the reason is the response-pending window.** A handler holds a
-//! decoded request borrowing the in-flight buffer, so that buffer cannot be handed back
-//! to [`crate::UdsTransport::next_event`] while the handler runs. `next_event` is the
-//! only way this crate can wait (``UDSSVC_ARCH_0041``), so without a second buffer the
-//! driver cannot observe the `tP2_Server` deadline and ``UDSSVC_ARCH_0031``'s 0x78 never
-//! happens. Clause 8.7.6's two exceptions
-//! are the second reason, not the first.
-//!
-//! The in-flight buffer bounds the request a handler decodes, not the request the server
-//! receives: a longer one arrives truncated, as
-//! [`crate::TransportEvent::DataTooLong`], and is answered by ISO 14229-1's rules, an
-//! unsupported service `0x11` before a wrong length `0x13`. What a transport can hold,
-//! a `DoIP` entity's ISO 13400-2:2019 Table 11 *Max. data size* among them, is the
-//! transport's.
+//! A server has three: the handler holds a decoded request borrowing the in-flight
+//! buffer, so the driver waits on [`crate::UdsTransport::next_event`] with the concurrent
+//! buffer meanwhile (``UDSSVC_ARCH_0041``), which is how it observes the `tP2_Server`
+//! deadline and clause 8.7.6's two exceptions. The in-flight buffer bounds the request a
+//! handler decodes, not the request the server receives: a longer one arrives truncated,
+//! as [`crate::TransportEvent::DataTooLong`], and is answered by ISO 14229-1's rules.
 
 /// The three buffers, together.
 #[derive(Debug)]
 pub struct Buffers<'a> {
-    /// The request being served. Bounds MDS.
+    /// The request being served.
     pub in_flight: &'a mut [u8],
-    /// What may arrive while a service is in progress — clause 8.7.6's two exceptions
+    /// What may arrive while a service is in progress: clause 8.7.6's two exceptions
     /// only, so a handful of bytes.
     pub concurrent: &'a mut [u8],
     /// Where a handler writes.
@@ -34,20 +24,13 @@ pub struct Buffers<'a> {
 
 /// The storage one assembled application needs.
 ///
-/// ``UDSSVC_ARCH_0013`` — implemented by the type [`crate::uds_server`] generates,
-/// never by hand. Sealed, so "never" is a compile error rather than a request: [`Store`]
-/// is the only implementor, and a hand-written one could pick lengths that disagree with
-/// the maxima the assembly folded.
+/// ``UDSSVC_ARCH_0013``: implemented by [`Store`], which [`crate::uds_server`] names with
+/// the lengths it folded, and sealed so that nothing else can.
 pub trait Storage: crate::sealed::Sealed {
     /// Zeroed storage.
     ///
-    /// An associated const rather than a `const fn`, because trait methods cannot be
-    /// `const` on stable and [`crate::Server::new`] must work in a `static` initialiser:
-    /// a multi-kilobyte server built at runtime is a stack temporary before the move,
-    /// which is fatal on a small-stack target, and building it in place needs `unsafe`.
-    ///
-    /// This is `uds_session`'s own convention — `Association::EMPTY`,
-    /// `PhysicalSlot::EMPTY`, `FunctionalSlot::EMPTY`.
+    /// An associated const rather than a `const fn`, so that [`crate::Server::new`] can
+    /// be `const` and build a server in a `static` initializer without a stack temporary.
     const EMPTY: Self;
 
     /// All three buffers at once, because all three are live at once.
@@ -98,27 +81,19 @@ pub struct ClientBuffers<'a> {
 
 /// The storage one assembled client needs.
 ///
-/// ``UDSSVC_ARCH_0017`` for the client half: the buffers are this crate's, and
-/// [`crate::uds_client`] folds their lengths from the identifier enumeration's declared
-/// maximum record and the most identifiers one request may name. Sealed for the reason
-/// [`Storage`] is — a hand-written implementor could pick lengths that disagree with the
-/// maxima the assembly folded.
+/// ``UDSSVC_ARCH_0017`` for the client half: implemented by [`ClientStore`], which
+/// [`crate::uds_client`] names with the lengths it folded from the vocabulary and its
+/// [`crate::ClientLimits`], and sealed so that nothing else can. [`Debug`] is a supertrait
+/// because [`crate::Responses`] holds a `&mut Client` and derives `Debug`.
 ///
-/// [`Debug`] is a supertrait because [`crate::Responses`] holds a `&mut Client` and so
-/// needs the store's `Debug` one projection deeper than a derive can infer, and this
-/// crate denies `missing_debug_implementations`.
-///
-/// **Two buffers rather than one.** A single buffer would be the larger of the two and
-/// therefore smaller than this pair, and the request would not survive the response
-/// landing on top of it. Keeping them apart is what lets a retransmission after a
-/// `tP_Client` expiry re-send the bytes it already encoded, rather than encoding them
-/// again into storage the caller may be holding as [`crate::Records`].
+/// The request keeps its own buffer so that a repeat after a `tP_Client` expiry re-sends
+/// the bytes already encoded while the caller may still hold the response as
+/// [`crate::Records`].
 pub trait ClientStorage: crate::sealed::Sealed + core::fmt::Debug {
     /// Zeroed storage.
     ///
-    /// An associated const for the reason [`Storage::EMPTY`] is one: a client built at
-    /// runtime is a stack temporary before the move, and
-    /// [`crate::Client::new`] must work in a `static` initialiser.
+    /// An associated const for the reason [`Storage::EMPTY`] is one: [`crate::Client::new`]
+    /// is `const` and builds a client in a `static` initializer.
     const EMPTY: Self;
 
     /// Both buffers at once.
@@ -167,15 +142,14 @@ mod tests {
         assert_eq!((b.request[0], b.response[0]), (0x22, 0x62));
     }
 
-    /// A client constructs in a `static` for the same reason a server does.
+    /// `EMPTY` initializes a `static`, as a server's does.
     #[test]
     fn client_storage_is_const_constructible() {
         static STORE: ClientStore<9, 77> = <ClientStore<9, 77> as ClientStorage>::EMPTY;
         assert_eq!(core::mem::size_of_val(&STORE), 86);
     }
 
-    /// The three arrays are exactly the declared sizes. The whole derivation scheme
-    /// rests on this, so it is asserted rather than assumed.
+    /// The three arrays are exactly the declared sizes.
     #[test]
     fn the_buffers_are_the_declared_lengths() {
         let mut s = <Store<7, 3, 11> as Storage>::EMPTY;
@@ -185,10 +159,8 @@ mod tests {
         assert_eq!(b.response.len(), 11);
     }
 
-    /// All three come back from one call because all three are live at once: the
-    /// request is read while the response is written and the concurrent slot is
-    /// receiving. Three accessors would not borrow, and this test is what fails if
-    /// someone later "simplifies" `split` into separate methods.
+    /// All three come back from one call and are usable at once: the request is read
+    /// while the response is written and the concurrent slot is receiving.
     #[test]
     fn all_three_are_usable_at_once() {
         let mut s = <Store<4, 4, 4> as Storage>::EMPTY;
@@ -199,9 +171,7 @@ mod tests {
         assert_eq!((b.response[0], b.concurrent[0]), (0x22, 0x3E));
     }
 
-    /// `EMPTY` is an associated const, not a `const fn`, so `Server::new` can be a
-    /// `const fn` in a generic context — trait methods cannot be `const` on stable.
-    /// A `static` initialiser is the thing that must work.
+    /// `EMPTY` initializes a `static`.
     #[test]
     fn storage_is_const_constructible() {
         static STORE: Store<8, 2, 8> = <Store<8, 2, 8> as Storage>::EMPTY;

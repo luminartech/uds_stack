@@ -1,18 +1,14 @@
 //! The pump under a [`Client`]'s calls: one exchange at a time over `uds_session`'s
 //! client role, its outputs drained into the transport.
 //!
-//! Every call goes through here. The exchange it runs is recorded in the client, not in
-//! the call's future, so a call or a [`super::Responses`] dropped part-way leaves a
-//! record the next call settles: a physical exchange is reset (``UDSS_LLR_0180``) and a
-//! functional window is drained until it closes, its answers discarded.
-//!
-//! `Confirm` and `ResponseTimeout` name no channel, so they are matched to the exchange by
-//! its [`Ai`]. That is exact here, because ``UDSS_LLR_0122`` makes an addressing unique
-//! per channel and this driver runs one exchange at a time.
-//!
-//! `TransportEvent` has no start-of-message, so `t_data_som_ind` is never called and a
-//! functional channel's responder table tracks only response-pending entries
-//! (``UDSS_LLR_0137``, ``UDSS_LLR_0146``).
+//! The exchange it runs is recorded in the client, not in the call's future, so a call
+//! or a [`super::Responses`] dropped part-way leaves a record the next call settles: a
+//! physical exchange is reset (``UDSS_LLR_0180``) and a functional window is drained
+//! until it closes, its answers discarded. `Confirm` and `ResponseTimeout` are matched to
+//! the exchange by its [`Ai`], unique per channel (``UDSS_LLR_0122``). `TransportEvent`
+//! has no start-of-message, so `t_data_som_ind` is never called and a functional
+//! channel's responder table tracks only response-pending entries (``UDSS_LLR_0137``,
+//! ``UDSS_LLR_0146``).
 
 use super::encode::{self, Arrived, KEEP_ALIVE};
 use super::{Client, ClientError, ClientKeepAlive, ClientSet, Replaced};
@@ -131,10 +127,8 @@ pub(super) enum Heard {
 pub(super) struct Open<Id> {
     ai: Ai,
     pub(super) id: Id,
-    /// A transmission on it awaits its confirmation; withdrawing it would leave that
-    /// confirmation to match a later channel with the same addressing (the open question
-    /// "A late confirmation can match a reopened channel's request"), so it is never
-    /// withdrawn meanwhile.
+    /// A transmission on it awaits its confirmation, so it is not withdrawn meanwhile:
+    /// the confirmation would match a later channel with the same addressing.
     unconfirmed: bool,
     /// Its server was put in a non-default session through this client.
     pub(super) in_session: bool,
@@ -508,10 +502,8 @@ impl<
         Ok(ai)
     }
 
-    /// The functional channel to `group`, opened if it is not yet.
-    ///
-    /// The keep-alive's own group is never withdrawn (the open question "Functional
-    /// keep-alive falls due with no functional channel open").
+    /// The functional channel to `group`, opened if it is not yet. The keep-alive's own
+    /// group is never withdrawn.
     pub(super) fn functional_channel(
         &mut self,
         group: Address,
@@ -898,21 +890,14 @@ impl<
     /// Wait for one transport event and hand it to the session layer, reporting what it
     /// meant for `subject`. `until` bounds the wait beside the session's own deadline.
     ///
-    /// ``UDSS_LLR_0026`` — the caller identifies an indication's channel. A response is
-    /// the functional window's while one is open, and otherwise the physical channel to
-    /// its sender's; one from a server no channel names is not indicated at all.
-    /// It answers `subject` only where it echoes its service; see [`encode::classify`].
-    ///
-    /// An expected close releases the keep-alive of every channel to that peer
-    /// (``UDSS_LLR_0184``): the server's session ended with the connection, so a
-    /// `TesterPresent` would keep nothing alive, and the functional keep-alive goes once no
-    /// server is left in session, unless a session change is running, which settles it
-    /// when it ends. Any other close ends no session, since a server's session outlives its
-    /// connection, and the keep-alive goes on over the next one. A close ends a physical
-    /// exchange with that peer whose window is open, since its answer cannot come, but not
-    /// one awaiting its confirmation, which the transport still owes and which says
-    /// whether the request went; nor a functional window, which awaits every server and
-    /// closes at its own timeout.
+    /// ``UDSS_LLR_0026``: the caller identifies an indication's channel, the functional
+    /// window's while one is open and otherwise the physical channel to its sender's. It
+    /// answers `subject` only where it echoes its service; see [`encode::classify`].
+    /// An expected close ends the server's session, so it releases the keep-alive of every
+    /// channel to that peer (``UDSS_LLR_0184``), and the functional keep-alive once no
+    /// server is left in session, unless a session change is running. Any close ends a
+    /// physical exchange with that peer whose window is open, but not one awaiting its
+    /// confirmation, nor a functional window, which closes at its own timeout.
     pub(super) async fn pump(
         &mut self,
         subject: Option<Exchange>,
