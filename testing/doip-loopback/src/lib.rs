@@ -246,7 +246,7 @@ impl Loopback {
             ConnectOptions::new().version(version),
         )
         .await?
-        .with_reconnect_backoff(backoff))
+        .with_reconnect_backoff(core::time::Duration::from_micros(backoff.as_micros())))
     }
 
     /// The client transport over a tester from [`Self::tester_backing_off`], its

@@ -42,6 +42,12 @@ pub(crate) fn after(start: Instant, duration: Duration) -> Instant {
     start.checked_add(duration).unwrap_or(Instant::MAX)
 }
 
+/// A caller's duration on the clock the timers run on, saturating at the clock's
+/// longest.
+pub(crate) fn ticks(duration: core::time::Duration) -> Duration {
+    Duration::from_micros(u64::try_from(duration.as_micros()).unwrap_or(u64::MAX))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

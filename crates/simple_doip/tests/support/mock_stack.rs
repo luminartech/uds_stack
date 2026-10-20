@@ -832,6 +832,11 @@ pub fn advance(duration: Duration) {
     MockDriver::get().advance(duration);
 }
 
+/// A caller's duration on the mock clock.
+pub fn ticks(duration: core::time::Duration) -> Duration {
+    Duration::from_micros(u64::try_from(duration.as_micros()).unwrap_or(u64::MAX))
+}
+
 // --- frames an entity sends --------------------------------------------------------------
 
 pub const TESTER: LogicalAddress = LogicalAddress(0x0E00);

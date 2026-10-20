@@ -28,25 +28,19 @@ pub mod discovery;
 mod tx;
 
 use crate::stream::rx::{Next, RxBuffer};
-use crate::stream::{after, caller_deadline, copy, timestamp};
+use crate::stream::{after, caller_deadline, copy, ticks, timestamp};
 use tx::{Control, Outgoing, TooLarge};
 
 /// How long the tester waits before repeating a routing activation request the entity
 /// answered with confirmation required.
 const ROUTING_CONFIRMATION_RETRY: Duration = Duration::from_secs(2);
 
-/// `A_DoIP_Diagnostic_Message`'s timeout (ISO 13400-2:2019 Table 12): how long a tester
-/// waits for a request's acknowledgement, unless [`Tester::with_ack_timeout`] says
-/// otherwise.
-pub const ACK_TIMEOUT: Duration =
-    Duration::from_secs(TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE.as_secs());
-
 /// How long [`TesterConnection::reconnect`] waits after a connection is lost before it
 /// connects again, unless [`Tester::with_reconnect_backoff`] says otherwise: an entity
 /// may hold the tester's address for a couple of seconds after the socket closes and
 /// refuse its routing activation meanwhile (`0x03`, ISO 13400-2:2019 Table 49). Three
 /// seconds is what a sensor that does so was measured to need.
-pub const RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
+pub const RECONNECT_BACKOFF: core::time::Duration = core::time::Duration::from_secs(3);
 
 /// The protocol version a tester puts in every message it sends: one ISO 13400-2:2019
 /// Table 16 defines for `DoIP` messages. Table 16's `0xFF` is for vehicle identification
@@ -108,7 +102,7 @@ pub struct ConnectOptions {
     /// Set by [`Self::vm_specific`].
     pub vm_specific: Option<[u8; 4]>,
     /// Set by [`Self::timeout`].
-    pub timeout: Option<Duration>,
+    pub timeout: Option<core::time::Duration>,
 }
 
 impl ConnectOptions {
@@ -157,7 +151,7 @@ impl ConnectOptions {
     /// passed, before it fails with [`ConnectError::Timeout`]. Without one they take as
     /// long as the entity takes: ISO 13400-2 gives routing activation no timer.
     #[must_use]
-    pub const fn timeout(self, timeout: Duration) -> Self {
+    pub const fn timeout(self, timeout: core::time::Duration) -> Self {
         Self {
             timeout: Some(timeout),
             ..self
@@ -248,7 +242,8 @@ pub enum ConnectError<E> {
 ///   before giving its socket to another tester, so an idle caller loses the
 ///   connection. While a request is being written, nothing is read.
 /// - **A new connection after a lost request.** A request not acknowledged within
-///   `A_DoIP_Diagnostic_Message` ([`ACK_TIMEOUT`] unless [`Tester::with_ack_timeout`]
+///   `A_DoIP_Diagnostic_Message` ([`TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`] unless
+///   [`Tester::with_ack_timeout`]
 ///   set another) is confirmed
 ///   [`DoIpResult::TimeoutA`], and once any of it was written the connection is given
 ///   up and [`ConnectionEvent::Closed`] follows. Past that timeout, Table 12 treats the
@@ -341,8 +336,8 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     closed_reported: bool,
     io_error: Option<C::Error>,
     lost_at: Option<Instant>,
-    backoff: Duration,
-    timeout: Option<Duration>,
+    backoff: core::time::Duration,
+    timeout: Option<core::time::Duration>,
 }
 
 impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
@@ -434,7 +429,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             control: Control::new(options.version.protocol_version())
                 .activating(options.activation_type, options.vm_specific),
             outgoing: Outgoing::new(),
-            exchange: Exchange::new(ACK_TIMEOUT),
+            exchange: Exchange::new(TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE),
             owed: None,
             closed_reported: false,
             io_error: None,
@@ -454,20 +449,20 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// * `backoff` - at least as long as the entity holds this tester's address after
     ///   its socket closes; zero where it holds none.
     #[must_use]
-    pub const fn with_reconnect_backoff(mut self, backoff: Duration) -> Self {
+    pub const fn with_reconnect_backoff(mut self, backoff: core::time::Duration) -> Self {
         self.backoff = backoff;
         self
     }
 
     /// Sets how long a request waits for its acknowledgement before it is confirmed
-    /// [`DoIpResult::TimeoutA`], in place of [`ACK_TIMEOUT`].
+    /// [`DoIpResult::TimeoutA`], in place of [`TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`].
     ///
     /// # Arguments
     ///
     /// * `timeout` - the entity's longest acknowledgement time, with the network's
     ///   delays.
     #[must_use]
-    pub const fn with_ack_timeout(mut self, timeout: Duration) -> Self {
+    pub const fn with_ack_timeout(mut self, timeout: core::time::Duration) -> Self {
         self.exchange.ack_timeout = timeout;
         self
     }
@@ -476,7 +471,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// options' timeout.
     async fn establish_within_timeout(&mut self) -> Result<(), ConnectError<C::Error>> {
         match self.timeout {
-            Some(limit) => with_timeout(limit, self.establish())
+            Some(limit) => with_timeout(ticks(limit), self.establish())
                 .await
                 .unwrap_or(Err(ConnectError::Timeout)),
             None => self.establish().await,
@@ -936,7 +931,7 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
         self.lose_connection(true, until).await;
         let attempt = async {
             if let Some(lost_at) = self.lost_at {
-                Timer::at(after(lost_at, self.backoff)).await;
+                Timer::at(after(lost_at, ticks(self.backoff))).await;
             }
             self.establish_within_timeout().await
         };
@@ -996,11 +991,11 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
 #[derive(Debug)]
 struct Exchange {
     outstanding: Option<Outstanding>,
-    ack_timeout: Duration,
+    ack_timeout: core::time::Duration,
 }
 
 impl Exchange {
-    const fn new(ack_timeout: Duration) -> Self {
+    const fn new(ack_timeout: core::time::Duration) -> Self {
         Self {
             outstanding: None,
             ack_timeout,
@@ -1021,7 +1016,7 @@ impl Exchange {
             let started = Instant::now();
             outstanding.phase = Phase::Writing {
                 started,
-                deadline: after(started, self.ack_timeout),
+                deadline: after(started, ticks(self.ack_timeout)),
             };
             outstanding.stale = buffered;
         }
@@ -1034,7 +1029,7 @@ impl Exchange {
         {
             outstanding.phase = Phase::Sent {
                 started,
-                deadline: after(Instant::now(), self.ack_timeout),
+                deadline: after(Instant::now(), ticks(self.ack_timeout)),
             };
         }
     }
@@ -1083,7 +1078,7 @@ impl Outstanding {
         &self,
         source: Option<LogicalAddress>,
         answered_at: Option<Instant>,
-        ack_timeout: Duration,
+        ack_timeout: core::time::Duration,
     ) -> bool {
         if self.stale > 0 {
             return false;
@@ -1091,7 +1086,8 @@ impl Outstanding {
         match source {
             Some(source) => self.ta_type != TaType::Physical || source == self.ta,
             None => self.phase.started().is_some_and(|started| {
-                answered_at.is_none_or(|answered| after(answered, ack_timeout) <= started)
+                answered_at
+                    .is_none_or(|answered| after(answered, ticks(ack_timeout)) <= started)
             }),
         }
     }
