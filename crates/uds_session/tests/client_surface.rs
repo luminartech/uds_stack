@@ -70,20 +70,17 @@ fn physical_keep_alive_carries_no_client_wide_storage() {
         Client::new([PhysicalSlot::EMPTY; 2], [], PhysicalKeepAlive);
 }
 
-/// Type-checked, never run: every entry point the client has.
+/// A compile-time test, never called: every entry point the client has.
 /// ``UDSS_LLR_0031`` is discharged by the absence of `completion_report` and by
 /// [`ClientTx`] and [`ClientRx`], neither of which can express the server's kinds.
 ///
-/// `ch_phys` and `ch_func` are taken as parameters, as `server_surface.rs` takes its stub
-/// values, rather than constructed here: neither id has a public constructor of its own,
-/// only the one [`Client::open_physical_channel`] and [`Client::open_functional_channel`]
-/// each return, and a function that is type-checked and never run has no client to open
-/// one on. Each flows to its own kind's setter
-/// directly, and to the kind-agnostic methods directly as well: those take
-/// `impl Into<`[`ChannelId`]`>`, so both kinds pass without a widening step at the call.
-/// [`Client::reset_channel`] is passed a [`ChannelId`] itself, since the widened parameter
-/// has to keep accepting the type it replaced.
-#[allow(dead_code, reason = "type-checked, never run")]
+/// `ch_phys` and `ch_func` are parameters because neither id has a public constructor:
+/// only [`Client::open_physical_channel`] and [`Client::open_functional_channel`] return
+/// one. Each flows to its own kind's setter and to the kind-agnostic methods, which take
+/// `impl Into<`[`ChannelId`]`>`, so both kinds pass without a widening step;
+/// [`Client::reset_channel`] is passed a [`ChannelId`] itself, which the widened
+/// parameter accepts too.
+#[expect(dead_code, reason = "compile-time test: compiled, never called")]
 fn every_client_entry_point(
     client: &mut Client<FunctionalKeepAlive, 4, 1, 8>,
     payload: &[u8],
@@ -150,10 +147,11 @@ fn every_client_entry_point(
     drop(client.tick(now));
 }
 
-/// ``UDSS_LLR_0152`` — the physical-keep-alive surface, which differs from the functional
-/// one in exactly the two places that requirement names: opening a physical channel
-/// carries this channel's reload, and there is no client-wide reload to set.
-#[allow(dead_code, reason = "type-checked, never run")]
+/// ``UDSS_LLR_0152`` — a compile-time test of the physical-keep-alive surface, which
+/// differs from the functional one in exactly the two places that requirement names:
+/// opening a physical channel carries this channel's reload, and there is no client-wide
+/// reload to set.
+#[expect(dead_code, reason = "compile-time test: compiled, never called")]
 fn every_physical_keep_alive_entry_point(
     client: &mut Client<PhysicalKeepAlive, 2, 0>,
     ch_phys: PhysicalChannelId,

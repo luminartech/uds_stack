@@ -7,28 +7,20 @@
 //!
 //! # Storage
 //!
-//! ``UDSS_LLR_0004`` forbids allocation, so storage is supplied by the caller, by value.
-//! `Client` carries no lifetime as a result: nothing here is borrowed, so nothing here can
-//! outlive it or be reasoned about across it. The physical and functional arrays are
-//! supplied whole at [`Client::new`], before any channel exists; ``UDSS_LLR_0121`` makes
-//! opening a channel, not supplying that storage, the act that brings the channel into
-//! being.
-//!
-//! The physical and functional arrays are separate because the two channel kinds hold
-//! different state. ``UDSS_LLR_0139`` gives a functional channel a responder table and
-//! gives a physical channel none; ``UDSS_LLR_0151`` gives a physical channel a
-//! `tS3_Client` timer and gives a functional channel none. Splitting [`PhysicalSlot`] from
-//! [`FunctionalSlot`] keeps both facts true by construction rather than by a runtime
-//! check, and it means a physical channel is never charged storage for a table it must
-//! not keep. That is earned rather than assumed: [`Client::open_physical_channel`] and
-//! [`Client::open_functional_channel`] each take a [`crate::ChannelAddressing`], which
-//! carries no `ta_type`, and each supplies ``UDSS_LLR_0049``'s matching value itself, so a
-//! channel stored in one array can never carry the other kind's `S_AI[TAtype]`.
+//! ``UDSS_LLR_0004`` forbids allocation, so storage is supplied by the caller, by value,
+//! and `Client` carries no lifetime. The physical and functional arrays are supplied whole
+//! at [`Client::new`]; ``UDSS_LLR_0121`` makes opening a channel, not supplying that
+//! storage, the act that brings the channel into being. [`PhysicalSlot`] and
+//! [`FunctionalSlot`] are separate types because the two kinds hold different state:
+//! ``UDSS_LLR_0139`` gives a responder table to functional channels alone and
+//! ``UDSS_LLR_0151`` a `tS3_Client` timer to physical ones alone. Each opening method
+//! takes a [`crate::ChannelAddressing`], which carries no `ta_type`, and supplies
+//! ``UDSS_LLR_0049``'s matching value itself, so a channel stored in one array never
+//! carries the other kind's `S_AI[TAtype]`.
 //!
 //! `R` sizes every functional channel's responder table alike. A client with no
-//! functional channels at all sets `FUNC` to `0`, pays no storage for one, and leaves `R`
-//! to its default of `0` rather than naming a table size that would mean nothing:
-//! `Client<K, 2, 0>`.
+//! functional channels sets `FUNC` to `0`, pays no storage for a table, and leaves `R` to
+//! its default of `0`: `Client<K, 2, 0>`.
 //!
 //! ```
 //! use uds_session::{Client, FunctionalKeepAlive, FunctionalSlot, PhysicalSlot};
@@ -80,18 +72,15 @@ struct Responder {
 
 /// One physical channel's storage.
 ///
-/// ``UDSS_LLR_0126`` — every fact a document of this set keeps per channel lives here:
-/// the channel's `tP_Client` and spacing timers and their parameters, whether a request
-/// is in progress and its addressing and classification, the response count, the one
-/// association ``UDSS_LLR_0059`` holds and whether it is abandoned, the repeat count of
+/// ``UDSS_LLR_0126`` — every fact this set keeps per channel lives here: the channel's
+/// `tP_Client` and spacing timers and their parameters, whether a request is in progress
+/// and its addressing and classification, the response count, the one association
+/// ``UDSS_LLR_0059`` holds and whether it is abandoned, the repeat count of
 /// ``UDSS_LLR_0173``, whether a start-of-message is open, and in physical keep-alive the
-/// `tS3_Client` timer and session fact of ``UDSS_LLR_0151``.
-///
-/// It holds no responder table: ``UDSS_LLR_0139`` gives one to functional channels alone.
-/// `K` is the client's keep-alive mode: in [`FunctionalKeepAlive`] the slot holds no
-/// keep-alive state, and in [`PhysicalKeepAlive`] it holds the channel's own `tS3_Client`
-/// timer, reload and session fact. [`PhysicalSlot::EMPTY`] infers `K` from the client it
-/// is supplied to, so a caller names it only where they annotate the type.
+/// `tS3_Client` timer and session fact of ``UDSS_LLR_0151``. It holds no responder table:
+/// ``UDSS_LLR_0139`` gives one to functional channels alone. `K` is the client's
+/// keep-alive mode, which [`PhysicalSlot::EMPTY`] infers from the client it is supplied
+/// to; in [`FunctionalKeepAlive`] the slot holds no keep-alive state.
 #[derive(Debug)]
 pub struct PhysicalSlot<K: KeepAliveMode> {
     channel: Option<Physical<K>>,
@@ -137,28 +126,22 @@ impl<const R: usize> FunctionalSlot<R> {
 /// Identifies a physical channel of this client.
 ///
 /// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn,
-/// and never reissued: ids come from one client-wide counter, so a withdrawn channel's
-/// handle identifies no later one. The value is private and has no accessor, which is a
-/// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
-/// implemented, since nothing needs them.
-///
-/// The counter is a `u32`, shared with [`FunctionalChannelId`]. After 2^32 opens it is
-/// spent, and the client opens no more channels ([`crate::Cause::ChannelHandlesSpent`]).
-///
-/// `Tag` is the issuing client's tag — see [`Client`] — so a handle from a client with
-/// another tag does not type-check here. Its traits hold whatever the tag implements.
+/// and never reissued: ids come from one client-wide `u32` counter, shared with
+/// [`FunctionalChannelId`], so a withdrawn channel's handle identifies no later one. After
+/// 2^32 opens the counter is spent and the client opens no more channels
+/// ([`crate::Cause::ChannelHandlesSpent`]). The value is private and has no accessor:
+/// nothing about it is meaningful to a caller. `Tag` is the issuing client's tag (see
+/// [`Client`]), so a handle from a client with another tag does not type-check here; the
+/// handle's traits hold whatever the tag implements.
 pub struct PhysicalChannelId<Tag = ()>(u32, PhantomData<fn() -> Tag>);
 
 /// Identifies a functional channel of this client.
 ///
 /// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn,
-/// and never reissued: ids come from one client-wide counter, so a withdrawn channel's
-/// handle identifies no later one. The value is private and has no accessor, which is a
-/// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
-/// implemented, since nothing needs them.
-///
-/// `Tag` is the issuing client's tag — see [`Client`] — so a handle from a client with
-/// another tag does not type-check here. Its traits hold whatever the tag implements.
+/// and never reissued, from the counter [`PhysicalChannelId`] describes. The value is
+/// private and has no accessor: nothing about it is meaningful to a caller. `Tag` is the
+/// issuing client's tag (see [`Client`]), so a handle from a client with another tag does
+/// not type-check here; the handle's traits hold whatever the tag implements.
 pub struct FunctionalChannelId<Tag = ()>(u32, PhantomData<fn() -> Tag>);
 
 /// A handle is `Copy`, `Eq`, `Hash` and `Debug` whatever its tag derives.
@@ -736,17 +719,16 @@ pub type ClientReaction<
 /// ``UDSS_LLR_0151`` a `tS3_Client` to physical ones alone.
 ///
 /// `K` is the keep-alive mode of ``UDSS_LLR_0149``, fixed at creation and held in the type
-/// rather than in a field — see [`KeepAliveMode`]. It is inferred from the value passed
-/// to [`Client::new`], so a caller names it only where they annotate the type.
-///
-/// `R` defaults to `0`, since a client with `FUNC` of `0` has no responder table to size;
-/// with functional channels, [`Client::new`] refuses it at compile time.
+/// (see [`KeepAliveMode`]). It is inferred from the value passed to [`Client::new`], so a
+/// caller names it only where they annotate the type. `R` defaults to `0`, since a client
+/// with `FUNC` of `0` has no responder table to size; with functional channels,
+/// [`Client::new`] refuses it at compile time.
 ///
 /// `Tag` brands the handles this client issues, at no cost: [`PhysicalChannelId`],
 /// [`FunctionalChannelId`], [`ChannelId`] and the outputs carrying them all take it. It
 /// defaults to `()`, which a single client never needs to name. A caller running several
 /// clients gives each its own marker type, and a handle passed to a client it did not come
-/// from no longer compiles. Clients sharing a tag share a handle space, and a handle from
+/// from does not compile. Clients sharing a tag share a handle space, and a handle from
 /// one is not checked against the other. A tag need implement nothing; [`ClientOutput`]'s
 /// derived traits hold where it implements them, and handles have theirs regardless.
 ///
@@ -1162,18 +1144,14 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
     /// Reset a channel.
     ///
     /// ``UDSS_LLR_0180`` — ends any request in progress and stops its timer with no
-    /// indication, marks an unconfirmed association abandoned, closes the open
-    /// start-of-message or releases every responder entry, and zeroes the repeat count.
-    /// In physical keep-alive, on a physical channel in a non-default session whose
-    /// `tS3_Client` is not running, it starts that timer: a request stopped it
-    /// (``UDSS_LLR_0160``), and once the server is reset or given up nothing else would
-    /// start it again (``UDSS_LLR_0161``). Where the association it abandons is still
-    /// unconfirmed, that start waits for the confirmation (``UDSS_LLR_0182``). It
-    /// produces no output.
-    /// ISO 14229-2:2021 9.7 Table 9 ends at the third transmission and says nothing of
-    /// what the client concludes, so something the caller invokes has to clear the state
-    /// that persists on its own. ``UDSS_LLR_0183`` rejects a reset naming no existing
-    /// channel.
+    /// indication, marks an unconfirmed association abandoned, clears the start-of-message
+    /// and responder facts, and zeroes the repeat count; no output. ``UDSS_LLR_0183``
+    /// rejects a reset naming no existing channel. ISO 14229-2:2021 9.7 Table 9 ends at
+    /// the third transmission, so clearing what persists is the caller's act. In physical
+    /// keep-alive, on a channel in a non-default session whose `tS3_Client` a request
+    /// stopped (``UDSS_LLR_0160``), it starts that timer, since nothing else would
+    /// (``UDSS_LLR_0161``); where the abandoned association is still unconfirmed, the
+    /// start waits for the confirmation (``UDSS_LLR_0182``).
     pub fn reset_channel(
         &mut self,
         now: Timestamp,
@@ -1309,13 +1287,10 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
     /// response-pending message; ``UDSS_LLR_0143`` reports a responder beyond capacity.
     ///
     /// `class` is optional because ``UDSS_LLR_0058`` permits a `T_Data.ind` reporting an
-    /// unsuccessful reception of a message not addressed to a server to omit the kind, and
-    /// ``UDSS_LLR_0069`` makes that the only permitted omission, rejecting a `class` of
-    /// `None` in every other case — including a *successful* reception, which is still a
-    /// ``UDSS_LLR_0069`` rejection and not this permitted case. [`Cause::KindRequired`]
-    /// reports it.
-    ///
-    /// [`Cause::KindRequired`]: crate::rejection::Cause::KindRequired
+    /// unsuccessful reception of a message not addressed to a server to omit the kind.
+    /// ``UDSS_LLR_0069`` makes that the only permitted omission and rejects a `class` of
+    /// `None` in every other case, a successful reception included;
+    /// [`crate::Cause::KindRequired`] reports a ``UDSS_LLR_0069`` rejection.
     pub fn t_data_ind<'d>(
         &mut self,
         now: Timestamp,
@@ -1356,7 +1331,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
 
     /// A transmission has completed.
     ///
-    /// ``UDSS_LLR_0025``. It takes no channel, deliberately: ``UDSS_LLR_0059`` matches a
+    /// ``UDSS_LLR_0025``. It takes no channel: ``UDSS_LLR_0059`` matches a
     /// confirmation to its association by addressing alone, which is the standard's own
     /// rule in ISO 14229-2:2021 7.6. ``UDSS_LLR_0063`` rejects one matching none, which
     /// is what a confirmation arriving after its channel was withdrawn does.
@@ -1447,17 +1422,12 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize, Tag>
     ///
     /// ``UDSS_LLR_0121`` — the channel exists from this moment, identified by the [`Ai`]
     /// `addressing` forms with [`TaType::Physical`], until it is withdrawn.
-    /// ``UDSS_LLR_0122`` rejects an addressing equal to an existing channel's. Opening
-    /// supplies this channel's parameters, per ``UDSS_LLR_0042``. Rejected where no
-    /// physical slot is free.
-    ///
-    /// `addressing` carries no `ta_type`: this method supplies [`TaType::Physical`]
-    /// itself, so a channel opened here can never disagree with ``UDSS_LLR_0049`` by
-    /// carrying [`TaType::Functional`].
-    ///
-    /// There is no `tS3_Client` argument. ``UDSS_LLR_0152`` gives a physical channel no
-    /// reload in functional keep-alive, and this method is the one reachable in that mode,
-    /// so the first of that requirement's three disagreements cannot be written.
+    /// ``UDSS_LLR_0122`` rejects an addressing equal to an existing channel's, and so is
+    /// an open with no physical slot free. Opening supplies this channel's parameters
+    /// (``UDSS_LLR_0042``). `addressing` carries no `ta_type`: this method supplies
+    /// [`TaType::Physical`] itself, so a channel opened here cannot disagree with
+    /// ``UDSS_LLR_0049``. There is no `tS3_Client` argument, since ``UDSS_LLR_0152`` gives
+    /// a physical channel no reload in functional keep-alive.
     pub fn open_physical_channel(
         &mut self,
         now: Timestamp,
@@ -1483,9 +1453,8 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize, Tag>
     /// functional keep-alive exactly one; ``UDSS_LLR_0043`` permits setting it again at
     /// any time.
     ///
-    /// It exists only here. ``UDSS_LLR_0152`` has no client-wide reload in physical
-    /// keep-alive, and a method absent from that mode is the third of that requirement's
-    /// disagreements made unwritable.
+    /// It exists only in this mode: ``UDSS_LLR_0152`` has no client-wide reload in
+    /// physical keep-alive.
     pub fn set_keep_alive_reload(
         &mut self,
         now: Timestamp,
@@ -1503,13 +1472,10 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize, Tag>
     /// Open a physical channel, with this channel's `tS3_Client` reload.
     ///
     /// ``UDSS_LLR_0121``, ``UDSS_LLR_0122`` and ``UDSS_LLR_0042`` as in functional
-    /// keep-alive — see [`Client::open_physical_channel`] on that mode, whose signature
-    /// differs from this one only in the absent reload.
-    ///
-    /// `s3_client` is required, not optional. ``UDSS_LLR_0151`` puts the timer and session
-    /// fact in this channel's storage and ``UDSS_LLR_0152`` gives the channel its own
-    /// reload in this mode, so omitting it is the second of that requirement's
-    /// disagreements — and a mandatory argument is what makes it unwritable.
+    /// keep-alive (see [`Client::open_physical_channel`] on that mode), with the one
+    /// difference that `s3_client` is required: ``UDSS_LLR_0151`` puts the timer and
+    /// session fact in this channel's storage, and ``UDSS_LLR_0152`` gives the channel its
+    /// own reload in this mode.
     pub fn open_physical_channel(
         &mut self,
         now: Timestamp,
@@ -1535,8 +1501,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize, Tag>
     /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
     /// naming a channel the client does not have. It is separate from
     /// [`Client::set_physical_parameter`] because ``UDSS_LLR_0152`` gives a physical
-    /// channel a reload in this mode alone, and a parameter absent from the other mode's
-    /// surface is what keeps the first of that requirement's disagreements unwritable.
+    /// channel a reload in this mode alone.
     pub fn set_physical_s3_client(
         &mut self,
         now: Timestamp,

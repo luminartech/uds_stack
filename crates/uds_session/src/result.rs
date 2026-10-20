@@ -11,15 +11,14 @@ pub struct TransportError(pub u16);
 /// The outcome of a service execution.
 ///
 /// ``UDSS_LLR_0056`` — ``S_OK`` where the execution completed successfully, and every
-/// other value an error a lower layer detected. That is a two-way split, which is why
-/// this enumeration is closed: what ISO 14229-2:2021 8.10 leaves open is the space of
-/// error *values*, and [`TransportError`] carries that.
+/// other value an error a lower layer detected. The enumeration is closed: what ISO
+/// 14229-2:2021 8.10 leaves open is the space of error *values*, which [`TransportError`]
+/// carries.
 ///
-/// There is no timeout here. Every timeout this set defines is its own indication, not an
-/// outcome of a service execution — ``UDSS_LLR_0148`` gives the client's response-timing
-/// indication to [`crate::ClientOutput::ResponseTimeout`] and ``UDSS_LLR_0100`` the
-/// server's to [`crate::ServerOutput::SessionTimeout`] — and a timer this crate runs is
-/// not an error a lower layer detected.
+/// There is no timeout here. A timer this crate runs is not an error a lower layer
+/// detected, so every timeout this set defines is its own indication: ``UDSS_LLR_0148``
+/// gives the client's to [`crate::ClientOutput::ResponseTimeout`] and ``UDSS_LLR_0100``
+/// the server's to [`crate::ServerOutput::SessionTimeout`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SResult {
     /// ``S_OK`` — the service execution completed successfully.

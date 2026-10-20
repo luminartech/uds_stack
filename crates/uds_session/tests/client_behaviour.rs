@@ -1,4 +1,4 @@
-//! Behavioural tests of the client role, one per requirement a body satisfies.
+//! Behavioral tests of the client role, one per requirement a body satisfies.
 
 use core::num::NonZeroU16;
 
