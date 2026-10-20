@@ -832,9 +832,10 @@ pub fn advance(duration: Duration) {
     MockDriver::get().advance(duration);
 }
 
-/// A caller's duration on the mock clock.
+/// A caller's duration on the mock clock, as the tester converts it.
 pub fn ticks(duration: core::time::Duration) -> Duration {
-    Duration::from_micros(u64::try_from(duration.as_micros()).unwrap_or(u64::MAX))
+    Duration::from_secs(duration.as_secs())
+        + Duration::from_micros(u64::from(duration.subsec_micros()))
 }
 
 // --- frames an entity sends --------------------------------------------------------------

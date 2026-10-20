@@ -149,7 +149,8 @@ impl ConnectOptions {
     /// The longest the connect and routing activation may take, on the first connection
     /// and on each one [`TesterConnection::reconnect`] opens once its back-off has
     /// passed, before it fails with [`ConnectError::Timeout`]. Without one they take as
-    /// long as the entity takes: ISO 13400-2 gives routing activation no timer.
+    /// long as the entity takes: ISO 13400-2 gives routing activation no timer. One past
+    /// the clock's longest is the clock's longest.
     #[must_use]
     pub const fn timeout(self, timeout: core::time::Duration) -> Self {
         Self {
@@ -447,7 +448,8 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// # Arguments
     ///
     /// * `backoff` - at least as long as the entity holds this tester's address after
-    ///   its socket closes; zero where it holds none.
+    ///   its socket closes; zero where it holds none. One past the clock's longest is
+    ///   the clock's longest.
     #[must_use]
     pub const fn with_reconnect_backoff(mut self, backoff: core::time::Duration) -> Self {
         self.backoff = backoff;
@@ -460,7 +462,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// # Arguments
     ///
     /// * `timeout` - the entity's longest acknowledgement time, with the network's
-    ///   delays.
+    ///   delays. One past the clock's longest is the clock's longest.
     #[must_use]
     pub const fn with_ack_timeout(mut self, timeout: core::time::Duration) -> Self {
         self.exchange.ack_timeout = timeout;

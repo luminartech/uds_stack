@@ -31,7 +31,7 @@ use core::task::{Context, Poll};
 use edge_nal::{TcpAccept, UdpSplit};
 
 use embassy_futures::select::{Either, select, select_array};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Instant, Timer};
 
 use crate::messages::{
     ActivationTypeCode, Header, Message, ProtocolVersion, RoutingActivationResponseCode,
@@ -41,7 +41,7 @@ use crate::service::{
     TesterAddress, Timestamp,
 };
 use crate::stream::tx::Full;
-use crate::stream::{after, caller_deadline, timestamp};
+use crate::stream::{after, caller_deadline, ticks, timestamp};
 use crate::tester::DIAGNOSTIC_MESSAGE_OVERHEAD;
 use crate::{LogicalAddress, TaType};
 use discovery::Facts;
@@ -70,7 +70,7 @@ const ABORT_LIMIT: core::time::Duration = ALIVE_CHECK;
 
 /// When `timer`, started at `now`, expires: the end of time if that is past it.
 fn expiry(now: Instant, timer: core::time::Duration) -> Instant {
-    Duration::try_from(timer).map_or(Instant::MAX, |timer| after(now, timer))
+    after(now, ticks(timer))
 }
 
 /// The logical addresses an [`Entity`] answers diagnostic messages on.

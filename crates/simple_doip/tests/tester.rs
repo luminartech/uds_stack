@@ -922,6 +922,38 @@ fn a_shorter_ack_timeout_is_timeout_a_sooner() {
     );
 }
 
+/// An acknowledgement timeout past the clock's longest is the clock's longest: the
+/// request waits.
+#[test]
+fn an_ack_timeout_past_the_clocks_longest_waits() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack).with_ack_timeout(core::time::Duration::MAX);
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    advance(Duration::from_secs(1 << 40));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+}
+
+/// A reconnect back-off past the clock's longest is the clock's longest: the reconnect
+/// waits.
+#[test]
+fn a_reconnect_backoff_past_the_clocks_longest_waits() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack).with_reconnect_backoff(core::time::Duration::MAX);
+    stack.script_next(&activation_response(0x10));
+    let mut reconnecting = pin!(tester.reconnect(None));
+
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    advance(Duration::from_secs(1 << 40));
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    assert_eq!(stack.connects(), 1, "still backing off");
+}
+
 /// Table 12: `A_DoIP_Diagnostic_Message` is the whole 2 s, so an acknowledgement late in
 /// it still confirms the request.
 #[test]

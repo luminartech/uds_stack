@@ -42,10 +42,13 @@ pub(crate) fn after(start: Instant, duration: Duration) -> Instant {
     start.checked_add(duration).unwrap_or(Instant::MAX)
 }
 
-/// A caller's duration on the clock the timers run on, saturating at the clock's
-/// longest.
+/// A caller's duration on the clock the timers run on: its whole seconds, then its
+/// microseconds rounded up to a tick, or the clock's longest if that is past it.
 pub(crate) fn ticks(duration: core::time::Duration) -> Duration {
-    Duration::from_micros(u64::try_from(duration.as_micros()).unwrap_or(u64::MAX))
+    let micros = Duration::from_micros(u64::from(duration.subsec_micros()));
+    Duration::try_from_secs(duration.as_secs())
+        .and_then(|seconds| seconds.checked_add(micros))
+        .unwrap_or(Duration::MAX)
 }
 
 #[cfg(test)]
@@ -66,6 +69,27 @@ mod tests {
         let now = Instant::from_millis(10_000);
         assert_eq!(caller_deadline(Timestamp(9_000), now), now);
         assert_eq!(caller_deadline(Timestamp(10_000), now), now);
+    }
+
+    #[test]
+    fn a_duration_within_the_clock_is_that_many_ticks() {
+        assert_eq!(
+            ticks(core::time::Duration::from_secs(3)),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            ticks(core::time::Duration::from_micros(1_500)),
+            Duration::from_micros(1_500)
+        );
+    }
+
+    #[test]
+    fn a_duration_past_the_clocks_longest_is_its_longest() {
+        assert_eq!(ticks(core::time::Duration::MAX), Duration::MAX);
+        assert_eq!(
+            ticks(core::time::Duration::from_secs(u64::MAX)),
+            Duration::MAX
+        );
     }
 
     #[test]
