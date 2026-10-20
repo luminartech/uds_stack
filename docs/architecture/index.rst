@@ -1,7 +1,9 @@
 Architecture
 ============
 
-How the stack's crates are put together, and where their boundaries fall.
+How the stack's crates are put together, and where their boundaries fall. The set so far
+describes ``uds_services``; the other crates' architecture lives with each crate, listed
+below.
 
 **What it covers so far.** The set will hold the architecture of every crate in the stack.
 It began with ``uds_services``, the one wholly new component, because working out its
