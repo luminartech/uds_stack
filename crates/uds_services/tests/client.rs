@@ -313,6 +313,54 @@ fn a_response_pending_then_the_answer() {
     assert_eq!(t.transport().deadlines, 0);
 }
 
+/// Without a ceiling, the client follows the server through as many response-pending
+/// messages as it sends, as ISO 14229-2:2021 leaves to the server.
+#[test]
+fn response_pending_is_followed_without_a_ceiling() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+        Step::IndAt(4_000, from(ECU), &[0x7F, 0x22, 0x78]),
+        Step::IndAt(8_000, from(ECU), &[0x7F, 0x22, 0x78]),
+        Step::IndAt(12_000, from(ECU), SPEED),
+    ]);
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+}
+
+/// `ClientTiming::response_pending_ceiling` — the request fails once the server has
+/// extended it more times than the ceiling allows, the channel is reset so the next
+/// request is sent, and a final response arriving after the failure answers nothing.
+#[test]
+fn response_pending_past_the_ceiling_fails_the_request() {
+    let ceiling = core::num::NonZeroU16::MIN.saturating_add(1);
+    let mut t = Tester::new(
+        Script::new(&[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(4_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(8_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(8_100, from(ECU), SPEED),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::Ind(from(ECU), SPEED),
+        ]),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING.response_pending_ceiling(ceiling),
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::ResponsePendingCeiling { ceiling })
+    );
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert_eq!(t.transport().sent_count, 2, "one request per call");
+}
+
 /// ``UDSSVC_ARCH_0023``, ISO 14229-2:2021 9.7 Table 9 — an unanswered request is sent
 /// three times in all, and then the timeout is reported as the fault it is.
 #[test]

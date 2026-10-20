@@ -18,6 +18,11 @@ pre-1.0 crates).
   `repeats` at `Never` as well no request is ever sent twice. A keep-alive's failed
   transmission stays under Table 9's two. `ClientTiming::repeats` still bounds the
   expired-window cell alone.
+- `ClientTiming::response_pending_ceiling`: how many `responsePending` messages one
+  request accepts before it fails with the new `ClientError::ResponsePendingCeiling`,
+  which carries the ceiling. `None`, the default, follows the server for as long as it
+  keeps answering, as before. A failed request's channel is reset, so a final response
+  arriving later is not taken for a later request's answer.
 
 ## [0.7.0] — 2026-10-16
 

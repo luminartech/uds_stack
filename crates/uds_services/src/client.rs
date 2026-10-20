@@ -242,6 +242,13 @@ pub enum ClientError<E> {
     /// default), or the session layer refused the request outright, which is not
     /// repeated.
     NotSent,
+    /// The server extended its answer with `responsePending` more times than
+    /// [`ClientTiming::response_pending_ceiling`] allows; the channel is reset, and a
+    /// final response arriving later is not taken for a later request's answer.
+    ResponsePendingCeiling {
+        /// The ceiling the request ran past.
+        ceiling: core::num::NonZeroU16,
+    },
     /// The connection to the server closed before it answered.
     Closed,
     /// Every channel slot was in use, and none was idle enough to withdraw.
@@ -307,6 +314,10 @@ impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
             Self::Transport(error) => write!(f, "the transport failed: {error:?}"),
             Self::Timeout => f.write_str("no response within the response window"),
             Self::NotSent => f.write_str("the request could not be sent"),
+            Self::ResponsePendingCeiling { ceiling } => write!(
+                f,
+                "the server answered responsePending more than {ceiling} times"
+            ),
             Self::Closed => f.write_str("the connection closed before the response"),
             Self::NoChannel => f.write_str("no channel slot is free"),
             Self::Request(error) => write!(f, "the request could not be formed: {error}"),
@@ -499,6 +510,14 @@ pub struct ClientTiming {
     /// arrived; with [`Self::repeats`] at `Never` too, no request is sent twice. A
     /// keep-alive stays under Table 9's two.
     pub transmission_repeats: Repeats,
+    /// How many `responsePending` messages one request accepts before it fails with
+    /// [`ClientError::ResponsePendingCeiling`]. ISO 14229-2:2021 leaves the number of
+    /// `P2*Server_max` extensions to the server (``UDSS_LLR_0144`` restarts the window on
+    /// each), so `None`, the default, follows the server for as long as it keeps
+    /// answering. A ceiling bounds a server that never stops, at the cost of cutting off
+    /// a long operation the server is still performing; size it from the longest the
+    /// server legitimately takes.
+    pub response_pending_ceiling: Option<core::num::NonZeroU16>,
 }
 
 impl ClientTiming {
@@ -525,6 +544,7 @@ impl ClientTiming {
             network_delay,
             repeats: Repeats::Twice,
             transmission_repeats: Repeats::Twice,
+            response_pending_ceiling: None,
         }
     }
 
@@ -557,6 +577,15 @@ impl ClientTiming {
     pub const fn transmission_repeats(self, repeats: Repeats) -> Self {
         Self {
             transmission_repeats: repeats,
+            ..self
+        }
+    }
+
+    /// This policy with [`Self::response_pending_ceiling`] set to `ceiling`.
+    #[must_use]
+    pub const fn response_pending_ceiling(self, ceiling: core::num::NonZeroU16) -> Self {
+        Self {
+            response_pending_ceiling: Some(ceiling),
             ..self
         }
     }
@@ -1038,6 +1067,8 @@ pub struct Client<
     book: Book<PHYS, FUNC>,
     /// The request in progress, if any; see the `driver` module.
     exchange: Option<Exchange>,
+    /// How many `responsePending` messages have extended the exchange in progress.
+    pending: u16,
     /// A functional window a dropped [`Responses`] left open, drained before anything
     /// else.
     draining: Option<Exchange>,
@@ -1091,6 +1122,7 @@ impl<
             timing,
             book: Book::EMPTY,
             exchange: None,
+            pending: 0,
             draining: None,
         }
     }
@@ -2103,6 +2135,7 @@ impl<
                     session: None,
                 };
                 self.exchange = Some(Exchange::new(ai, len, sid, echo, class));
+                self.pending = 0;
                 None
             }
             Err(error) => Some(ClientError::Request(error)),
@@ -2147,6 +2180,7 @@ impl<
             session,
         };
         self.exchange = Some(Exchange::new(ai, len, sid, echo, class));
+        self.pending = 0;
         let answered = self.advance().await.unwrap_or(Err(ClientError::Timeout))?;
         self.book.answered(target);
         // The answer stands: a keep-alive the transport fails to take now stays owed,

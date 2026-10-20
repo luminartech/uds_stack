@@ -21,8 +21,8 @@ use crate::{AfterSend, ClientTransport, TransportEvent};
 use core::ops::Range;
 use uds_session::{
     Address, Ai, Cause, ChannelAddressing, ChannelId, ChannelParams, ClientOutput,
-    ClientReaction, ClientTx, ExpectedResponses, Finished, FunctionalChannelId, Mtype,
-    PhysicalChannelId, Rejection, SResult, TaType, Timestamp, TransportError,
+    ClientReaction, ClientRx, ClientTx, ExpectedResponses, Finished, FunctionalChannelId,
+    Mtype, PhysicalChannelId, Rejection, SResult, TaType, Timestamp, TransportError,
 };
 
 /// ISO 14229-2:2021 9.7 Table 9: a keep-alive whose transmission failed is sent again
@@ -695,6 +695,11 @@ impl<
             };
             // A keep-alive the transport fails to take stays owed; the exchange goes on.
             seen.timed_out |= self.send_owed().await.expired;
+            if let Some(ceiling) = self.timing.response_pending_ceiling
+                && self.pending > ceiling.get()
+            {
+                return Some(self.fail(e, ClientError::ResponsePendingCeiling { ceiling }));
+            }
             if seen.confirmed == Some(true) {
                 e.phase = Phase::Open;
                 // A request expecting no response is complete on its confirmation
@@ -921,6 +926,9 @@ impl<
                 let selection = answering.and_then(|e| e.class.session_selection());
                 let expected = answering.map(|e| (e.sid, e.echo));
                 let class = encode::classify(expected, data, selection);
+                if answering.is_some() && class == ClientRx::ResponsePending {
+                    self.pending = self.pending.saturating_add(1);
+                }
                 if answering.is_some() && encode::solicited_final(class) {
                     answer = Some(Answered {
                         from: ai.sa,
