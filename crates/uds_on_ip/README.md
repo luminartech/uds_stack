@@ -33,8 +33,10 @@ for their shared vocabulary. The dependency edge runs from here to
 `uds_services`, never the other way — `uds_services` never names a transport,
 which is what keeps a binding additive at the application.
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) has the fuller picture, including the
-seams to `simple_doip` and `uds_services` and the standard's own citations.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) has this crate's design, including its
+seams to `simple_doip` and `uds_services` and the standard's own citations. How
+the five crates fit together is the
+[stack architecture](https://luminartech.github.io/uds_stack/architecture/index.html).
 **Provisional**: it is a design document that predates parts of the current
 code and is being replaced by the sphinx-needs set under
 [`docs/`](https://github.com/luminartech/uds_stack/tree/main/docs) at the

@@ -54,7 +54,7 @@ pub(crate) const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 ///
 /// Introduced by ISO 14229-5:2022 REQ 7.16, **not** by ISO 13400-2:2019, whose
 /// diagnostic payload types stop at `0x8003`. It is therefore this crate's to
-/// interpret rather than `simple_doip`'s to name — see `ARCHITECTURE.md` §3.1.
+/// interpret rather than `simple_doip`'s to name — see `ARCHITECTURE.md` §1.
 ///
 /// # Nothing in this crate sends or decodes it
 ///
@@ -69,7 +69,7 @@ pub(crate) const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 ///
 /// REQ 7.17's length bound — a periodic data record must not exceed the
 /// non-segmented `UDSonIP` message limit — has no home here either. It belongs
-/// where a periodic record is accepted, and none is. See `ARCHITECTURE.md` §9.2.
+/// where a periodic record is accepted, and none is. See `ARCHITECTURE.md` §6.2.
 pub const PERIODIC_RESPONSE_PAYLOAD_TYPE: u16 = 0x8004;
 
 /// The `DoIP` target address for this addressing triple, or why it has none.

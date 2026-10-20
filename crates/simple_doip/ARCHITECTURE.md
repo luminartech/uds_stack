@@ -7,9 +7,9 @@ the code.
 
 > **Provisional.** This is a working document, not the crate's formal
 > architecture record. The stack's sphinx-needs architecture set under
-> `docs/architecture/` will take this crate's architecture in; so far it covers
-> `uds_services` only, and until this content moves there, this file is the
-> record.
+> `docs/architecture/` describes how the crates fit together and holds
+> `uds_services`' own architecture; this crate's moves there in time, and until
+> then this file is the record.
 
 For usage, feature flags, and the current gap list, see [`README.md`](README.md).
 
@@ -265,7 +265,7 @@ is a parameter of that primitive.
 
 **One layer below, the same event shape.** An event borrows the buffer the caller
 lends `next_event`, never the connection, so the caller can answer a request it has
-just received; `uds_on_ip/ARCHITECTURE.md` §4.1 gives the reasoning one layer up. The
+just received; `uds_on_ip/ARCHITECTURE.md` §2.1 gives the reasoning one layer up. The
 tester reports a valid message whose payload type it does not model as `Unmodelled`,
 which is not the same as one it refused: a diagnostic message in error is ignored and
 no indication raised (8.3.3). The entity answers a payload type it does not take with
@@ -374,9 +374,9 @@ it lends different buffers at different call sites.
 
 **`close` is a prescribed close, not an error path.** ISO 14229-5:2022 REQ 7.9 and
 REQ 7.11 have the server close after certain positive responses, and `uds_on_ip`
-decides when (`uds_on_ip/ARCHITECTURE.md` §3.6). `DiagnosticEntity::close` performs
-it on the connection named. It takes no reason, because why the close happens is ISO
-14229-5's fact and stays in `uds_on_ip`, and `Closed` carries none for the same
+decides when (the stack architecture's "When and what"). `DiagnosticEntity::close`
+performs it on the connection named. It takes no reason, because why the close happens
+is ISO 14229-5's fact and stays in `uds_on_ip`, and `Closed` carries none for the same
 reason. A tester reconnects through `TesterConnection::reconnect`, which an entity
 has no use for, so it is not on the shared trait.
 
@@ -406,7 +406,7 @@ the sensor forced. Raise any of them to overturn it.
   - It passes the authentication and confirmation sub-states straight through (REQ
     3.DoIP-129, 130; §7.3).
 - **Across the stack:** a suppressed `10 82` or `11 81` sends no response, so it makes
-  no close (`uds_on_ip/ARCHITECTURE.md` §9.2).
+  no close (`uds_on_ip/ARCHITECTURE.md` §6.2).
 
 ### 2.5 An entity's UDP: discovery, status and power mode
 

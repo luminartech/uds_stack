@@ -73,7 +73,7 @@
 //! **Alpha.** The public API is unstable. The server role is implemented over
 //! any `DiagnosticEntity`, and the client role over any `TesterConnection`; fanning a
 //! functional request out to several entities is not. Known gaps are recorded in
-//! `ARCHITECTURE.md` §9, which ships with the package, and each one is also named
+//! `ARCHITECTURE.md` §6, which ships with the package, and each one is also named
 //! at the item it affects — see [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`], a
 //! payload type a server built on this crate cannot yet send.
 //!

@@ -51,7 +51,7 @@ pub const fn bench_reloads() -> uds_session::Reloads {
 
 /// The service identifiers ISO 14229-5 clause 8 keys connection handling on.
 ///
-/// `ARCHITECTURE.md` §13, invariant 5, states that `uds_on_ip` never learns what a
+/// `ARCHITECTURE.md` §10, invariant 1, states that `uds_on_ip` never learns what a
 /// service is. This module, with [`crate::mapping`]'s `awaits_response` and
 /// `response_pending`, is the exhaustive list of what it does read of a message:
 ///
@@ -116,7 +116,7 @@ impl ConnectionAction {
 /// [`Continue`](ConnectionAction::Continue); the final positive response is what
 /// triggers the close. A suppressed `11 81` or `10 82` sends nothing, so nothing is
 /// classified: a server that resets or leaves on one drops the connection unannounced
-/// (`ARCHITECTURE.md` §9.2).
+/// (`ARCHITECTURE.md` §6.2).
 #[must_use]
 pub(crate) const fn after_sending(first_octet: u8, after: AfterSend) -> ConnectionAction {
     match (first_octet, after) {

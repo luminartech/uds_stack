@@ -474,7 +474,7 @@ class MultiPrefixIds(unittest.TestCase):
         need = vn.Need(
             type="arch",
             title="A dependency arrow",
-            path=Path("docs/architecture/seams.rst"),
+            path=Path("docs/architecture/uds_services/seams.rst"),
             line=1,
             options={"id": "UDSSVC_ARCH_0002", "status": "draft", "origin": "derived"},
             body="Rationale: the dependency arrow runs one way.",
@@ -505,7 +505,7 @@ class MultiPrefixIds(unittest.TestCase):
         need = vn.Need(
             type="arch",
             title="An architecture element wearing a requirement id",
-            path=Path("docs/architecture/seams.rst"),
+            path=Path("docs/architecture/uds_services/seams.rst"),
             line=1,
             options={"id": "UDSSVC_LLR_0002", "status": "draft", "origin": "derived"},
             body="Rationale: text.",
