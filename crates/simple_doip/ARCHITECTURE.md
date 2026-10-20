@@ -374,8 +374,8 @@ it lends different buffers at different call sites.
 
 **`close` is a prescribed close, not an error path.** ISO 14229-5:2022 REQ 7.9 and
 REQ 7.11 have the server close after certain positive responses, and `uds_on_ip`
-decides when (the stack architecture's "When and what"). `DiagnosticEntity::close`
-performs it on the connection named. It takes no reason, because why the close happens
+decides when ([the stack architecture's "When and what"][stack-when]).
+`DiagnosticEntity::close` performs it on the connection named. It takes no reason, because why the close happens
 is ISO 14229-5's fact and stays in `uds_on_ip`, and `Closed` carries none for the same
 reason. A tester reconnects through `TesterConnection::reconnect`, which an entity
 has no use for, so it is not on the shared trait.
@@ -933,3 +933,5 @@ choosing the crate; the mechanics are here:
    a future that keeps waking itself, so a change that spins fails the suite rather
    than slowing it. Under Miri, where a waker's identity is unreliable, it takes 64
    wakes in a row to be a wait, so the native run is the one that holds this.
+
+[stack-when]: https://luminartech.github.io/uds_stack/architecture/index.html#when-and-what

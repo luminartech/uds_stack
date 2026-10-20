@@ -73,10 +73,9 @@ subprocess rather than anything resembling "install plantuml".
 The ``needs`` builder produces ``needs.json``, the machine-readable export of this set. It
 is consumed through ``needs_external_needs`` against a committed snapshot, which is why it
 is not served from the published site. Its version key is the *schema* version set in
-``conf.py`` -- currently ``0.1.0`` -- and not any crate's version. Two crates happen to
-sit at ``0.1.0`` as well; that is a coincidence, and this number does not move when they
-do. It moves when the need types, the ID scheme, the required fields or the link types
-change, because that is what a consumer pinning to this key depends on.
+``conf.py`` -- currently ``0.1.0`` -- and not the stack's version. It does not move when
+the crates release. It moves when the need types, the ID scheme, the required fields or the
+link types change, because that is what a consumer pinning to this key depends on.
 
 Reading the set
 ---------------
