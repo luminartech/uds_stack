@@ -1,5 +1,5 @@
-What this crate does not own
-============================
+What ``uds_services`` does not own
+==================================
 
 Explicit because these were argued and settled, and boundaries are the easiest thing in a
 design to erode. Each entry has a plausible argument for living here; each was decided

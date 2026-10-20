@@ -3,7 +3,7 @@
 //! `SessionLayer` and `RequestHandler` were deleted rather than relocated:
 //! with `uds_services` driving, there is no binding-side driver to call
 //! anything upward, and no seam for a response-pending to cross. The reasoning
-//! is `ARCHITECTURE.md` §4.2's; the names must not come back either way.
+//! is `ARCHITECTURE.md` §2.3's; the names must not come back either way.
 //!
 //! The scan below is scoped to declarations, not prose: documentation may
 //! still name what was deleted (and Task 7 rewrites this crate's prose in
@@ -31,7 +31,7 @@ fn the_crate_declares_no_upward_trait() {
 
 /// The "this crate appears twice / wraps the session layer" sandwich no longer
 /// describes the design: the driver is above the session layer and this crate
-/// is wholly below it (`ARCHITECTURE.md` §4.2).
+/// is wholly below it (`ARCHITECTURE.md` §2.3).
 #[test]
 fn the_crate_docs_do_not_describe_the_reversed_design() {
     let source = include_str!("../src/lib.rs");

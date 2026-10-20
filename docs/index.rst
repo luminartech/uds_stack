@@ -28,29 +28,24 @@ it is cited.
    * - Crate
      - Standard
      - ID prefix
-     - Architecture
    * - ``uds_protocol``
      - ISO 14229-1:2020, the message format
      - not yet authored
-     - its README
    * - ``uds_session``
      - ISO 14229-2:2021, the session layer
      - ``UDSS_``
-     - :doc:`requirements/index`, and its README
    * - ``uds_services``
      - ISO 14229-1:2020, everything but the message format
      - ``UDSSVC_``
-     - :doc:`architecture/index`
    * - ``simple_doip``
      - ISO 13400-2:2019, DoIP
      - not yet authored
-     - ``crates/simple_doip/ARCHITECTURE.md``
    * - ``uds_on_ip``
      - ISO 14229-5:2022, the UDSonIP profile and mapping
      - not yet authored
-     - ``crates/uds_on_ip/ARCHITECTURE.md``, which also holds the stack-wide view
 
-The architecture set will cover every crate; so far it covers ``uds_services``.
+:doc:`architecture/index` describes how the crates fit together, and says where each
+crate's own architecture is described.
 
 A crate gets its prefix when it authors its first need, not before. An unauthored crate is
 not a gap in this set; it is a crate whose requirements have not been written.
@@ -78,10 +73,9 @@ subprocess rather than anything resembling "install plantuml".
 The ``needs`` builder produces ``needs.json``, the machine-readable export of this set. It
 is consumed through ``needs_external_needs`` against a committed snapshot, which is why it
 is not served from the published site. Its version key is the *schema* version set in
-``conf.py`` -- currently ``0.1.0`` -- and not any crate's version. Two crates happen to
-sit at ``0.1.0`` as well; that is a coincidence, and this number does not move when they
-do. It moves when the need types, the ID scheme, the required fields or the link types
-change, because that is what a consumer pinning to this key depends on.
+``conf.py`` -- currently ``0.1.0`` -- and not the stack's version. It does not move when
+the crates release. It moves when the need types, the ID scheme, the required fields or the
+link types change, because that is what a consumer pinning to this key depends on.
 
 Reading the set
 ---------------

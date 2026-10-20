@@ -511,7 +511,7 @@ The transport seam
    ``incorrectMessageLengthOrInvalidFormat`` (0x13). A request longer than the in-flight
    buffer instead reaches the server as ``TransportEvent::DataTooLong``, and the pipeline
    answers it in that order; a transport refuses only what it cannot hold itself.
-   ``uds_on_ip``'s ``ARCHITECTURE.md`` §4.1 records the ``DoIP`` side.
+   ``uds_on_ip``'s ``ARCHITECTURE.md`` §2.1 records the ``DoIP`` side.
 
    *``t_data_req`` gained ``after: AfterSend``.* ISO 14229-5:2022 REQ 7.9 has a server close
    its TCP connection after a ``DiagnosticSessionControl`` positive response *if* the

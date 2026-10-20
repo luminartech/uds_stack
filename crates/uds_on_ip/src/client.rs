@@ -113,7 +113,7 @@ pub enum LateReplyGuard {
 /// Time is the connection's: [`UdsTransport::now`] is
 /// [`now`](simple_doip::service::DiagnosticConnection::now).
 ///
-/// `ARCHITECTURE.md` §7.3 draws the connection's states and what each edge owes.
+/// `ARCHITECTURE.md` §4.3 draws the connection's states and what each edge owes.
 pub struct DoIpClientTransport<
     C,
     const QUEUE: usize,

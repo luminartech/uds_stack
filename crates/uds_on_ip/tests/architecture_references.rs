@@ -8,10 +8,9 @@
 //! # What this does not catch, and the case that proves it
 //!
 //! It checks that a cited section *exists*, not that it says what the citing
-//! sentence claims. `profile::service_ids` cited "§11" for the invariant that
-//! `uds_on_ip` never learns what a service is. §11 exists — it is "`no_std`
-//! scope" — and the invariant is §13, so the citation was wrong and this test
-//! passes on it. Verified by reintroducing it.
+//! sentence claims. Were `profile::service_ids` to cite "§8" for the invariant
+//! that `uds_on_ip` never learns what a service is, this test would pass: §8
+//! exists — it is "`no_std` scope" — while the invariant is §10.
 //!
 //! That limit is worth stating rather than papering over: a wrong-but-existing
 //! citation is the more likely defect of the two, because section numbers shift
@@ -57,6 +56,7 @@ fn every_cited_architecture_section_exists() {
     let declared = declared_sections(architecture);
 
     let sources = [
+        include_str!("../src/client.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/error.rs"),
         include_str!("../src/mapping.rs"),
@@ -80,10 +80,10 @@ fn the_check_can_fail() {
     // Guarding against the reintroduction of a stale number is this file's
     // whole purpose, so the extractor must see a citation and the heading
     // reader must not invent one.
-    assert!(cited_sections("see `ARCHITECTURE.md` §13, invariant 5").contains("13"));
-    assert!(cited_sections("see `ARCHITECTURE.md` §3.1.").contains("3.1"));
+    assert!(cited_sections("see `ARCHITECTURE.md` §10, invariant 1").contains("10"));
+    assert!(cited_sections("see `ARCHITECTURE.md` §2.1.").contains("2.1"));
     assert!(cited_sections("no citation here").is_empty());
-    assert!(declared_sections("## 9. Gap analysis").contains("9"));
-    assert!(declared_sections("### 3.1 `simple_doip`").contains("3.1"));
+    assert!(declared_sections("## 6. Gap analysis").contains("6"));
+    assert!(declared_sections("### 2.1 Transport seam").contains("2.1"));
     assert!(declared_sections("# Architecture").is_empty());
 }
