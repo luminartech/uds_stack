@@ -180,7 +180,7 @@ size-baseline: (size "--record")
 # emulate. Linux's `epoll` it does.
 #
 # Then simple_doip's `connection` tests on the mock stack, which default features leave
-# out, as ci.yml's `miri-connection` job runs them.
+# out, as ci.yml's `miri-connection-target` jobs run them.
 [doc("Run the test suite under Miri, as CI does")]
 miri:
     rustup toolchain install nightly --component miri --profile minimal --no-self-update
