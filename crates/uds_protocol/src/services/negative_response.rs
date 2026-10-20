@@ -18,8 +18,8 @@ pub struct NegativeResponse {
     ///
     /// Private, unlike the public data-bag fields on most response types: it is a raw byte
     /// whose typed meaning is derived ([`request_service`](Self::request_service)), and the
-    /// two constructors deliberately offer different guarantees — [`new`](Self::new) takes
-    /// a typed service, [`new_with_sid`](Self::new_with_sid) takes the byte.
+    /// two constructors offer different guarantees: [`new`](Self::new) takes a typed
+    /// service, [`new_with_sid`](Self::new_with_sid) takes the byte.
     request_service_sid: u8,
     /// The negative response code indicating why the request failed.
     nrc: NegativeResponseCode,
@@ -30,8 +30,8 @@ impl NegativeResponse {
     ///
     /// Note that [`UdsServiceType::UnsupportedDiagnosticService`] and
     /// [`UdsServiceType::NegativeResponse`] have no request SID and both echo `0x7F`. To
-    /// NACK a service byte the crate does not model — the `sid` of a
-    /// [`Request::Other`](crate::Request::Other) — use [`new_with_sid`](Self::new_with_sid)
+    /// NACK a service byte the crate does not model, the `sid` of a
+    /// [`Request::Other`](crate::Request::Other), use [`new_with_sid`](Self::new_with_sid)
     /// so the original byte is echoed.
     #[must_use]
     pub const fn new(request_service: UdsServiceType, nrc: NegativeResponseCode) -> Self {
@@ -41,12 +41,9 @@ impl NegativeResponse {
         }
     }
 
-    /// Create a new `NegativeResponse` echoing a raw request-service byte.
-    ///
-    /// For the pass-through case: a server that decoded a
-    /// [`Request::Other`](crate::Request::Other) can answer
-    /// [`ServiceNotSupported`](NegativeResponseCode::ServiceNotSupported) while echoing the
-    /// byte it actually received, which [`new`](Self::new) cannot express.
+    /// Create a new `NegativeResponse` echoing a raw request-service byte, so a server that
+    /// decoded a [`Request::Other`](crate::Request::Other) can answer
+    /// [`ServiceNotSupported`](NegativeResponseCode::ServiceNotSupported) echoing it:
     ///
     /// ```
     /// use uds_protocol::{NegativeResponse, NegativeResponseCode};
@@ -136,10 +133,9 @@ mod tests {
 
     #[test]
     fn a_server_can_nack_an_unmodeled_service_byte() {
-        // The pass-through case this type advertises, from the *construction* side. A
-        // server that decodes `Request::Other { sid: 0x40 }` must be able to answer
-        // serviceNotSupported echoing 0x40. `new()` cannot express that: it routes through
-        // `to_request_sid()`, which collapses every unmodeled service to 0x7F.
+        // A server that decodes `Request::Other { sid: 0x40 }` answers serviceNotSupported
+        // echoing 0x40. `new()` cannot express that: it routes through `to_request_sid()`,
+        // which collapses every unmodeled service to 0x7F.
         let (req, _) = <crate::Request as Decode>::decode(&[0x40, 0xAA]).unwrap();
         let sid = match req {
             crate::Request::Other { sid, .. } => sid,
@@ -154,8 +150,8 @@ mod tests {
             .unwrap();
         assert_eq!(&buf[..n], &[0x40, 0x11]);
 
-        // The typed constructor still collapses unmodeled services, which is why the raw
-        // constructor has to exist.
+        // The typed constructor collapses unmodeled services, which is why the raw
+        // constructor exists.
         let via_typed = NegativeResponse::new(
             UdsServiceType::UnsupportedDiagnosticService,
             NegativeResponseCode::ServiceNotSupported,
@@ -165,8 +161,8 @@ mod tests {
 
     #[test]
     fn unknown_echoed_service_round_trips_losslessly() {
-        // 0x40 is not a modeled request service. The echoed byte must survive
-        // decode -> encode verbatim (it previously normalized to 0x7F).
+        // 0x40 is not a modeled request service; the echoed byte survives decode and
+        // encode verbatim.
         let wire = [0x40, 0x12];
         let (nr, rest) = <NegativeResponse as Decode>::decode(&wire).unwrap();
         assert_eq!(rest, [0u8; 0]);

@@ -8,8 +8,8 @@ use automotive_wire_codec::{
 };
 
 /// Minimum byte-width (clamped to at least 1) needed to hold the larger of two size
-/// values. Used to derive the on-wire `parameterLength` prefix from the data itself,
-/// so the declared length can never disagree with the value it describes.
+/// values. Derives the on-wire `parameterLength` prefix from the data itself, so the
+/// declared length can never disagree with the value it describes.
 fn size_param_width(a: u128, b: u128) -> usize {
     let a = minimal_be_len(a);
     let b = minimal_be_len(b);
@@ -66,8 +66,7 @@ impl From<FileOperationMode> for u8 {
 }
 
 /// Total, because every byte classifies: Table 485 defines `0x01` to `0x06` and everything
-/// else is `ISOSAEReserved`, which this enum represents rather than rejects. This was a
-/// `TryFrom` whose every arm returned `Ok`, i.e. a fallible signature that could not fail.
+/// else is `ISOSAEReserved`, which this enum represents rather than rejects.
 impl From<u8> for FileOperationMode {
     fn from(value: u8) -> Self {
         match value {
@@ -90,8 +89,7 @@ impl PartialEq<u8> for FileOperationMode {
     }
 }
 
-/// Holds the sizes of the file to be transferred (if applicable)
-/// Used for both [`RequestFileTransferRequest`] and [`RequestFileTransferResponse`]
+/// The sizes of the file to be transferred, carried by the request modes marked below.
 ///
 /// |              | [AddFile] | [DeleteFile] | [ReplaceFile] | [ReadFile] | [ReadDir] | [ResumeFile] |
 /// |--------------|-----------|--------------|---------------|------------|-----------|--------------|
@@ -140,11 +138,9 @@ impl SizePayload {
     }
 }
 
-/// Payload used for all [`RequestFileTransferRequest`] requests.
+/// The file or directory name every [`RequestFileTransferRequest`] carries, borrowed from
+/// the caller.
 ///
-/// Borrows `file_path_and_name` from the caller.
-///
-/// #### ***Request*** Message
 /// |               | [AddFile] | [DeleteFile] | [ReplaceFile] | [ReadFile] | [ReadDir] | [ResumeFile] |
 /// |---------------|-----------|--------------|---------------|------------|-----------|--------------|
 /// |**[Request]**  | Yes       | Yes          | Yes           | Yes        | Yes       | Yes          |
@@ -179,18 +175,12 @@ pub struct NamePayload<'a> {
 
 impl<'a> NamePayload<'a> {
     /// Build a name payload. The on-wire length prefix is computed from
-    /// `file_path_and_name` at encode time.
-    ///
-    /// The `modeOfOperation` byte is **not** part of this payload: it is the
-    /// [`RequestFileTransferRequest`] variant, which writes it. Carrying it here as well
-    /// let the two disagree — and the field won, so `AddFile(NamePayload::new(DeleteFile,
-    /// ..), dfi, size)` silently encoded a `DeleteFile` request and dropped the format
-    /// identifier and both sizes.
+    /// `file_path_and_name` at encode time. The `modeOfOperation` byte is not part of this
+    /// payload: the [`RequestFileTransferRequest`] variant is that byte and writes it.
     ///
     /// # Errors
     /// Returns [`Error::IncorrectMessageLengthOrInvalidFormat`] if the name is longer than
-    /// `u16::MAX` bytes, which is the widest the on-wire `filePathAndNameLength` field can
-    /// declare. This is the invariant that earns this type its `#[non_exhaustive]`.
+    /// `u16::MAX` bytes, the widest the on-wire `filePathAndNameLength` field can declare.
     pub const fn new(file_path_and_name: &'a str) -> Result<Self, Error> {
         if file_path_and_name.len() > u16::MAX as usize {
             return Err(Error::IncorrectMessageLengthOrInvalidFormat);
@@ -205,20 +195,14 @@ impl<'a> NamePayload<'a> {
     }
 }
 
-/// A request to the server to transfer a file, either upload or download.
+/// A request to the server to transfer a file in either direction, or to read or change
+/// its file system.
 ///
-/// Capabilities:
-///   * Receive information about the file system on the server
-///   * Send/Receive files to/from the server
-///
-/// Available as an alternative to [`RequestDownloadRequest`](crate::RequestDownloadRequest)
-/// and `RequestUploadRequest` if the server implements a file system for data storage
-///
-/// Use [`crate::UdsServiceType::TransferData`] to send the file data to the server and
-/// [`crate::UdsServiceType::RequestTransferExit`] to end the transfer
-///
-/// If this service is used to delete files or directories on the server, there is no need
-/// to use the `TransferData` or [`crate::UdsServiceType::RequestTransferExit`] services.
+/// An alternative to [`RequestDownloadRequest`](crate::RequestDownloadRequest) and
+/// [`RequestUploadRequest`](crate::RequestUploadRequest) for a server with a file system.
+/// The file data then moves with [`crate::UdsServiceType::TransferData`] and the transfer
+/// ends with [`crate::UdsServiceType::RequestTransferExit`]; a `DeleteFile` request needs
+/// neither.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -298,8 +282,8 @@ impl RequestFileTransferRequest<'_> {
 
 ///////////////////////////////////////// - Response - ///////////////////////////////////////////////////
 
-/// Sent by the server to inform the client of the maximum number of bytes to include in
-/// each `TransferData` request message
+/// The maximum number of bytes to include in each `TransferData` message, sent by the
+/// server in the response modes marked below.
 ///
 /// |               | [AddFile] | [DeleteFile] | [ReplaceFile] | [ReadFile] | [ReadDir] | [ResumeFile] |
 /// |---------------|-----------|--------------|---------------|------------|-----------|--------------|
@@ -317,27 +301,11 @@ impl RequestFileTransferRequest<'_> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct SentDataPayload<'a> {
-    /// This parameter is used by the requestFileTransfer positive response message to
-    /// inform the client how many data bytes (maxNumberOfBlockLength) to include in each
-    /// `TransferData` request message from the client or how many data bytes the server
-    /// will include in a `TransferData` positive response when uploading data. This length
-    /// reflects the complete message length, including the service identifier and the data
-    /// parameters present in the `TransferData` request message or positive response
-    /// message. This parameter allows either the client to adapt to the receive buffer size
-    /// of the server before it starts transferring data to the server or to indicate how
-    /// many data bytes will be included in each `TransferData` positive response in the
-    /// event that data is uploaded. A server is required to accept transferData requests
-    /// that are equal in length to its reported maxNumberOfBlockLength. It is server
-    /// specific what transferData request lengths less than maxNumberOfBlockLength are
-    /// accepted (if any).
-    ///
-    /// NOTE The last transferData request within a given block can be required to be less
-    /// than maxNumberOfBlockLength. It is not allowed for a server to write additional data
-    /// bytes (i.e. pad bytes) not contained within the transferData message (either in a
-    /// compressed or uncompressed format), as this would affect the memory address of where
-    /// the subsequent transferData request data would be written. If the modeOfOperation
-    /// parameter equals to 0x02 (`DeleteFile`) this parameter shall be not be included in
-    /// the response message.
+    /// `maxNumberOfBlockLength`: how many bytes each `TransferData` message carries,
+    /// counting its service identifier and data parameters, whether the client sends them
+    /// (download) or the server does (upload). A server accepts requests of exactly this
+    /// length; whether it accepts shorter ones is server specific, and the last message of
+    /// a block may have to be shorter. Absent for `DeleteFile`.
     ///
     /// Private because the `lengthFormatIdentifier` that declares its length is one byte
     /// wide, which bounds it; read it back with
@@ -358,10 +326,7 @@ impl<'a> SentDataPayload<'a> {
     ///
     /// # Errors
     /// Returns [`Error::IncorrectMessageLengthOrInvalidFormat`] if the slice is longer than
-    /// 255 bytes. The wire field that carries its length is one byte, so a longer slice was
-    /// constructible here and then failed in `encode` — the same construct-then-fail
-    /// asymmetry that `RequestDownloadResponse::new` was made fallible to close. This is
-    /// the invariant that earns this type its `#[non_exhaustive]`.
+    /// 255 bytes, the widest the one-byte wire field that carries its length can declare.
     pub const fn new(max_number_of_block_length: &'a [u8]) -> Result<Self, Error> {
         if max_number_of_block_length.len() > u8::MAX as usize {
             return Err(Error::IncorrectMessageLengthOrInvalidFormat);
@@ -379,7 +344,7 @@ impl<'a> SentDataPayload<'a> {
     }
 }
 
-/// Used to inform the client of the size of the file to be transferred
+/// The size of the file the server is about to send.
 ///
 /// |               | [AddFile] | [DeleteFile] | [ReplaceFile] | [ReadFile] | [ReadDir] | [ResumeFile] |
 /// |---------------|-----------|--------------|---------------|------------|-----------|--------------|
@@ -420,7 +385,7 @@ impl FileSizePayload {
     }
 }
 
-/// Used to inform the client of the size of the directory to be transferred
+/// The size of the directory information the server is about to send.
 ///
 /// |               | [AddFile] | [DeleteFile] | [ReplaceFile] | [ReadFile] | [ReadDir] | [ResumeFile] |
 /// |---------------|-----------|--------------|---------------|------------|-----------|--------------|
@@ -455,8 +420,7 @@ impl DirSizePayload {
     }
 }
 
-/// Used to inform the client of the byte position within the file at which the Tester will
-/// resume downloading after an initial download is suspended
+/// The byte position within the file at which the client resumes a suspended download.
 ///
 /// |               | [AddFile] | [DeleteFile] | [ReplaceFile] | [ReadFile] | [ReadDir] | [ResumeFile] |
 /// |---------------|-----------|--------------|---------------|------------|-----------|--------------|
@@ -473,20 +437,13 @@ impl DirSizePayload {
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PositionPayload {
-    /// Specifies the byte position within the file at which the Tester will resume
-    /// downloading after an initial download is suspended A download is suspended when the
-    /// ECU stops receiving [`crate::TransferDataRequest`] requests and does not receive the
-    /// `RequestTransferExit` request to end the transfer before returning to the default
-    /// session
+    /// The byte position within the file at which the client resumes downloading. A
+    /// download is suspended when the server stops receiving
+    /// [`crate::TransferDataRequest`]s and returns to the default session without a
+    /// `RequestTransferExit`.
     ///
-    /// Fixed size: 8 bytes
-    ///
-    /// Not included for [`AddFile`][FileOperationMode::AddFile],
-    /// [`DeleteFile`][FileOperationMode::DeleteFile],
-    /// [`ReplaceFile`][FileOperationMode::ReplaceFile],
-    /// [`ReadFile`][FileOperationMode::ReadFile], or
-    /// [`ReadDir`][FileOperationMode::ReadDir] Only present if `mode_of_operation` is
-    /// [`ResumeFile`][FileOperationMode::ResumeFile] (for ISO 14229-1:2020)
+    /// Eight bytes on the wire. Present only for
+    /// [`ResumeFile`][FileOperationMode::ResumeFile].
     pub file_position: u64,
 }
 
@@ -498,10 +455,8 @@ impl PositionPayload {
     }
 }
 
-/// Response to a [`RequestFileTransferRequest`] from the server
-///
-/// The server will respond with a [`RequestFileTransferResponse`] to indicate the status of
-/// the request `DataFormatIdentifier` - Echoes the value of the request
+/// Positive response to a [`RequestFileTransferRequest`]. Each variant echoes the
+/// request's `modeOfOperation` and, where one was sent, its `DataFormatIdentifier`.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -867,10 +822,9 @@ impl<'a> Decode<'a> for RequestFileTransferRequest<'a> {
                     FileOperationMode::AddFile => Self::AddFile(name, dfi, size),
                     FileOperationMode::ReplaceFile => Self::ReplaceFile(name, dfi, size),
                     FileOperationMode::ResumeFile => Self::ResumeFile(name, dfi, size),
-                    // The outer arm admits only the three above. Kept as a panic
-                    // rather than folded into one of them: a variant added to the
-                    // outer pattern later would otherwise decode as the wrong file
-                    // operation, silently, on wire data.
+                    // The outer arm admits only the three above. A panic rather than a
+                    // fallback to one of them, so a variant added to the outer pattern
+                    // cannot decode as the wrong file operation on wire data.
                     #[expect(clippy::unreachable, reason = "narrowed by the outer arm")]
                     _ => unreachable!(),
                 };
@@ -1005,8 +959,7 @@ mod request_tests {
     fn test_allowed_nack_codes() {
         // ISO 14229-1:2020 Table 484 lists exactly these seven codes. Pinned as a set
         // rather than spot-checked, because a `contains` assertion cannot notice a missing
-        // code -- and three were missing, including the requestSequenceError that Table 484
-        // defines specifically for ResumeFile on an already-complete transfer.
+        // code.
         let codes = RequestFileTransferRequest::allowed_nack_codes();
         let mut bytes = [0u8; 7];
         assert_eq!(codes.len(), bytes.len(), "wrong number of codes: {codes:?}");
@@ -1064,9 +1017,8 @@ mod request_tests {
     #[test]
     fn size_payload_decode_rejects_overwide_width() {
         // A wire-declared parameter length n > 16 is a data error, surfaced as
-        // Error::InvalidWidth (NRC 0x13) in every build profile — never a panic
-        // (regression guard for automotive-wire-codec SE-1). The buffer is long
-        // enough (1 + 2*17) that width, not truncation, is the only fault.
+        // Error::InvalidWidth (NRC 0x13) in every build profile, never a panic. The buffer
+        // is long enough (1 + 2*17) that width, not truncation, is the only fault.
         let wire = [17u8; 1 + 2 * 17];
         let err = SizePayload::decode(&wire).unwrap_err();
         assert!(matches!(err, Error::InvalidWidth(w) if w.got == 17 && w.max == 16));
@@ -1074,8 +1026,7 @@ mod request_tests {
 
     #[test]
     fn size_payload_derives_minimal_width_from_data() {
-        // Small values must serialize with a 1-byte width derived from the data,
-        // not a caller-supplied length that could disagree with the value.
+        // Small values serialize with a 1-byte width derived from the data.
         let s = SizePayload::new(0x12, 0x34);
         let mut buf = [0u8; 8];
         let written =
@@ -1086,11 +1037,8 @@ mod request_tests {
 
     #[test]
     fn the_mode_byte_comes_from_the_variant() {
-        // `NamePayload` used to carry its own `mode_of_operation`, and the field won over
-        // the variant: an `AddFile` request built with a `DeleteFile` payload encoded as
-        // DeleteFile and silently dropped the format identifier and both sizes. With the
-        // field gone the variant is the single source of the byte, so that state is
-        // unrepresentable.
+        // The variant is the single source of the mode byte, so a request cannot carry a
+        // mode that disagrees with its payload.
         let req = RequestFileTransferRequest::AddFile(
             name_payload("/a"),
             DataFormatIdentifier::NONE,
@@ -1131,7 +1079,7 @@ mod request_tests {
         let written =
             Encode::encode(&n, &mut automotive_wire_codec::SliceSink::new(&mut buf))
                 .unwrap();
-        // length=0x0003, "abc" — the modeOfOperation byte belongs to the request, not here.
+        // length=0x0003, "abc"; the modeOfOperation byte belongs to the request, not here.
         assert_eq!(&buf[..written], &[0x00, 0x03, b'a', b'b', b'c']);
     }
 
@@ -1320,7 +1268,7 @@ mod response_tests {
     fn derive_contract() {
         use crate::test_util::assert_impl_eq;
 
-        // Verify all nine types implement Eq
+        // All nine types implement Eq.
         assert_impl_eq::<FileOperationMode>();
         assert_impl_eq::<SizePayload>();
         assert_impl_eq::<NamePayload<'static>>();

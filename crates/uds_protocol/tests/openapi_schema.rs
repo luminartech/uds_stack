@@ -1,26 +1,13 @@
-//! Checks the generated `OpenAPI` document against what `serde` actually does.
+//! Checks the generated `OpenAPI` document against what `serde` does.
 //!
 //! The `utoipa` half of this crate is hand-written for every type whose serialized form is
-//! a single protocol byte, and for the four composite requests that deserialize through a
-//! repr. Three defects shipped in that code because nothing here asserted anything about
-//! it:
-//!
-//! - the document had four dangling `$ref`s, where the derive it replaced had none, because
-//!   a hand-written `ToSchema` must forward `schemas()` and none of them did;
-//! - two schema descriptions were implementation notes rather than API documentation, one
-//!   of them naming a module-private type, and one had lost its verb because utoipa's
-//!   derive silently drops `#[doc = concat!(..)]`;
-//! - every byte schema advertised `0..=2^31` while its deserializer rejected anything above
-//!   `0x7F`, or `0x0F`, so a generated client would emit an `i32` and get a runtime
-//!   rejection.
-//!
-//! A schema that lies is worse than a verbose one, so these are checked, not eyeballed.
+//! a single protocol byte, and for the composite requests that deserialize through a repr.
+//! These tests check that the document resolves every `$ref`, that each byte schema's
+//! `maximum` is the largest byte its deserializer accepts, and that no published
+//! description is empty, truncated or names a crate-private type.
 
-// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
-// test that indexes a known-length vector reads better than one that does not. The
-// workspace lint standard in the root Cargo.toml reaches this target too -- an
-// integration test is its own crate, so lib.rs cannot speak for it -- which is why
-// the relaxation is stated here rather than left implicit.
+// Test code: `unwrap`, `expect` and `panic` are the failure mechanism. An integration test
+// is its own crate, so lib.rs cannot relax the workspace lints for it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -95,12 +82,12 @@ fn the_document_has_no_dangling_refs() {
     assert!(
         dangling.is_empty(),
         "these schemas are referenced but never defined, so the document does not resolve: \
-         {dangling:?}. A hand-written `ToSchema` must forward `schemas()` — it defaults to a \
-         no-op, and only the derive overrides it."
+         {dangling:?}. A hand-written `ToSchema` must forward `schemas()`, which defaults \
+         to a no-op."
     );
 
-    // And the children really are pulled in, so the assertion above is not passing
-    // vacuously on a document that happens to contain no `$ref`s at all.
+    // And the children really are pulled in, so the assertion above does not pass
+    // vacuously on a document with no `$ref`s at all.
     assert!(
         schemas.contains_key("SubnetNumber"),
         "expected the composite request to register its child schemas, got {:?}",
@@ -108,11 +95,8 @@ fn the_document_has_no_dangling_refs() {
     );
 }
 
-/// `maximum` on each byte schema must be the largest byte `serde` actually accepts.
-///
-/// This is the assertion that keeps the two from drifting: it does not hard-code a bound,
-/// it discovers it by deserializing all 256 bytes and compares that to what the schema
-/// advertises.
+/// `maximum` on each byte schema is the largest byte `serde` accepts, discovered by
+/// deserializing all 256 bytes rather than hard-coded.
 macro_rules! assert_schema_bound_matches_serde {
     ($ty:ty, $name:literal) => {{
         let accepted: Vec<u8> = (0u8..=0xFF)
@@ -149,8 +133,8 @@ macro_rules! assert_schema_bound_matches_serde {
             $name
         );
 
-        // A contiguous `minimum..=maximum` cannot express a set with gaps, so any type with
-        // gaps has to say so in prose or the schema is still lying.
+        // A contiguous `minimum..=maximum` cannot express a set with gaps, so a type with
+        // gaps says so in its description.
         let description = schema
             .get("description")
             .and_then(serde_json::Value::as_str)
@@ -202,9 +186,8 @@ fn every_byte_schema_advertises_the_range_serde_enforces() {
 
 #[test]
 fn no_schema_description_leaks_a_private_type_or_is_empty() {
-    // Types a downstream crate cannot name. A schema that mentions one hands a client
-    // author a dead end, and these two are the whole reason the reprs exist — so leaking
-    // them into the published description defeats the point.
+    // Types a downstream crate cannot name; a schema that mentions one hands a client
+    // author a dead end.
     const PRIVATE: [&str; 2] = ["ZeroSubFunction", "MemoryFormatIdentifier"];
 
     let json = Api::openapi().to_json().expect("serializes");
@@ -253,10 +236,8 @@ fn no_schema_description_leaks_a_private_type_or_is_empty() {
                  {description:?}"
             );
         }
-        // The verb-less description this test exists to catch began with a bare newline:
-        // utoipa dropped the `#[doc = concat!(..)]` fragment carrying the sentence's
-        // subject and left the blank line that had followed it. A leading blank line is
-        // that exact signature.
+        // utoipa drops a `#[doc = concat!(..)]` fragment and leaves the blank line that
+        // followed it, so a description starting with whitespace has lost a sentence.
         assert!(
             !description.starts_with(char::is_whitespace),
             "{name}'s description starts with whitespace, which is what a dropped \

@@ -32,11 +32,11 @@ pub enum Response<'a> {
     ///
     /// Unlike the request (a self-delimiting list of 2-byte DIDs, parsed by
     /// [`ReadDataByIdentifierRequest::dids`](crate::ReadDataByIdentifierRequest::dids)),
-    /// this response is left opaque **by design**: each data record's length is defined by
-    /// the ECU's configuration for that DID and is *not* present on the wire, so the
-    /// library cannot split it into `(DID, value)` pairs. Parse it caller-side once you
-    /// know each DID's record length — read the 2-byte big-endian DID, take the
-    /// application-defined number of data bytes, then repeat on the remainder.
+    /// this response is opaque: each data record's length is defined by the ECU's
+    /// configuration for that DID and is *not* present on the wire, so the library cannot
+    /// split it into `(DID, value)` pairs. Parse it caller-side once you know each DID's
+    /// record length: read the 2-byte big-endian DID, take the application-defined number
+    /// of data bytes, then repeat on the remainder.
     ReadDataByIdentifier(ReadDataByIdentifierResponse<'a>),
     /// Positive response to `ReadDTCInformation` with lazy iterators.
     ReadDtcInfo(ReadDtcInfoResponse<'a>),
@@ -72,8 +72,8 @@ pub enum Response<'a> {
 
 /// # Remainder
 ///
-/// The returned remainder is **always empty**. A UDS frame is not self-delimiting — its
-/// length comes from the transport (ISO-TP, `DoIP`, ...), not from the message — so one
+/// The returned remainder is **always empty**. A UDS frame is not self-delimiting: its
+/// length comes from the transport (ISO-TP, `DoIP`, ...), not from the message, so one
 /// buffer is exactly one frame, and every payload is decoded with `decode_exact`. This
 /// means `decode` behaves as `decode_exact` despite the streaming shape of the [`Decode`]
 /// contract: do **not** feed it concatenated frames expecting it to consume one at a time,
@@ -301,7 +301,7 @@ mod tests {
         let written =
             Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
                 .unwrap();
-        assert_eq!(&buf[..written], &frame); // previously became 0x7F (NegativeResponse)
+        assert_eq!(&buf[..written], &frame);
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
         let (resp, remaining) = Response::decode(&[0x54]).unwrap();
         assert_eq!(remaining, [0u8; 0]);
         assert!(matches!(resp, Response::ClearDiagnosticInfo(_)));
-        // Trailing bytes after the SID are now rejected (matches every other response arm).
+        // Trailing bytes after the SID are rejected, as in every other response arm.
         assert!(matches!(
             Response::decode(&[0x54, 0xAA]),
             Err(crate::Error::TrailingBytes(_))

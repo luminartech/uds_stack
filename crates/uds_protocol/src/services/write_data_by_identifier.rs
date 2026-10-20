@@ -42,7 +42,7 @@ impl<'d> WriteDataByIdentifierRequest<'d> {
     /// # Errors
     /// Returns [`Error::IncorrectMessageLengthOrInvalidFormat`] if `data` is empty. ISO
     /// 14229-1:2020 Table 277 marks the first `dataRecord` byte mandatory, so a request
-    /// with no data record is malformed — and would encode to a frame this crate's own
+    /// with no data record is malformed and would encode to a frame this crate's own
     /// decoder rejects.
     pub const fn new(identifier: u16, data: &'d [u8]) -> Result<Self, Error> {
         if data.is_empty() {
@@ -221,8 +221,7 @@ mod test {
     fn wdbi_request_requires_at_least_one_data_byte() {
         // ISO 14229-1:2020 Table 277 marks dataRecord `data#1` as `M` (only `data#2..#m`
         // are `U`), and Figure 26's key states "minimum length is 4 byte (SI + DID +
-        // DREC)". A 3-byte message used to decode into an empty data record, so a server
-        // would attempt a zero-length write rather than answering NRC 0x13.
+        // DREC)", so a 3-byte message is answered NRC 0x13 rather than written.
         let err = <WriteDataByIdentifierRequest as Decode>::decode(&[0xF1, 0x90])
             .expect_err("a write with no data record must be rejected");
         assert!(
@@ -236,7 +235,7 @@ mod test {
             "expected a 3-byte shortfall, got {err:?}"
         );
 
-        // ...and the constructor must not mint a request the decoder would reject.
+        // ...and the constructor does not mint a request the decoder would reject.
         assert!(WriteDataByIdentifierRequest::new(0xF190, &[]).is_err());
         let req = WriteDataByIdentifierRequest::new(0xF190, &[0x01]).unwrap();
         assert_eq!(req.data, &[0x01]);

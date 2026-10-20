@@ -1,12 +1,11 @@
 //! `RequestDownload` (0x34) and `RequestUpload` (0x35) service implementations.
 //!
-//! ISO 14229-1 gives the two services identical message layouts — request:
+//! ISO 14229-1 gives the two services identical message layouts (request:
 //! `dataFormatIdentifier`, `addressAndLengthFormatIdentifier`, `memoryAddress`,
-//! `memorySize`; positive response: `lengthFormatIdentifier`, `maxNumberOfBlockLength` —
+//! `memorySize`; positive response: `lengthFormatIdentifier`, `maxNumberOfBlockLength`),
 //! differing only in service identifier and in which direction the subsequent
 //! `TransferData` sequence moves the bytes. Both pairs are generated from one macro so the
-//! wire codec has a single source of truth; a fix to the width-derivation logic cannot land
-//! on one service and miss the other.
+//! wire codec has a single source of truth.
 
 use crate::shared::{
     AddressAndLengthFormatIdentifier, DataFormatIdentifier, LengthFormatIdentifier,
@@ -27,9 +26,8 @@ const REQUEST_DOWNLOAD_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 6] = [
     NegativeResponseCode::UploadDownloadNotAccepted,
 ];
 
-/// Permitted NRCs for `RequestUpload` (0x35). ISO 14229-1 specifies the same set as
-/// `RequestDownload`; kept as a separate constant so either service can diverge later
-/// without silently changing the other.
+/// Permitted NRCs for `RequestUpload` (0x35): the same set as `RequestDownload`, as a
+/// separate constant because each service's table is its own.
 const REQUEST_UPLOAD_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 6] = [
     NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
     NegativeResponseCode::ConditionsNotCorrect,
@@ -103,19 +101,15 @@ macro_rules! upload_download_service {
             #[doc = concat!("Create a `", stringify!($req), "` with a caller-chosen")]
             /// `addressAndLengthFormatIdentifier`.
             ///
-            /// ISO 14229-1:2020 Table 441 makes the format identifier a client choice
-            /// rather than a function of the values, and clause 11.3.1 blesses "a **fixed**
-            /// addressAndLengthFormatIdentifier" with the unused bytes "padded with the
-            /// value 0x00". The standard's own examples are non-minimal — Table 462
-            /// declares three `memorySize` bytes for `0x00FFFF`, which needs two — so
-            /// [`new`](Self::new), which always derives the narrowest widths, cannot
-            /// reproduce them. This can.
+            /// ISO 14229-1:2020 Table 441 makes the format identifier a client choice, and
+            /// clause 11.3.1 allows a fixed one with the unused bytes padded with `0x00`;
+            /// Table 462's example declares three `memorySize` bytes for `0x00FFFF`, which
+            /// [`new`](Self::new) would encode in two.
             ///
             /// # Errors
             /// Returns [`Error::InvalidMemoryAddress`] or [`Error::InvalidMemorySize`] if
             /// the value does not fit the width `alfid` declares for it, which would
-            /// otherwise truncate it on the wire. Both map to NRC `0x31`, as Tables 444 and
-            /// 449 require for a `memoryAddress`/`memorySize` that "is not valid".
+            /// truncate it on the wire. Both map to NRC `0x31` (Tables 444 and 449).
             pub const fn new_with_alfid(
                 data_format_identifier: DataFormatIdentifier,
                 alfid: AddressAndLengthFormatIdentifier,
@@ -147,11 +141,9 @@ macro_rules! upload_download_service {
                 self.address_and_length_format_identifier
             }
 
-            /// The compression and encryption methods the client asked the server to use.
-            ///
-            /// A server has to act on this, so it must be readable back off a decoded
-            /// request; use [`DataFormatIdentifier::compression_method`] and
-            /// [`DataFormatIdentifier::encryption_method`] for the individual nibbles.
+            /// The compression and encryption methods the client asked the server to use;
+            /// [`DataFormatIdentifier::compression_method`] and
+            /// [`DataFormatIdentifier::encryption_method`] give the individual nibbles.
             #[must_use]
             pub const fn data_format_identifier(&self) -> DataFormatIdentifier {
                 self.data_format_identifier
@@ -180,16 +172,12 @@ macro_rules! upload_download_service {
         /// memory size, plus the byte width each of the latter two is declared with on the
         /// wire.
         ///
-        /// A width that would truncate its value is rejected rather than silently
-        /// corrupting the address on the wire, and the crate-private
-        /// `addressAndLengthFormatIdentifier` that packs the two widths never surfaces
-        /// here.
-        ///
-        /// This doc comment is the published schema description for the request type,
-        /// because its hand-written `PartialSchema` delegates here. It deliberately uses
-        /// plain `///` lines: utoipa's derive reads only literal doc attributes, so a
-        /// `#[doc = concat!(..)]` naming the specific service is dropped from the schema --
-        /// which is what left this description missing its verb.
+        /// A width that would truncate its value is rejected rather than corrupting the
+        /// address on the wire.
+        //
+        // This doc comment is the published schema description for the request type, whose
+        // hand-written `PartialSchema` delegates here. Plain `///` lines only: utoipa's
+        // derive reads literal doc attributes and drops a `#[doc = concat!(..)]`.
         #[cfg(feature = "serde")]
         #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
         #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
@@ -240,8 +228,7 @@ macro_rules! upload_download_service {
                 std::borrow::Cow::Borrowed(stringify!($req))
             }
 
-            /// See the note on `CommunicationControlRequest::schemas`: a hand-written
-            /// `ToSchema` must forward this or its `$ref`s dangle.
+            /// Register the child schemas this one `$ref`s; without this they dangle.
             fn schemas(
                 schemas: &mut Vec<(
                     String,
@@ -322,7 +309,7 @@ macro_rules! upload_download_service {
         #[non_exhaustive]
         pub struct $resp<'d> {
             /// The `maxNumberOfBlockLength` bytes, as sent. See the accessor of the same
-            /// name for what the value means for this service -- it differs between
+            /// name for what the value means for this service; it differs between
             /// download and upload.
             ///
             /// The on-wire `lengthFormatIdentifier` nibble is derived from this slice's
@@ -407,8 +394,7 @@ macro_rules! upload_download_service {
             }
         }
 
-        // Both services get the same coverage, generated alongside them so neither can
-        // drift.
+        // Both services get the same coverage, generated alongside them.
         #[cfg(test)]
         mod $test_mod {
             use super::*;
@@ -453,8 +439,8 @@ macro_rules! upload_download_service {
 
             #[test]
             fn zero_address_and_size_clamp_to_one_byte() {
-                // A 0 address/size must still produce a valid (>=1 byte) length nibble,
-                // otherwise the encoded frame cannot be decoded back.
+                // A 0 address/size produces a valid (>=1 byte) length nibble, so the
+                // encoded frame can be decoded back.
                 let req = $req::new(0x00.into(), 0, 0);
                 assert_eq!(
                     req.address_and_length_format_identifier
@@ -485,11 +471,10 @@ macro_rules! upload_download_service {
 
             #[test]
             fn new_derives_the_alfid_nibbles_in_wire_order() {
-                // The two nibbles are asymmetric here on purpose: the high nibble is the
-                // memorySize width and the low nibble the memoryAddress width, so
-                // transposing them changes these bytes. A symmetric case (or a length-only
-                // assertion) cannot tell the two apart, and a swap silently truncates the
-                // address.
+                // The two widths differ in each case: the high nibble is the memorySize
+                // width and the low nibble the memoryAddress width, so transposing them
+                // changes these bytes, which a symmetric case or a length-only assertion
+                // could not detect.
                 for (address, size, want) in [
                     // 4-byte address, 1-byte size -> ALFID 0x14
                     (
@@ -509,7 +494,7 @@ macro_rules! upload_download_service {
                         "wrong wire bytes for address {address:#X} size {size:#X}"
                     );
 
-                    // ...and the frame the crate emits must be one the crate can read back.
+                    // ...and the frame the crate emits is one the crate reads back.
                     let decoded = <$req as Decode>::decode_exact(&buf[..written]).unwrap();
                     assert_eq!(decoded.memory_address(), address);
                     assert_eq!(decoded.memory_size(), size);
@@ -520,10 +505,8 @@ macro_rules! upload_download_service {
             fn explicit_widths_can_reproduce_the_spec_example_alfid() {
                 // ISO 14229-1:2020 Table 441 makes the addressAndLengthFormatIdentifier a
                 // client choice, not a function of the values. Table 462's own example
-                // declares 3 bytes of memorySize for the value 0x00FFFF, which needs only 2
-                // -- so `new`, which always derives minimal widths, cannot produce that
-                // frame. Real bootloaders commonly mandate a fixed ALFID (often 0x44) and
-                // answer requestOutOfRange otherwise.
+                // declares 3 bytes of memorySize for the value 0x00FFFF, which needs only
+                // 2, so `new`, which derives minimal widths, cannot produce that frame.
                 let req = $req::new_with_alfid(
                     DataFormatIdentifier::from(0x11),
                     AddressAndLengthFormatIdentifier::new(3, 3).unwrap(),
@@ -566,8 +549,8 @@ macro_rules! upload_download_service {
                     Err(Error::InvalidMemorySize(0x1_0000))
                 ));
 
-                // ...and the widths themselves must be 1 to 8. That check lives on the
-                // format identifier, so it cannot be reached with a bad width.
+                // ...and the widths themselves are 1 to 8. That check lives on the format
+                // identifier, so `new_with_alfid` cannot be reached with a bad width.
                 assert!(AddressAndLengthFormatIdentifier::new(1, 0).is_err());
                 assert!(AddressAndLengthFormatIdentifier::new(1, 9).is_err());
                 assert!(AddressAndLengthFormatIdentifier::new(9, 1).is_err());
@@ -617,9 +600,8 @@ macro_rules! upload_download_service {
             #[test]
             fn a_reserved_length_nibble_is_zeroed_on_re_encode() {
                 // ISO 14229-1:2020 Tables 443 and 448 both give the lengthFormatIdentifier
-                // the range 0x00 to 0xF0 and state that bits 3 to 0 are "reserved by
-                // document, to be set to '0'" -- "the lower nibble shall be set to '0'". So
-                // `74 25 08 00` is a malformed byte, not a value to preserve: the block
+                // the range 0x00 to 0xF0 and reserve bits 3 to 0, which are sent as zero.
+                // So `74 25 08 00` is a malformed byte, not a value to preserve: the block
                 // length is still read from the high nibble, but re-encoding emits the
                 // conformant `74 20 08 00`.
                 let resp = <$resp as Decode>::decode_exact(&[0x25, 0x08, 0x00]).unwrap();
@@ -670,11 +652,10 @@ macro_rules! upload_download_service {
 
             #[test]
             fn data_format_identifier_is_readable_off_a_decoded_request() {
-                // A server has to act on the compression/encryption methods it was asked
-                // for. All fields are private (the width nibbles must stay in sync with the
-                // values), so without the getter the DFI was write-only: constructible but
-                // unreadable after a decode. Wire: DFI=0x21 (compression 2, encryption 1),
-                // ALFID=0x12 (size 1, addr 2), addr=0xBEEF, size=0x10
+                // A server acts on the compression/encryption methods it was asked for, so
+                // the DFI is readable after a decode although every field is private.
+                // Wire: DFI=0x21 (compression 2, encryption 1), ALFID=0x12 (size 1, addr
+                // 2), addr=0xBEEF, size=0x10
                 let wire = [0x21, 0x12, 0xBE, 0xEF, 0x10];
                 let req = <$req as Decode>::decode_exact(&wire).unwrap();
                 let dfi = req.data_format_identifier();
@@ -687,7 +668,7 @@ macro_rules! upload_download_service {
 
             #[test]
             fn data_format_identifier_survives_construction() {
-                // new(compression, encryption) — wire order.
+                // new(compression, encryption): wire order.
                 let dfi = DataFormatIdentifier::new(0x0A, 0x0B).unwrap();
                 let req = $req::new(dfi, 0x1234, 0x10);
                 assert_eq!(req.data_format_identifier(), dfi);
@@ -754,8 +735,7 @@ mod shared_layout_tests {
     #[test]
     fn download_and_upload_share_one_wire_layout() {
         // The two services are byte-identical apart from the service identifier, which is
-        // added by the `Request`/`Response` frame layer, not by these payload codecs. This
-        // pins that equivalence so the macro cannot silently drift for one of them.
+        // added by the `Request`/`Response` frame layer, not by these payload codecs.
         let wire = [0x00, 0x14, 0xF0, 0xFF, 0xFF, 0x67, 0x0A];
         let down = <RequestDownloadRequest as Decode>::decode_exact(&wire).unwrap();
         let up = <RequestUploadRequest as Decode>::decode_exact(&wire).unwrap();

@@ -1,7 +1,6 @@
-//! UDS uses a bit mask called the Suppress Positive Response Message Indication Bit
-//! (SPRMIB) to indicate if a positive response message should be suppressed. This module
-//! provides a generic implementation of the Suppress Positive Response Message Indication
-//! Bit (SPRMIB) for UDS subfunction enumerations.
+//! The suppressPosRspMsgIndicationBit (SPRMIB), bit 7 of a sub-function byte, which asks
+//! the server not to send a positive response. This module splits and fuses it for the
+//! sub-function enumerations.
 use crate::Error;
 
 /// Suppress Positive Response Message Indication Bit
@@ -28,9 +27,8 @@ pub(crate) const fn fuse_sprmib(suppress_positive_response: bool, value: u8) -> 
     }
 }
 
-/// `SuppressablePositiveResponse` is used to encapsulate subfunction enumerations that can
-/// also encode the response suppression bit. This eliminates bit masking logic from a
-/// number of subfunction enumerations.
+/// A sub-function value together with its SPRMIB flag, so the sub-function enumerations
+/// carry no bit-masking logic of their own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SuppressablePositiveResponse<T: TryFrom<u8> + Into<u8> + Copy> {
     suppress_positive_response: bool,
@@ -98,7 +96,7 @@ mod test {
         }
     }
     use super::*;
-    /// Check that we properly decode and encode hex bytes
+    /// Every byte splits into its flag and its low seven bits.
     #[test]
     fn test_all_u8_values() {
         for i in 0..=u8::MAX {

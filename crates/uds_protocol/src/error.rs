@@ -73,7 +73,7 @@ pub enum Error {
     /// A `u32` did not fit the three bytes of a DTC (i.e. exceeded `0x00FF_FFFF`).
     #[error("Invalid DTC record: {0:#010X} does not fit three bytes")]
     InvalidDtcRecord(u32),
-    /// The encryption or compression method byte is not recognised.
+    /// The encryption or compression method byte is not recognized.
     #[error("Invalid Encryption/Compression Method: {0}")]
     InvalidEncryptionCompressionMethod(u8),
     /// The `RequestFileTransfer` `modeOfOperation` byte is not valid.
@@ -94,11 +94,9 @@ pub enum Error {
 }
 
 impl Error {
-    /// The [`NegativeResponseCode`] a server should return for this error.
-    ///
-    /// A server decodes an inbound request, and on failure has to answer with a negative
-    /// response. This is that mapping, so callers do not have to re-derive it against a
-    /// `#[non_exhaustive]` enum they cannot match exhaustively:
+    /// The [`NegativeResponseCode`] a server returns for this error, so a server that
+    /// failed to decode a request does not re-derive the mapping against a
+    /// `#[non_exhaustive]` enum:
     ///
     /// ```
     /// use uds_protocol::{Decode, NegativeResponse, Request, UdsServiceType};
@@ -111,49 +109,24 @@ impl Error {
     /// ```
     ///
     /// Returns `None` for [`Error::Write`]: a transport failure is not a protocol error, so
-    /// there is no NRC to send. Every other error maps to a code.
+    /// there is no NRC to send. Every other error maps to one of three codes, following
+    /// clause 8.7.5 and the "shall" rows of Annex A.1; clause 8.7.2 leaves a server free to
+    /// answer differently where its own tables allow.
     ///
-    /// # Classification
+    /// - `0x13` `incorrectMessageLengthOrInvalidFormat`: the frame is malformed, too short,
+    ///   too long, or declaring a width that does not fit.
+    /// - `0x12` `subFunctionNotSupported`: the sub-function byte is not a value the service
+    ///   defines. Only `0x31` and `0x85` reject a reserved sub-function at decode; the
+    ///   other sub-function services decode one into an `IsoSaeReserved` variant so the
+    ///   server sees the byte, and answering `0x12` for it is the server's job.
+    /// - `0x31` `requestOutOfRange`: a parameter, not a sub-function, is outside its range.
+    ///   `communicationType` is a parameter of `CommunicationControl`, so it lands here.
     ///
-    /// This is a **default**, covering the lane ISO 14229-1 actually mandates — clause
-    /// 8.7.5's pseudo-code and the "shall" rows of Annex A.1. Clause 8.7.2 notes that "a
-    /// specific NRC is not guaranteed for all possible test pattern sequences", and several
-    /// outcomes in Tables 4 to 7 are specified only as "NRC = XX", so a server is free to
-    /// answer differently where its own tables allow:
-    ///
-    /// - **`0x13` `incorrectMessageLengthOrInvalidFormat`** — the frame itself is
-    ///   malformed: too short, too long, or a declared width that does not fit.
-    /// - **`0x12` `subFunctionNotSupported`** — the *sub-function* byte is not a value this
-    ///   service defines.
-    ///
-    /// Only two services reject a reserved sub-function at decode and so produce this code
-    /// themselves: `0x31` `RoutineControl` (Table 426 defines no manufacturer range, so
-    /// anything outside `0x01`-`0x03` is invalid) and `0x85` `ControlDTCSetting`.
-    ///
-    /// The others — `0x10`, `0x11`, `0x19`, `0x27`, `0x28`, `0x3E` — model the whole
-    /// `0x00..=0x7F` space, so a reserved byte decodes into an `IsoSaeReserved`-style
-    /// variant and round-trips unchanged rather than failing. That is deliberate: it lets a
-    /// server see the byte it was actually sent. **Answering `0x12` for those is the
-    /// server's job**, not this mapping's: match on the sub-function and use
-    /// [`NegativeResponseCode::SubFunctionNotSupported`] for a value you do not implement.
-    /// - **`0x31` `requestOutOfRange`** — a *parameter* (not a sub-function) carries a
-    ///   value outside its permitted range. Note that `communicationType` is a parameter of
-    ///   `CommunicationControl`, not its sub-function, so it lands here rather than on
-    ///   `0x12`.
-    ///
-    /// Two codes this mapping deliberately never returns:
-    ///
-    /// - **`0x10` `generalReject`** — Annex A.1 says it "shall only be implemented in the
-    ///   server if none of the negative response codes defined in this document meet the
-    ///   needs of the implementation. At no means shall this NRC be a general replacement".
-    ///   It also appears in none of the per-service NRC tables, so no service's
-    ///   `allowed_nack_codes` lists it.
-    /// - **`0x11` `serviceNotSupported`** — an unrecognised SID does not fail to decode; it
-    ///   becomes [`Request::Other`](crate::Request::Other) so a server can see the byte.
-    ///   Answering `0x11` is therefore the server's call, on a SID it does not implement.
-    ///
-    /// Every code this does return is a legal NRC to put on the wire: never
-    /// [`NegativeResponseCode::PositiveResponse`] and never a reserved value.
+    /// Never `0x10` `generalReject`, which Annex A.1 forbids as a general replacement, and
+    /// never `0x11` `serviceNotSupported`, since an unrecognized SID decodes to
+    /// [`Request::Other`](crate::Request::Other) and the server answers it. Every code
+    /// returned is legal on the wire: never [`NegativeResponseCode::PositiveResponse`] and
+    /// never a reserved value.
     #[must_use]
     pub const fn negative_response_code(&self) -> Option<NegativeResponseCode> {
         match self {
@@ -350,12 +323,10 @@ mod nrc_mapping_tests {
 
     #[test]
     fn mapping_never_produces_a_positive_or_reserved_code() {
-        // This is deliberately narrower than "the codes the ISO tables allow": the
-        // per-service tables are a floor, not a ceiling (clause 9.4 — the A.1 codes "shall
-        // be used in addition to" them), so table membership is not the property to assert.
-        // What must hold is that a decode failure never reports a positive response and
-        // never invents a reserved code, either of which would put an illegal byte on the
-        // wire.
+        // Narrower than "the codes the ISO tables allow": the per-service tables are a
+        // floor, not a ceiling (clause 9.4), so table membership is not the property to
+        // assert. A decode failure never reports a positive response and never invents a
+        // reserved code, either of which would put an illegal byte on the wire.
         for (err, _, why) in cases() {
             let nrc = err
                 .negative_response_code()

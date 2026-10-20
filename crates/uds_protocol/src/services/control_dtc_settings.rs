@@ -71,7 +71,7 @@ impl TryFrom<u8> for DtcSettingType {
     }
 }
 
-/// The `ControlDtcSetting` service is used to control the DTC settings of the ECU.
+/// Request for the server to enable or disable DTC status-bit updates.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,8 +84,8 @@ pub struct ControlDtcSettingRequest<'d> {
     /// Optional `DTCSettingControlOptionRecord`, empty when absent.
     ///
     /// Marked `U` (user option) in ISO 14229-1:2020 Table 127. Table 129 describes it as
-    /// vehicle-manufacturer specific data qualifying the request — for example a list of
-    /// the DTCs to turn on or off — and Table 132 reserves
+    /// vehicle-manufacturer specific data qualifying the request, for example a list of
+    /// the DTCs to turn on or off, and Table 132 reserves
     /// [`NegativeResponseCode::RequestOutOfRange`] for a server that detects an error in
     /// it.
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -156,7 +156,7 @@ impl<'a> Decode<'a> for ControlDtcSettingRequest<'a> {
 
     /// The sub-function byte is mandatory; everything after it is the optional
     /// `DTCSettingControlOptionRecord` (ISO 14229-1:2020 Table 127, `Cvt` = `U`), whose
-    /// length is not on the wire — the record runs to the end of the message.
+    /// length is not on the wire: the record runs to the end of the message.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
         let [sub_function, option_record @ ..] = buf else {
             return Err(Error::InsufficientData(Incomplete {
@@ -252,10 +252,9 @@ mod request {
     #[test]
     fn manufacturer_and_supplier_specific_setting_types_are_supported() {
         // ISO 14229-1:2020 Table 128 reserves 0x40-0x5F for vehicle-manufacturer use and
-        // 0x60-0x7E for system-supplier use. Both were rejected outright, so a server could
-        // not even see the byte in order to answer SubFunctionNotSupported for it, and a
-        // client could not send a manufacturer-defined setting at all. Every sibling
-        // sub-function enum in the crate models these ranges.
+        // 0x60-0x7E for system-supplier use. Both decode, so a server sees the byte it
+        // answers SubFunctionNotSupported to and a client can send a manufacturer-defined
+        // setting.
         for (byte, expected) in [
             (0x40u8, DtcSettingType::VehicleManufacturerSpecific(0x40)),
             (0x5F, DtcSettingType::VehicleManufacturerSpecific(0x5F)),
@@ -294,8 +293,7 @@ mod request {
     fn a_dtc_setting_control_option_record_round_trips() {
         // Table 127 marks DTCSettingControlOptionRecord `U`, and Table 129 describes it as
         // carrying e.g. a list of DTCs to turn on or off. Table 132 reserves NRC 0x31 for
-        // an error *in that record*, which a server can only detect if it is decoded at
-        // all. Without it, `85 02 AA BB CC` was rejected as having trailing bytes.
+        // an error *in that record*, which a server can only detect if it is decoded.
         let wire = [0x85, 0x02, 0xAA, 0xBB, 0xCC];
         let (req, _) = crate::Request::decode(&wire).unwrap();
         let crate::Request::ControlDtcSetting(inner) = req else {
@@ -311,8 +309,8 @@ mod request {
 
     #[test]
     fn an_absent_option_record_is_an_empty_slice() {
-        // Table 133's flow example is the bare two-byte form, so absent must stay absent
-        // rather than becoming a zero byte on the wire.
+        // Table 133's flow example is the bare two-byte form: an absent record encodes as
+        // nothing, not as a zero byte.
         let (req, _) = crate::Request::decode(&[0x85, 0x02]).unwrap();
         let crate::Request::ControlDtcSetting(inner) = req else {
             panic!("expected a ControlDtcSetting request");

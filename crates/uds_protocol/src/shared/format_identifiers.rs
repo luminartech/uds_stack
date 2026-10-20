@@ -34,19 +34,15 @@ const ENCRYPTION_NIBBLE_MASK: u8 = LOW_NIBBLE_MASK;
 /// [`RequestDownloadRequest`](crate::RequestDownloadRequest) and
 /// [`RequestUploadRequest`](crate::RequestUploadRequest), which share one message layout.
 /// The high nibble is the `memorySize` width and the low nibble the `memoryAddress` width,
-/// in bytes — so `0x44` declares four bytes each, and `0x12` one byte of size and two of
+/// in bytes, so `0x44` declares four bytes each, and `0x12` one byte of size and two of
 /// address.
 ///
 /// ISO 14229-1:2020 Table 441 makes this a client choice rather than a function of the
-/// values, so it is a parameter rather than something derived: clause 11.3.1 blesses "a
-/// **fixed** addressAndLengthFormatIdentifier" with the unused bytes "padded with the value
-/// 0x00", and the standard's own examples are non-minimal (Table 462 declares three
-/// `memorySize` bytes for `0x00FFFF`, which needs two). Pass one to
+/// values, and clause 11.3.1 allows a fixed identifier with the unused bytes padded with
+/// `0x00`. Pass one to
 /// [`RequestDownloadRequest::new_with_alfid`](crate::RequestDownloadRequest::new_with_alfid);
-/// [`new`](crate::RequestDownloadRequest::new) derives the minimal one for you.
-///
-/// A bootloader that mandates a particular value states it as a byte, so build one the same
-/// way:
+/// [`new`](crate::RequestDownloadRequest::new) derives the narrowest one. A bootloader that
+/// mandates a particular value states it as a byte, so build one the same way:
 ///
 /// ```
 /// use uds_protocol::AddressAndLengthFormatIdentifier as Alfid;
@@ -62,10 +58,6 @@ const ENCRYPTION_NIBBLE_MASK: u8 = LOW_NIBBLE_MASK;
 /// assert!(Alfid::try_from(0x88).is_ok());
 /// assert!(Alfid::try_from(0x98).is_err());
 /// ```
-///
-/// ISO 14229-1:2020 Annex H Table H.1 gives example values. Each width is 1 to 8 bytes
-/// here: a zero nibble is "not applicable" there, and a wider one does not fit the `u64`
-/// that carries an address or size.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,8 +73,7 @@ impl AddressAndLengthFormatIdentifier {
     ///
     /// Arguments are in **wire order**: `memory_size_length` is the high nibble,
     /// `memory_address_length` the low nibble. Both are `u8`, so the compiler cannot catch
-    /// a transposition — if you have the byte already, prefer `try_from`, which cannot be
-    /// transposed.
+    /// a transposition; if you have the byte already, prefer `try_from`.
     ///
     /// # Errors
     /// Returns [`Error::InvalidAddressAndLengthFormatIdentifier`] carrying the byte the
@@ -96,7 +87,7 @@ impl AddressAndLengthFormatIdentifier {
         {
             // Report the byte, not the nibble, so the message matches what a tester
             // configures and what `try_from` would have been given. Nibbles wider than 4
-            // bits are masked to keep the reported byte a faithful packing of the two.
+            // bits are masked so the reported byte is a packing of the two.
             return Err(Error::InvalidAddressAndLengthFormatIdentifier(
                 ((memory_size_length & LOW_NIBBLE_MASK) << 4)
                     | (memory_address_length & LOW_NIBBLE_MASK),
@@ -209,21 +200,15 @@ impl From<LengthFormatIdentifier> for u8 {
 }
 
 /// The compression method (high nibble) and encryption method (low nibble) a client asks
-/// the server to use for a transfer.
-///
-/// - `0x00` for both means no compression and no encryption, which is the default; prefer
-///   [`DataFormatIdentifier::NONE`].
-/// - Values other than `0x00` are Vehicle Manufacturer specific according to
-///   ISO-14229-1:2020.
+/// the server to use for a transfer. `0x00` for both, [`DataFormatIdentifier::NONE`],
+/// means neither; every other value is vehicle-manufacturer specific.
 ///
 /// Supplied to [`RequestDownloadRequest::new`](crate::RequestDownloadRequest::new) and
-/// [`RequestUploadRequest::new`](crate::RequestUploadRequest::new), and read back with
-/// [`RequestDownloadRequest::data_format_identifier`](crate::RequestDownloadRequest::data_format_identifier).
-/// Also carried by the `AddFile`, `ReplaceFile`, `ReadFile` and `ResumeFile` variants of
+/// [`RequestUploadRequest::new`](crate::RequestUploadRequest::new), read back with
+/// [`RequestDownloadRequest::data_format_identifier`](crate::RequestDownloadRequest::data_format_identifier),
+/// and carried by the `AddFile`, `ReplaceFile`, `ReadFile` and `ResumeFile` variants of
 /// [`RequestFileTransferRequest`](crate::RequestFileTransferRequest). Serializes as the
-/// single wire byte it occupies. Going through the byte rather than the two private nibble
-/// fields means `serde` cannot mint a nibble wider than `0x0F`, which `new` rejects — the
-/// byte form simply has no such state to represent.
+/// single wire byte it occupies, which has no state for a nibble wider than `0x0F`.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -235,8 +220,7 @@ pub struct DataFormatIdentifier {
 }
 
 impl DataFormatIdentifier {
-    /// No compression and no encryption — the `0x00` byte, and the overwhelmingly common
-    /// case.
+    /// No compression and no encryption: the `0x00` byte, and the common case.
     pub const NONE: Self = Self {
         compression_method: 0,
         encryption_method: 0,
@@ -245,17 +229,14 @@ impl DataFormatIdentifier {
     /// Build a `DataFormatIdentifier` from its compression and encryption method nibbles.
     ///
     /// Arguments are in **wire order**: compression is the high nibble, encryption the low
-    /// nibble. `0x00` for both means no compression and no encryption — prefer
-    /// [`DataFormatIdentifier::NONE`] for that. Each value occupies a single nibble.
-    ///
-    /// Both parameters are `u8`, so the compiler cannot catch a transposition; if you are
-    /// converting a byte you already have, use `DataFormatIdentifier::from(byte)` instead.
+    /// nibble. `0x00` for both means no compression and no encryption; prefer
+    /// [`DataFormatIdentifier::NONE`] for that. Both parameters are `u8`, so the compiler
+    /// cannot catch a transposition; for a byte you already have, use
+    /// `DataFormatIdentifier::from(byte)` instead.
     ///
     /// # Errors
     /// Returns [`Error::InvalidEncryptionCompressionMethod`] if either value does not fit
-    /// in a nibble (i.e. is greater than `0x0F`). Written as explicit range checks rather
-    /// than a `?` on a helper: `?` is not permitted in a `const fn`, and const construction
-    /// is what lets callers put a `DataFormatIdentifier` in a `const` table.
+    /// in a nibble (is greater than `0x0F`).
     pub const fn new(compression_method: u8, encryption_method: u8) -> Result<Self, Error> {
         if compression_method > NIBBLE_MAX {
             return Err(Error::InvalidEncryptionCompressionMethod(
@@ -281,7 +262,7 @@ impl DataFormatIdentifier {
 
     /// The single byte this identifier occupies on the wire.
     ///
-    /// `const`, unlike `u8::from(identifier)`, so it can be used in a `const` context.
+    /// `const`, unlike `u8::from(identifier)`.
     #[must_use]
     pub const fn value(&self) -> u8 {
         self.encryption_method | (self.compression_method << 4)
@@ -313,7 +294,6 @@ impl From<DataFormatIdentifier> for u8 {
     }
 }
 
-// compare to a u8 value
 impl PartialEq<u8> for DataFormatIdentifier {
     fn eq(&self, other: &u8) -> bool {
         let other_data_format_identifier = DataFormatIdentifier::from(*other);
@@ -444,8 +424,7 @@ mod tests {
 
             #[test]
             fn prop_memory_format_identifier_roundtrip(
-                // The full accepted range, so an off-by-one in the range checks cannot sit
-                // underneath a passing property test.
+                // The full accepted range, so an off-by-one in the range checks fails.
                 size_len in 1u8..=MAX_MEMORY_SIZE_LENGTH,
                 addr_len in 1u8..=MAX_MEMORY_ADDRESS_LENGTH,
             ) {

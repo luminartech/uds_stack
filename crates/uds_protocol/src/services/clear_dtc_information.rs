@@ -140,7 +140,6 @@ impl<'a> Decode<'a> for ClearDiagnosticInfoRequest {
     }
 }
 
-/// test
 #[cfg(test)]
 mod request {
     use super::*;
@@ -224,7 +223,7 @@ mod request {
 
     #[test]
     fn a_truncated_group_of_dtc_is_still_rejected() {
-        // The 3 groupOfDTC bytes stay mandatory; only the 4th byte is optional.
+        // The 3 groupOfDTC bytes are mandatory; only the 4th byte is optional.
         let got = <ClearDiagnosticInfoRequest as Decode>::decode(&[0xFF, 0xFF]);
         assert!(
             matches!(

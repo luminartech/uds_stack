@@ -1,9 +1,8 @@
-//! Routine Control (0x31) Service is used to perform functions on the ECU that may not be
-//! covered by other services.
+//! `RoutineControl` (0x31) service implementation.
 //!
-//! It can also be used to check the ECU's health, erase memory, or other custom
-//! manufacturer/supplier routines. However, some routines may have side effects or require
-//! certain preconditions to be met.
+//! A routine is a server-resident function the client starts, stops or reads results from:
+//! a health check, a memory erase, or a manufacturer- or supplier-defined procedure. A
+//! routine may have preconditions, such as a session or an unlocked security level.
 use crate::shared::SuppressablePositiveResponse;
 use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
 use automotive_wire_codec::{write_bytes, write_u8, write_u16_be};
@@ -23,9 +22,8 @@ pub enum RoutineControlSubFunction {
     /// the server using [`crate::SecurityAccessRequest`] before starting the routine.
     StartRoutine,
 
-    /// The server routine shall be stopped in the server's memory sometime between the
-    /// completion of the `StopRoutine` request and the completion of the 1st response
-    /// message which indicates that the routine has already been stopped, or is in progress
+    /// Stop the routine. The server has stopped it by the time it completes its first
+    /// response, which reports the routine stopped or stopping.
     StopRoutine,
 
     /// Request results for the specified routineIdentifier
@@ -88,8 +86,7 @@ const ROUTINE_CONTROL_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 7] = [
     NegativeResponseCode::GeneralProgrammingFailure,
 ];
 
-/// Used by a client to execute a defined sequence of events and obtain any relevant
-/// results.
+/// Request for the server to start or stop a routine, or report its results.
 ///
 /// The 2-byte big-endian routine identifier is decoded into a typed `u16`, followed by
 /// optional routine input parameters in `option_record`.
@@ -190,18 +187,14 @@ pub struct RoutineControlResponse<'d> {
     pub sub_function: RoutineControlSubFunction,
     /// The 16-bit routine identifier echoed from the request.
     pub routine_id: u16,
-    /// Everything the server sent after the routine identifier — bytes `#5` onward of
-    /// ISO 14229-1:2020 Table 428. May be empty.
+    /// Everything the server sent after the routine identifier: bytes `#5` onward of ISO
+    /// 14229-1:2020 Table 428. May be empty.
     ///
-    /// Note that this is **not** only the `routineStatusRecord`. Table 428 places an
-    /// optional `routineInfo` byte at `#5`, immediately before the status record, and
-    /// whether it is present is vehicle-manufacturer defined — nothing on the wire
-    /// distinguishes the two layouts, so this crate cannot split them for you. If the
-    /// server you are talking to sends `routineInfo`, it is the first byte here and the
-    /// status record starts at index 1.
-    ///
-    /// `routineInfo` itself is vehicle-manufacturer specific (Table 429); it exists so
-    /// generic test equipment can handle all implemented routines uniformly.
+    /// This is **not** only the `routineStatusRecord`. Table 428 places an optional,
+    /// vehicle-manufacturer defined `routineInfo` byte at `#5`, immediately before the
+    /// status record, and nothing on the wire distinguishes the two layouts, so this crate
+    /// cannot split them. If the server sends `routineInfo`, it is the first byte here and
+    /// the status record starts at index 1.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub status_record: &'d [u8],
 }
@@ -290,8 +283,7 @@ mod test {
         // ISO 14229-1:2020 Table 428 puts an optional `routineInfo` byte at #5, before the
         // routineStatusRecord, with presence left to the vehicle manufacturer. Nothing on
         // the wire distinguishes "routineInfo + status" from "status only", so
-        // `status_record` deliberately spans both and the field docs say so. Pinned here
-        // because a future reader might otherwise "fix" it into a wrong split.
+        // `status_record` spans both.
         let wire = [0x71, 0x01, 0xF0, 0x0F, 0xAA, 0x32];
         let (resp, _) = crate::Response::decode(&wire).unwrap();
         let crate::Response::RoutineControl(inner) = resp else {
@@ -301,7 +293,7 @@ mod test {
         assert_eq!(
             inner.status_record,
             &[0xAA, 0x32],
-            "routineInfo must stay in the slice rather than being silently dropped"
+            "routineInfo is part of the slice"
         );
 
         let mut buf = [0u8; 8];
@@ -310,11 +302,10 @@ mod test {
     }
 
     #[test]
-    fn a_reserved_sub_function_decodes_so_the_routine_checks_can_come_first() {
+    fn reserved_routine_control_type_decodes() {
         // ISO 14229-1:2020 Table 426 defines only 0x01-0x03; 0x00 and 0x04-0x7F are
         // ISOSAEReserved. Figure 30 answers one 0x12, but only after the routine
-        // identifier's 0x31 and 0x33 checks, so the request has to decode: rejecting it
-        // here left a server no choice but to answer before those checks. It re-encodes
+        // identifier's 0x31 and 0x33 checks, so the request has to decode. It re-encodes
         // to the byte it came from, with the suppress bit kept apart.
         for byte in [0x00u8, 0x04, 0x10, 0x7F] {
             let request = [byte | 0x80, 0xF0, 0x0F];
@@ -331,7 +322,7 @@ mod test {
     }
 
     #[test]
-    fn a_sub_function_byte_with_bit_7_is_answered_with_sub_function_not_supported() {
+    fn bit_7_in_a_routine_control_type_maps_to_0x12() {
         // Bit 7 is the suppressPosRspMsgIndicationBit, so it never names a
         // routineControlType; `try_from` on a byte carrying it is the error, and the error
         // maps to 0x12 as Table 430 requires.

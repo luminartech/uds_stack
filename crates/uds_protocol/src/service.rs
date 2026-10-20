@@ -10,31 +10,16 @@
 pub enum UdsServiceType {
     // ========================================================================
     // Diagnostics and Communications Management
-    /// UDS uses different session types which can be changed using "Diagnostic Session
-    /// Control". Different services are available depending on which session is active.
-    /// "Default Session" is the initial session type. Other session types are defined, but
-    /// may not be implemented depending on the device:
-    ///
-    /// - 0x01 "Default Session" used for basic uds
-    /// - 0x02 "Programming Session" used to upload software.
-    /// - 0x03 "Extended Diagnostic Session" used to unlock additional diagnostic functions,
-    ///   such as the adjustment of sensors.
-    /// - 0x04 "Safety system diagnostic session" used to test all safety-critical
-    ///   diagnostic functions, such as airbag tests.
-    ///
-    /// In addition, there are reserved session identifiers that can be defined for vehicle
-    /// manufacturers and vehicle suppliers specific use.
+    /// Switches the server's diagnostic session, which selects the set of services it
+    /// offers. The default session (0x01) is active at power-up; the programming (0x02),
+    /// extended diagnostic (0x03) and safety system diagnostic (0x04) sessions enable
+    /// further services, and other values are vehicle-manufacturer or system-supplier
+    /// specific. See [`DiagnosticSessionType`](crate::DiagnosticSessionType).
     DiagnosticSessionControl,
-    /// The service "ECU reset" is used to restart the control unit (ECU). Depending on the
-    /// control unit hardware and implementation, different forms of reset can be used:
-    ///
-    /// - "Hard Reset" simulates a shutdown of the power supply.
-    /// - "key off on Reset" simulates the drain and turn on the ignition with the key.
-    /// - Soft Reset" allows the initialization of certain program units and their storage
-    ///   structures.
-    ///
-    /// Again, there are reserved values that can be defined for vehicle manufacturers and
-    /// vehicle suppliers specific use.
+    /// Restarts the server. The reset types are a hard reset (power-cycle), a key-off-on
+    /// reset (ignition cycle), a soft reset (application restart) and the rapid power
+    /// shutdown controls, plus vehicle-manufacturer and system-supplier specific values.
+    /// See [`ResetType`](crate::ResetType).
     EcuReset,
     /// Security check is available to enable the most security-critical uds. For this
     /// purpose a "Seed" is generated and sent to the client by the control unit. From this
@@ -73,8 +58,8 @@ pub enum UdsServiceType {
     ControlDtcSetting,
     /// Request the server to start or stop sending responses when a specified event occurs.
     ResponseOnEvent,
-    /// The Service Link Control is used to set the baud rate of the diagnostic access.
-    /// It is usually implemented only at the central gateway.
+    /// Sets the baud rate of the diagnostic link. Usually implemented only at the central
+    /// gateway.
     LinkControl,
 
     // ========================================================================
@@ -146,9 +131,8 @@ pub enum UdsServiceType {
     /// transfer request. This will be used when the amount of data (set in "Request
     /// Download" or "Upload Request") has not been transferred.
     RequestTransferExit,
-    /// This service is used to initiate a file download from the client to the server or
-    /// upload from the server to the client. Additionally information about the file system
-    /// are available by this service.
+    /// Initiates a file download from the client to the server or an upload from the server
+    /// to the client, and reads information about the server's file system.
     RequestFileTransfer,
     /// This response is given when a service request could not be performed,
     /// for example a request for an unsupported Data Identifier.
@@ -162,7 +146,7 @@ pub enum UdsServiceType {
 impl UdsServiceType {
     /// Map a request-message service identifier (SID) byte to its [`UdsServiceType`].
     ///
-    /// Unrecognised bytes map to [`UdsServiceType::UnsupportedDiagnosticService`].
+    /// Unrecognized bytes map to [`UdsServiceType::UnsupportedDiagnosticService`].
     #[must_use]
     pub const fn from_request_sid(value: u8) -> Self {
         match value {
@@ -240,7 +224,7 @@ impl UdsServiceType {
     }
     /// Map a positive-response service identifier (SID) byte to its [`UdsServiceType`].
     ///
-    /// Unrecognised bytes map to [`UdsServiceType::UnsupportedDiagnosticService`].
+    /// Unrecognized bytes map to [`UdsServiceType::UnsupportedDiagnosticService`].
     #[must_use]
     pub const fn from_response_sid(value: u8) -> Self {
         match value {
@@ -316,29 +300,14 @@ impl UdsServiceType {
 
     /// Whether ISO 14229-1 gives this service a sub-function byte, and therefore whether
     /// its request can carry a suppressPosRspMsgIndicationBit (SPRMIB) in bit 7 of that
-    /// byte.
-    ///
-    /// This is a fact about the standard rather than about this crate's coverage, so it is
-    /// answered for all 26 services the 2020 edition defines and not only the 16 this crate
-    /// models.
-    ///
-    /// # `None` means this crate cannot say
-    ///
-    /// Three variants have no answer, and `None` for them is a different report from
-    /// `Some(false)` — keeping the two apart is the whole point of
+    /// byte. A fact about the standard, so answered for all 26 services of the 2020
+    /// edition, not only the 16 this crate models. `None` means the crate cannot say, which
     /// [`Request::is_positive_response_suppressed`](crate::Request::is_positive_response_suppressed)
-    /// returning an `Option`:
-    ///
-    /// - [`UdsServiceType::UnsupportedDiagnosticService`], where every SID ISO 14229-1 does
-    ///   not assign lands — including the vendor-specific range. This is the case that
-    ///   matters in practice.
-    /// - [`UdsServiceType::NegativeResponse`], which is not a request service at all.
-    /// - [`UdsServiceType::AccessTimingParameters`]. The 2020 edition, which this crate
-    ///   targets, withdrew the service; the variant is retained only so a pre-2020
-    ///   `0x83`/`0xC3` byte round-trips as itself. Whether an earlier edition gave it a
-    ///   sub-function is not a fact this table draws from — every other entry is checked
-    ///   against the 2020 text alone — so the answer is deferred to the caller rather than
-    ///   asserted here.
+    /// keeps apart from `Some(false)`: [`UdsServiceType::UnsupportedDiagnosticService`],
+    /// where every unassigned SID lands, the vendor-specific range included;
+    /// [`UdsServiceType::NegativeResponse`], which is not a request service; and
+    /// [`UdsServiceType::AccessTimingParameters`], withdrawn in the 2020 edition that every
+    /// other entry here is checked against.
     #[must_use]
     pub const fn has_sub_function(self) -> Option<bool> {
         match self {
@@ -397,7 +366,7 @@ mod test {
     /// statement of what ISO 14229-1 assigns and a transposed pair fails instead of
     /// agreeing with itself. `NegativeResponse` and `UnsupportedDiagnosticService` are
     /// absent because neither has a request SID; both are covered by
-    /// `the_variants_that_are_not_a_2020_request_service_report_no_sub_function`.
+    /// `non_request_services_have_no_sub_function_answer`.
     const SERVICES: &[(UdsServiceType, u8, u8, Option<bool>)] = &[
         (
             UdsServiceType::DiagnosticSessionControl,
@@ -503,8 +472,7 @@ mod test {
     #[test]
     fn the_response_sid_is_the_request_sid_with_bit_6_set() {
         // ISO 14229-1 derives every positive response SID by adding 0x40 to the request
-        // SID. Checking the rule as well as the table catches a single mistyped entry
-        // above, which a table compared only against itself would not.
+        // SID. Checking the rule as well as the table catches a single mistyped entry.
         for &(service, request_sid, response_sid, _) in SERVICES {
             assert_eq!(
                 response_sid,
@@ -516,10 +484,9 @@ mod test {
 
     #[test]
     fn the_two_services_without_a_request_sid_say_so() {
-        // Both have no request SID and return 0x7F, which is not a legal request SID -- it
-        // is the negative-response SID. Callers needing lossless round-tripping of an
-        // unmodeled service must use `Request::Other`, so this is pinned rather than left
-        // to be discovered.
+        // Both have no request SID and return 0x7F, which is not a legal request SID but
+        // the negative-response SID. Lossless round-tripping of an unmodeled service goes
+        // through `Request::Other`.
         assert_eq!(
             UdsServiceType::to_request_sid(UdsServiceType::NegativeResponse),
             0x7F
@@ -536,11 +503,9 @@ mod test {
 
     #[test]
     fn every_service_reports_the_sub_function_iso_gives_it() {
-        // The fourth column is an independent statement of the standard, not something
-        // derived from `has_sub_function` -- so a mistyped arm in the implementation fails
-        // here rather than agreeing with itself. Only the 12 services with a sub-function
-        // can carry a SPRMIB, which is what `Request::is_positive_response_suppressed`
-        // depends on.
+        // The fourth column is an independent statement of the standard, not derived from
+        // `has_sub_function`, so a mistyped arm fails here rather than agreeing with
+        // itself. Only the 12 services with a sub-function can carry a SPRMIB.
         for &(service, request_sid, _, has_sub_function) in SERVICES {
             assert_eq!(
                 service.has_sub_function(),
@@ -551,13 +516,11 @@ mod test {
     }
 
     #[test]
-    fn the_variants_that_are_not_a_2020_request_service_report_no_sub_function() {
+    fn non_request_services_have_no_sub_function_answer() {
         // None of these three is a request service in the edition this crate targets, so
-        // "does it have a sub-function" has no answer.
-        //
-        // `UnsupportedDiagnosticService` is the one that matters most: it is where every
-        // SID ISO does not assign lands, and returning `None` there is what lets a caller
-        // tell a vendor-specific service apart from one that genuinely has no sub-function.
+        // "does it have a sub-function" has no answer. `UnsupportedDiagnosticService` is
+        // where every SID ISO does not assign lands, and `None` there lets a caller tell a
+        // vendor-specific service apart from one that has no sub-function.
         assert_eq!(UdsServiceType::NegativeResponse.has_sub_function(), None);
         assert_eq!(
             UdsServiceType::UnsupportedDiagnosticService.has_sub_function(),
@@ -568,8 +531,8 @@ mod test {
             None,
             "0x40 is unassigned"
         );
-        // 0x83 is enumerated -- the variant exists so a 2013-era byte round-trips -- but
-        // the 2020 edition withdrew the service, so this crate has no basis for an answer.
+        // 0x83 is enumerated so a 2013-era byte round-trips, but the 2020 edition withdrew
+        // the service, so this crate has no basis for an answer.
         assert_eq!(
             UdsServiceType::AccessTimingParameters.has_sub_function(),
             None
@@ -579,9 +542,8 @@ mod test {
     #[test]
     fn every_unassigned_byte_classifies_as_unsupported() {
         // The conversions are total: no byte panics, and anything outside the table above
-        // lands on `UnsupportedDiagnosticService` rather than being silently mapped to a
-        // real service. Written with `any` rather than collecting, so this compiles without
-        // `alloc`.
+        // lands on `UnsupportedDiagnosticService` rather than on a real service. Written
+        // with `any` rather than collecting, so this compiles without `alloc`.
         let is_request_sid = |b: u8| SERVICES.iter().any(|&(_, r, _, _)| r == b);
         let is_response_sid =
             |b: u8| b == 0x7F || SERVICES.iter().any(|&(_, _, s, _)| s == b);
