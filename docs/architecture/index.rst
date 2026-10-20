@@ -25,7 +25,7 @@ bound to one.
 .. uml::
    :align: center
    :caption: The stack today. Solid edges are calls; dashed edges are the message
-             vocabulary, which every layer above the wire shares.
+             vocabulary, which ``uds_services`` and ``uds_on_ip`` read messages with.
 
    @startuml
    package "application" {
@@ -102,15 +102,15 @@ Each also has something it must not acquire, and that is the more useful half:
   *enhanced* pair, and its caller decides which values those are.
 - ``uds_services`` declares the transport seam and implements no transport. Nothing on that
   seam is DoIP-shaped, so a CAN binding implements the same methods.
-- ``uds_on_ip`` never learns what a service is. It reads exactly four things of a message:
-  a positive ``DiagnosticSessionControl`` or ``ECUReset`` response, the
+- ``uds_on_ip`` never learns what a service is. It reads three things of a message: whether
+  a positive response answers ``DiagnosticSessionControl`` or ``ECUReset``, a request's
   suppressPosRspMsgIndicationBit, and the response-pending negative response. Those are
-  ISO 14229-5:2022 clause 8 rules keyed on a service, not service semantics.
+  ISO 14229-5:2022 clause 8 and transport rules keyed on a service, not service semantics.
 - ``simple_doip`` never learns what a UDS message means. A diagnostic message's payload is
   an opaque byte string to it.
 
 ``automotive-wire-codec``, outside this repository, provides the zero-copy ``no_std`` codec
-traits ``uds_protocol`` and ``simple_doip`` are built on.
+traits ``uds_protocol``, ``simple_doip`` and ``uds_services`` are built on.
 
 The five crates release in lockstep to crates.io: one version for the stack, published
 bottom-up in dependency order.
@@ -122,14 +122,17 @@ Several questions about where a behaviour belongs have the same answer:
 
    **ISO 14229-5 decides *when*. ISO 13400-2 performs *what*.**
 
-- **Reconnect and repeat routing activation** (ISO 14229-5:2022 REQ 7.8, REQ 7.10):
-  ``uds_on_ip`` sequences it and ``simple_doip`` performs it. Routing activation is
-  ISO 13400-2's procedure, sent by the client entity, so only a tester reconnects.
-- **Close after a positive response** (REQ 7.9, REQ 7.11): ``uds_on_ip`` decides and
-  ``simple_doip`` closes. REQ 7.11's close follows every positive ``ECUReset`` response;
-  REQ 7.9's follows a positive ``DiagnosticSessionControl`` response only where the server
-  leaves the software it is running. That fact is the server's own, so ``uds_services``
-  states it and ``uds_on_ip`` decides what follows.
+- **Reconnect and repeat routing activation** (ISO 14229-5:2022 REQ 7.8, REQ 7.10): before
+  diagnostic communication continues, ``uds_on_ip`` sequences it and ``simple_doip``
+  performs it. The routing activation request is ISO 13400-2's, and a tester sends it, so
+  only a tester reconnects.
+- **Close after a positive response** (ISO 14229-5:2022 REQ 7.9, REQ 7.11): ``uds_on_ip``
+  decides and ``simple_doip`` closes. Closing a TCP connection is an ISO 13400-2 mechanism;
+  the rule that a close follows *this particular* response is ISO 14229-5's. REQ 7.11's
+  close follows every positive ``ECUReset`` response; REQ 7.9's follows a positive
+  ``DiagnosticSessionControl`` response only where the server leaves the software it is
+  running. That fact is the server's own, so ``uds_services`` states it and ``uds_on_ip``
+  decides what follows.
 - **Periodic responses** (ISO 14229-5:2022 REQ 7.7, REQ 7.16): payload type ``0x8004``,
   which ISO 13400-2:2019 does not define, so ``uds_on_ip`` interprets it and
   ``simple_doip`` carries it unread. A tester built on ``uds_on_ip`` receives one. A server
@@ -137,17 +140,17 @@ Several questions about where a behaviour belongs have the same answer:
   choose a payload type.
 
 The rule also says what must not happen. ``uds_services`` never decides when a connection
-closes, because knowing that REQ 7.9 or REQ 7.11 requires a close is ISO 14229-5 knowledge.
-``simple_doip`` never recognises a service identifier to decide for itself. A crate that
-must know *whether* to act has acquired the requirement, whether or not it also performs
-it.
+closes, because knowing that ISO 14229-5:2022 REQ 7.9 or REQ 7.11 requires a close is
+ISO 14229-5 knowledge. ``simple_doip`` never recognises a service identifier to decide for
+itself. A crate that must know *whether* to act has acquired the requirement, whether or
+not it also performs it.
 
 The seams
 ---------
 
-Each seam is declared by the crate that calls through it, so every Cargo edge runs from
-the implementor to the declarer, and a caller never depends on its callee's choice of
-binding.
+A seam is declared by the crate that calls through it, so the implementor depends on the
+declarer and a caller never depends on its callee's choice of binding. The connection seam
+is the one exception.
 
 **Transport seam: ``uds_services`` to a binding.** ``uds_services`` declares
 ``UdsTransport`` and ``TransportEvent``; ``uds_on_ip`` implements them over DoIP. An event
@@ -157,10 +160,11 @@ is reconnected to and never reconnects, so the seam carries no ``reconnect``.
 
 **Connection seam: ``uds_on_ip`` to ``simple_doip``.** The sockets are ISO 13400-2's, so
 ``simple_doip::service`` declares this seam, with no I/O in it: ``DiagnosticEntity``, a
-whole entity behind one event stream, for a server; ``DiagnosticConnection`` and
-``TesterConnection``, one connection a tester can replace and end, for a client. This is
-the one seam declared by the callee, because ``uds_on_ip`` already consumes
-``simple_doip``'s addressing and the edge cannot run the other way.
+whole entity behind one event stream, for a server; for a client,
+``DiagnosticConnection``, one connection as a tester uses it, and ``TesterConnection``,
+one it can also replace (``reconnect``) and end (``close``). This seam is declared by the
+callee, because ``uds_on_ip`` already consumes ``simple_doip``'s addressing and the edge
+cannot run the other way.
 
 **``uds_session`` is vocabulary, not a seam.** ``uds_on_ip`` names ``uds_session``'s
 addressing, ``SResult``, ``Timestamp`` and ``Reloads``, and calls none of its behaviour.
@@ -299,7 +303,7 @@ A binding is not a layer swapped within the stack. It is a complete path from ``
 to the wire, attached below the shared driver, so swapping replaces the binding together
 with its transport while the driver, session, message and service crates stay. For
 application code the swap point is the ``transport =`` parameter of ``uds_services``'
-assembly macro.
+``uds_server!`` and ``uds_client!`` macros.
 
 .. uml::
    :align: center

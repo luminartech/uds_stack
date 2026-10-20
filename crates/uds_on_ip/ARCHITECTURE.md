@@ -6,6 +6,11 @@ crate map, the rule that ISO 14229-5 decides *when* and ISO 13400-2 performs
 *what*, who owns each timer, and what each crate must not acquire — is the
 stack architecture, published at <https://luminartech.github.io/uds_stack/architecture/index.html>.
 
+> **Provisional.** This is a working document, not the crate's formal
+> architecture record. The stack's sphinx-needs architecture set under
+> `docs/architecture/` takes this crate's architecture in over time; until then
+> this file is the record, and where the two disagree, `docs/` wins.
+
 > **Status: prototype-phase artifact.** Every crate in this stack is intended to
 > flow through the same process — requirements, then architecture, in sequence —
 > with a prototype preceding both to retire technical risk. This document belongs
@@ -76,10 +81,10 @@ session layer by value and the storage with it
 **Must not learn what a service is.** No data identifier, routine identifier, or
 service-specific policy belongs here.
 
-The exception is narrow, forced, and exhaustively listed. The crate reads four
+The exception is narrow, forced, and exhaustively listed. The crate reads three
 things of a message:
 
-- the positive `DiagnosticSessionControl` and `ECUReset` responses, after which
+- whether a positive response answers `DiagnosticSessionControl` or `ECUReset`, after which
   clause 8 (REQ 7.9, REQ 7.11) has the server close the connection;
 - a request's suppressPosRspMsgIndicationBit, which says whether an answer is owed;
 - the response-pending negative response (`7F xx 78`), after which the final answer
@@ -96,9 +101,11 @@ Two interfaces hold this crate in place, one above and one below. A third
 thing that looks like a seam is not one, and is described last so it is not
 mistaken for one.
 
-Each is declared by the crate that *calls* through it, so the Cargo edge runs
-from the implementor to the declarer and the caller never depends on its
-callee's choice of binding.
+The transport seam is declared by the crate that *calls* through it, so the
+Cargo edge runs from the implementor to the declarer and the caller never
+depends on its callee's choice of binding. The connection seam is declared by
+its callee, for the reason [§2.2](#22-connection-seam--uds_on_ip--simple_doip)
+gives.
 
 ### 2.1 Transport seam — `uds_services` → `uds_on_ip`
 
@@ -121,6 +128,7 @@ pub trait UdsTransport {
     fn outbound_max(&self) -> Option<usize>;
     fn channel_timing(&self) -> Reloads;
     fn now(&self) -> Timestamp;
+    fn restarting(&mut self) -> impl Future<Output = ()> { /* nothing */ }
 }
 ```
 
@@ -218,7 +226,7 @@ access that cannot fail and neither crate learns about the other.
 This crate names `Ai`, `Address`, `Mtype`, `TaType`, `SResult`, `Timestamp` and
 `Reloads`, all `uds_session`'s, and calls none of its behaviour. It does not
 drive the session layer, hold a `Client` or a `Server`, or feed it primitives.
-`uds_services` does all of that ([the stack architecture][stack-crates]).
+`uds_services` does all of that ([the stack architecture][stack-seams]).
 
 This is worth stating because the protocol layering of
 [§5](#5-protocol-layering) invites the opposite reading: that this crate
@@ -598,6 +606,6 @@ The rules every crate keeps are in the
 
 [stack]: https://luminartech.github.io/uds_stack/architecture/index.html
 [stack-when]: https://luminartech.github.io/uds_stack/architecture/index.html#when-and-what
-[stack-crates]: https://luminartech.github.io/uds_stack/architecture/index.html#the-crates
+[stack-seams]: https://luminartech.github.io/uds_stack/architecture/index.html#the-seams
 [stack-timing]: https://luminartech.github.io/uds_stack/architecture/index.html#timing-ownership
 [stack-graphs]: https://luminartech.github.io/uds_stack/architecture/index.html#standards-and-crates
