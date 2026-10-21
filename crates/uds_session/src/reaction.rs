@@ -1,24 +1,12 @@
 //! The drain every input returns.
 //!
-//! ``UDSS_LLR_0011`` requires outputs to be retrieved rather than pushed, and forbids the
-//! session layer to invoke a callback, handler or caller-supplied trait implementation in
-//! order to deliver one. ``UDSS_LLR_0013`` forbids retaining a payload past the input that
-//! carried it and ``UDSS_LLR_0014`` has an output refer to the caller's own data, so an
-//! output cannot outlive its input: a stored queue would have to hold a borrow whose
-//! lifetime differs per call, which is unrepresentable without `unsafe`, and
-//! `Cargo.toml` forbids `unsafe`.
-//!
-//! So an input returns this, the caller drains it through [`Reaction::outputs`], and then
-//! consumes it with [`Reaction::finish`] to learn whether the input was accepted.
-//! ``UDSS_LLR_0081`` requires every indication an expiry produced to precede both the
-//! input's own outputs and any rejection report; the drain yields them in that order, and
-//! [`Finished::rest`] keeps it for whatever the caller had not drained when it finished.
-//!
-//! Nothing is lost to a reaction finished early. An expiry's indication borrows nothing,
-//! so the session keeps it until it is retrieved — from this reaction's drain, from
-//! [`Finished::rest`], or from the next input's drain. The input's own outputs borrow its
-//! payload and cannot be kept, so [`Reaction::finish`] hands them back in
-//! [`Finished::rest`], and discarding them takes a deliberate drop.
+//! ``UDSS_LLR_0011`` requires outputs to be retrieved rather than pushed: an input returns
+//! a [`Reaction`], which the caller drains through [`Reaction::outputs`] and consumes with
+//! [`Reaction::finish`] to learn whether the input was accepted. ``UDSS_LLR_0013`` and
+//! ``UDSS_LLR_0014`` have an output borrow the input's own payload, so the input's outputs
+//! cannot outlive the reaction; an expiry's indication borrows nothing and stays in the
+//! session until it is retrieved. ``UDSS_LLR_0081`` orders expiry indications before the
+//! input's own outputs and before any rejection report, and the drain yields them so.
 
 use crate::rejection::Rejection;
 use crate::sealed::Sealed;
@@ -39,17 +27,15 @@ pub trait Drain<'d, O>: Sealed {
 /// The outputs of one input, and its outcome.
 ///
 /// `'s` borrows the session `S`, `'d` the input's payload, `O` is the role's output type
-/// and `T` what acceptance yields — [`crate::PhysicalChannelId`] for
+/// and `T` what acceptance yields: [`crate::PhysicalChannelId`] for
 /// `open_physical_channel`, [`crate::FunctionalChannelId`] for `open_functional_channel`,
 /// `()` elsewhere. `S` is a type parameter rather than a trait object so that the
-/// reaction keeps `Send`, the covariance of `'d`, and `Debug` for free.
+/// reaction keeps `Send`, the covariance of `'d`, and `Debug`.
 ///
 /// The input is applied before the reaction is returned; only reporting it is left to
-/// the drain. So the session's state is final whatever the caller then does with the
-/// reaction.
-///
+/// the drain, so the session's state is final whatever the caller does with the reaction.
 /// Dropping a `Reaction` without draining it discards the input's own outputs, which is
-/// why the type is `#[must_use]`. Expiry indications it was not drained of stay in the
+/// why the type is `#[must_use]`; expiry indications it was not drained of stay in the
 /// session and come first in the next input's drain.
 ///
 /// # Draining
@@ -76,8 +62,8 @@ pub trait Drain<'d, O>: Sealed {
 /// ```
 ///
 /// [`Reaction::outputs`] borrows rather than consuming, so the reaction survives the loop
-/// and [`Reaction::finish`] stays reachable afterwards. `Reaction` is deliberately not an
-/// [`Iterator`] itself, so `for output in reaction` does not compile.
+/// and [`Reaction::finish`] stays reachable afterwards. `Reaction` is not an [`Iterator`]
+/// itself, so `for output in reaction` does not compile.
 #[must_use = "an undrained reaction discards the outputs this input produced"]
 #[derive(Debug)]
 pub struct Reaction<'s, 'd, O, S: Drain<'d, O>, T = ()> {

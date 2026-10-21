@@ -11,16 +11,14 @@
 
 /// Declares [`Cause`] and everything derived from it.
 ///
-/// The variants, their bits, their documentation and their rendered text are one list.
-/// [`Cause::ALL`] and the [`Display`](core::fmt::Display) arms are generated from it, so a
-/// cause cannot come to exist that iteration fails to yield or that renders as nothing —
-/// which is what a second, hand-maintained copy of the variant list would allow, silently,
-/// against ``UDSS_LLR_0016``. The one hazard left is two variants sharing a bit, and
-/// `every_cause_has_its_own_bit` walks `ALL` to rule that out.
+/// The variants, their bits, their documentation and their rendered text are one list:
+/// [`Cause::ALL`] and the [`Display`](core::fmt::Display) arms are generated from it, so
+/// every cause is iterated and renders as something (``UDSS_LLR_0016``), and
+/// `every_cause_has_its_own_bit` checks that no two share a bit.
 ///
-/// An entry may name the content its requirement states for the report, in parentheses
-/// after the bit. That generates the matching [`Content`] variant, so the content and the
-/// cause it belongs to come from one line and cannot drift apart.
+/// An entry may name, in parentheses after the bit, the content its requirement states
+/// for the report. That generates the matching [`Content`] variant, so the content and
+/// its cause come from one line.
 macro_rules! causes {
     (
         $(
@@ -30,18 +28,15 @@ macro_rules! causes {
     ) => {
         /// Why an input was rejected.
         ///
-        /// One variant per rejecting requirement limb that remains expressible —
+        /// One variant per rejecting requirement limb an input can trigger;
         /// ``UDSS_LLR_0185``'s two limbs are two variants, because they call for
-        /// different actions. The
-        /// requirements this crate's types discharge by construction —
-        /// ``UDSS_LLR_0027`` (second limb), ``UDSS_LLR_0030``, ``UDSS_LLR_0031``,
-        /// ``UDSS_LLR_0054``, ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
-        /// ``UDSS_LLR_0070``, ``UDSS_LLR_0071``, ``UDSS_LLR_0072``, ``UDSS_LLR_0152``
-        /// and part of ``UDSS_LLR_0134`` — have no variant here, because an input that
-        /// triggers them cannot be written.
-        ///
-        /// `#[non_exhaustive]`: the causes follow the requirement set, which may gain a
-        /// rejecting limb.
+        /// different actions. The requirements this crate's types discharge by
+        /// construction (``UDSS_LLR_0027`` (second limb), ``UDSS_LLR_0030``,
+        /// ``UDSS_LLR_0031``, ``UDSS_LLR_0054``, ``UDSS_LLR_0066``, ``UDSS_LLR_0067``,
+        /// ``UDSS_LLR_0068``, ``UDSS_LLR_0070``, ``UDSS_LLR_0071``, ``UDSS_LLR_0072``,
+        /// ``UDSS_LLR_0152`` and part of ``UDSS_LLR_0134``) have none, since an input
+        /// that triggers them cannot be written. `#[non_exhaustive]`: the causes follow
+        /// the requirement set, which may gain a rejecting limb.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         #[non_exhaustive]
         pub enum Cause {

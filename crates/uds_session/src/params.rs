@@ -29,22 +29,16 @@ pub enum ChannelReload {
     Enhanced,
 }
 
-/// What creating a server supplies.
+/// What creating a server supplies (``UDSS_LLR_0032``, ``UDSS_LLR_0042``). Built by
+/// [`Self::new`], which checks [`Self::is_well_formed`]; the fields are private, so a set
+/// that passed stays well formed.
 ///
-/// ``UDSS_LLR_0032`` with ``UDSS_LLR_0042``. There is deliberately no spacing parameter:
-/// ``UDSS_LLR_0119`` derives the minimum spacing between response-pending messages as the
-/// least whole millisecond not less than three tenths of `p2_star_server_max`, read as
-/// that parameter stands at the time, so a parameter for it could only disagree.
-///
-/// These are what the timers enforce. A `DiagnosticSessionControl` positive response
-/// advertises `P2Server_max` and `P2*Server_max` (ISO 14229-1:2020 Table 29); keeping the
-/// advertised values equal to these is the obligation of whatever composes that response,
-/// and [`Server::set_parameter`] is how a caller changes them afterwards.
-///
-/// Built by [`Self::new`], which checks [`Self::is_well_formed`], and read through the
-/// getters; the fields are private, so a set that passed stays well formed.
-///
-/// [`Server::set_parameter`]: crate::Server::set_parameter
+/// There is no spacing parameter: ``UDSS_LLR_0119`` derives the minimum spacing between
+/// response-pending messages from `p2_star_server_max` as it stands, so a parameter for
+/// it could only disagree. A `DiagnosticSessionControl` positive response advertises
+/// `P2Server_max` and `P2*Server_max` (ISO 14229-1:2020 Table 29); keeping the advertised
+/// values equal to these is the obligation of whatever composes that response, and
+/// [`crate::Server::set_parameter`] changes them afterwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ServerParams {
     pub(crate) s3_server: u32,
@@ -74,22 +68,15 @@ impl ServerParams {
 
     /// How long before `tP2_Server` closes its overrun is indicated (``UDSS_LLR_0186``):
     /// the server's own latency from that indication to a response-pending message
-    /// leaving, the server-side counterpart of a client's `ΔP2`.
-    ///
-    /// ISO 14229-2:2021 9.2 Table 3 makes `tP2_Server` and `tP2*_Server` performance
-    /// requirements, and 10.1.3 Figure 11 note d has the response-pending message sent
-    /// "within `tP2_Server`"; Table 7 runs the server's timer "to ensure that subsequent
-    /// … 78 are transmitted prior to the expired `tP2*_Server`". An indication at the
-    /// boundary leaves the message to go out after it, so ``UDSS_LLR_0117`` delivers it
-    /// this much earlier. The timer is still loaded with the full window
-    /// (``UDSS_LLR_0113``, ``UDSS_LLR_0116``), and the overrun names that window.
+    /// leaving, the server-side counterpart of a client's `ΔP2`. ``UDSS_LLR_0117``
+    /// delivers the indication this much early so that the message goes out within the
+    /// window (ISO 14229-2:2021 10.1.3 Figure 11 note d); the timer is still loaded with
+    /// the full window (``UDSS_LLR_0113``, ``UDSS_LLR_0116``), and the overrun names it.
     ///
     /// Zero indicates at the boundary itself. The value is taken when the window opens,
-    /// so a change moves no window already open (``UDSS_LLR_0043``). A lead not less than
-    /// `p2_server_max` indicates every overrun on the first timestamp after the request,
-    /// and one above seven tenths of `p2_star_server_max` indicates the enhanced overrun
-    /// before ``UDSS_LLR_0119`` admits the next response-pending message;
-    /// [`ServerParams::is_well_formed`] checks both.
+    /// so a change moves no window already open (``UDSS_LLR_0043``).
+    /// [`ServerParams::is_well_formed`] bounds it: less than `p2_server_max`, and no more
+    /// than `p2_star_server_max` less ``UDSS_LLR_0119``'s spacing.
     #[must_use]
     pub const fn response_pending_lead(&self) -> u32 {
         self.response_pending_lead
@@ -165,13 +152,11 @@ impl ServerParams {
     }
 
     /// Whether this set's response-pending lead fits the response windows
-    /// `p2_server_max` and `p2_star_server_max` (``UDSS_LLR_0186``).
-    ///
-    /// It must be less than `p2_server_max`, so that the overrun of the default window is
-    /// not indicated on the request's own reception, and no more than
-    /// `p2_star_server_max` less ``UDSS_LLR_0119``'s spacing — ⌊0,7 ×
-    /// `p2_star_server_max`⌋ — so that the enhanced overrun is indicated when a further
-    /// response-pending message is admissible.
+    /// `p2_server_max` and `p2_star_server_max` (``UDSS_LLR_0186``): less than
+    /// `p2_server_max`, so that the default window's overrun is not indicated on the
+    /// request's own reception, and no more than `p2_star_server_max` less
+    /// ``UDSS_LLR_0119``'s spacing, so that the enhanced overrun is indicated when a
+    /// further response-pending message is admissible.
     ///
     /// # Arguments
     ///
@@ -223,10 +208,9 @@ pub enum ServerParameter {
 
 /// The `tP_Client` reload pair a transport dictates.
 ///
-/// ``UDSS_LLR_0132`` names the pair. They are nested rather than flat because a
-/// transport dictates them while having no view on the `tP3` spacing of
-/// ``UDSS_LLR_0165``, which is client policy under ISO 14229-2:2021 9.7; the split
-/// follows the requirement boundary rather than cutting across it.
+/// ``UDSS_LLR_0132`` names the pair. It is its own type because a transport dictates both
+/// values together and has no view on the `tP3` spacing of ``UDSS_LLR_0165``, which is
+/// client policy under ISO 14229-2:2021 9.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Reloads {
     /// ``UDSS_LLR_0132`` — `tP2_Client_Max`, or `tP6_Client_Max` where the transport has
@@ -240,9 +224,7 @@ impl Reloads {
     /// The reload `which` names.
     ///
     /// ``UDSS_LLR_0132`` defines the pair; ``UDSS_LLR_0148`` has a timeout indication
-    /// name which of the two was in force. The mapping between them is ISO
-    /// 14229-2:2021 and nothing else, so it belongs here rather than in a caller that
-    /// holds both a `Reloads` and a `ChannelReload`.
+    /// name which of the two was in force.
     #[must_use]
     pub const fn value_for(self, which: ChannelReload) -> u32 {
         match which {
@@ -274,9 +256,8 @@ pub struct ChannelParams {
 /// One channel parameter, for setting it again.
 ///
 /// ``UDSS_LLR_0043``; ``UDSS_LLR_0134`` rejects a setting naming a channel the client
-/// does not have. One type serves both kinds: the setter takes that kind's own channel
-/// identity, which is what keeps a setting from naming a channel of the wrong kind, so the
-/// parameter itself need not be split as well.
+/// does not have. One type serves both kinds: each setter takes its own kind's channel
+/// identity, so a setting cannot name a channel of the wrong kind.
 ///
 /// `tS3_Client` is not among these. ``UDSS_LLR_0152`` gives a physical channel one only in
 /// physical keep-alive, so [`crate::Client::set_physical_s3_client`] carries it and exists
@@ -288,10 +269,9 @@ pub struct ChannelParams {
 pub enum ChannelParameter {
     /// Both response reloads at once.
     ///
-    /// ``UDSS_LLR_0132`` makes the two a pair a transport dictates together, and
-    /// [`Reloads`] is the shape a transport hands over. Setting the pair is one act, so
-    /// applying a new transport profile does not leave the channel briefly holding one
-    /// reload from each — a state no profile describes.
+    /// ``UDSS_LLR_0132`` makes the two a pair a transport dictates together, and setting
+    /// them as one [`Reloads`] leaves the channel at no point holding one reload from each
+    /// of two transport profiles.
     Reloads(Reloads),
     /// The default response reload, on its own.
     DefaultReload(u32),

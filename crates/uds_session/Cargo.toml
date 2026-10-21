@@ -6,13 +6,11 @@ rust-version.workspace = true
 description = "ISO 14229-2 session layer: a transport-agnostic, no_std, sans-io state machine for the client and server roles"
 keywords = ["uds", "iso14229", "automotive", "diagnostics", "no-std"]
 categories = ["no-std", "embedded", "network-programming"]
-# Dual licence at the consumer's option, the Rust ecosystem's convention. Apache-2.0
-# carries an express patent grant, which matters for an automotive protocol; MIT is here
-# because a downstream that cannot take Apache-2.0 should still have a path. The same
-# licence covers the requirement set under docs/.
-#
-# Neither licence grants any right in the ISO standards the requirements cite, which remain
-# ISO's. See "Relationship to the standards" in README.md.
+# Dual license at the consumer's option, the Rust ecosystem's convention: Apache-2.0 for
+# its express patent grant, MIT for a downstream that cannot take Apache-2.0. The same
+# license covers the requirement set under docs/. Neither license grants any right in the
+# ISO standards the requirements cite, which remain ISO's; see "Relationship to the
+# standards" in README.md.
 license = "MIT OR Apache-2.0"
 repository.workspace = true
 homepage.workspace = true
@@ -20,8 +18,7 @@ readme = "README.md"
 
 [dependencies]
 
-# Lints are declared here rather than as inner attributes in lib.rs so that they apply
-# uniformly to every target — lib, tests, examples, benches — instead of only to the
-# crate root. A guard rail that stops at the test boundary is not a guard rail.
+# Declared here rather than as inner attributes in lib.rs so that they apply to every
+# target (lib, tests, examples and benches), not to the crate root alone.
 [lints]
 workspace = true

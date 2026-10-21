@@ -37,8 +37,8 @@ impl Rule for Exceeds {
 
 /// The longest a timer is loaded with (``UDSS_LLR_0076``): half the timebase's range, less
 /// one millisecond, so that [`Timestamp::has_reached`] reads the deadline, including the
-/// millisecond [`Exceeds`] adds, as ahead until it arrives. A longer load reported a
-/// deadline already reached, and a caller woken at it found nothing expired, forever.
+/// millisecond [`Exceeds`] adds, as ahead until it arrives. A longer load would report a
+/// deadline already reached, and a caller woken at it would find nothing expired.
 pub(crate) const MAX_LOAD: u32 = u32::MAX / 2;
 
 /// A timer: stopped, or running since `start` loaded with `loaded` milliseconds, expiring
@@ -186,9 +186,9 @@ mod tests {
         assert_eq!(x.deadline(), Some(Timestamp(151)));
     }
 
-    /// #23 C42 — a timer's rule is part of its type, so its expiry and its deadline
-    /// cannot be read under different rules: the deadline is the first instant `expired`
-    /// holds, for both rules.
+    /// A timer's rule is part of its type, so its expiry and its deadline cannot be read
+    /// under different rules: the deadline is the first instant `expired` holds, for both
+    /// rules.
     #[test]
     fn the_deadline_is_the_first_instant_the_timer_is_expired() {
         let mut r = Timer::<Reaches>::STOPPED;

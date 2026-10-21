@@ -13,7 +13,7 @@ use core::num::NonZeroU16;
 /// Whether the session a message selects is the default one.
 ///
 /// ``UDSS_LLR_0065`` — the selection states this rather than naming the session, because
-/// ``UDSS_LLR_0073`` bars recognising an ISO 14229-1 session identifier.
+/// ``UDSS_LLR_0073`` bars recognizing an ISO 14229-1 session identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionSelection {
     /// The message selects the default session.

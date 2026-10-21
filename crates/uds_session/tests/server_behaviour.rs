@@ -1,4 +1,4 @@
-//! Behavioural tests of the server role, one per requirement a body satisfies.
+//! Behavioral tests of the server role, one per requirement a body satisfies.
 
 use uds_session::{
     Address, Ai, Association, Finished, Mtype, PeerIdentity, Rejection, SResult, Server,
@@ -886,7 +886,7 @@ mod overlap {
     }
 
     /// ``UDSS_LLR_0088`` — with no service in progress a confirmed final response to the
-    /// controlling client restarts `tS3_Server`, as before.
+    /// controlling client restarts `tS3_Server`.
     #[test]
     fn a_confirmation_with_no_service_in_progress_restarts_the_session_timer() {
         let mut s = server();
@@ -900,7 +900,7 @@ mod overlap {
     /// own confirmations answer it — its response-pending confirmation opens the enhanced
     /// window and sets the anchor (``UDSS_LLR_0110``, ``UDSS_LLR_0116``), and its final
     /// response's ends it (``UDSS_LLR_0109``), so the anchor goes and a response-pending
-    /// message inside the spacing is no longer refused (``UDSS_LLR_0119``).
+    /// message inside the spacing is not refused (``UDSS_LLR_0119``).
     #[test]
     fn the_services_own_confirmation_still_answers_it() {
         let mut s = server();

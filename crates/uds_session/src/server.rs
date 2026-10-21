@@ -42,7 +42,7 @@ pub struct Association {
 impl Association {
     /// A free slot.
     ///
-    /// ``UDSS_LLR_0064`` — no association is outstanding on initialisation.
+    /// ``UDSS_LLR_0064`` — no association is outstanding on initialization.
     pub const EMPTY: Self = Self { slot: None };
 }
 
@@ -90,9 +90,8 @@ struct InProgress {
 ///
 /// ``UDSS_LLR_0012`` enumerates the standard's own outputs and leaves the enumeration
 /// open, so that outputs the standard does not define reach the application by the same
-/// mechanism. That requirement is what `#[non_exhaustive]` here rests on: it is one of
-/// only two in the set — ``UDSS_LLR_0010`` for inputs is the other — that state an open
-/// enumeration, and everywhere else the requirement set closes its own vocabulary.
+/// mechanism; `#[non_exhaustive]` is that openness. It and ``UDSS_LLR_0010``, for inputs,
+/// are the only open enumerations in the set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ServerOutput<'d> {
@@ -176,13 +175,11 @@ impl<const A: usize> Server<A> {
     /// ``UDSS_LLR_0032`` — creation supplies the association storage of
     /// ``UDSS_LLR_0059`` and the `tS3_Server`, `tP2_Server_Max` and `tP2*_Server_Max`
     /// parameters of ``UDSS_LLR_0042``, which have no defaults, with the response-pending
-    /// lead of ``UDSS_LLR_0186``. The lead's bounds are not checked here, so that this
-    /// stays infallible; [`ServerParams::is_well_formed`] states them. The storage is
-    /// supplied by value: ``UDSS_LLR_0004`` forbids allocation and the number of peers is
-    /// a property of the deployment, so the caller sizes it as `A` and hands it over.
-    /// ``UDSS_LLR_0008`` is satisfied in both its branches at once — the caller supplies
-    /// the storage, and it then lives in the instance. `A` is the capacity
-    /// ``UDSS_LLR_0062`` rejects against.
+    /// lead of ``UDSS_LLR_0186``, whose bounds [`ServerParams::is_well_formed`] states and
+    /// this does not check. The storage is supplied by value and then lives in the
+    /// instance (``UDSS_LLR_0004``, ``UDSS_LLR_0008``): the caller sizes it as `A`, the
+    /// number of peers the deployment serves, which is the capacity ``UDSS_LLR_0062``
+    /// rejects against.
     ///
     /// `A` is at least one, checked at compile time: with no association every
     /// `s_data_req` is refused ``UDSS_LLR_0062``'s way, so the server could never answer.
@@ -334,19 +331,17 @@ impl<const A: usize> Server<A> {
         Reaction::new(self, [None, None], Ok(()))
     }
 
-    /// Request transmission of a response.
+    /// Request transmission of a response (``UDSS_LLR_0033``).
     ///
-    /// ``UDSS_LLR_0033``. ``UDSS_LLR_0054`` rejects a length differing from the data
-    /// supplied, which passing a slice discharges. ``UDSS_LLR_0061`` and
-    /// ``UDSS_LLR_0062`` reject a request whose addressing already has a transmission
-    /// outstanding or for which no association is free; ``UDSS_LLR_0118`` and
-    /// ``UDSS_LLR_0119`` reject a response-pending message that is unconfirmed or too
-    /// soon. One report states every cause that held (``UDSS_LLR_0016``). Otherwise the
-    /// request takes an association (``UDSS_LLR_0059``), stops `tP2_Server` where it
-    /// answers the service in progress (``UDSS_LLR_0114``), being then the transmission
-    /// whose confirmation answers that service (``UDSS_LLR_0109``), and is passed on as a
-    /// `T_Data.req`. A [`ServerTx::BusyRepeatRequest`] takes an association and answers no
-    /// service (``UDSS_LLR_0187``).
+    /// Rejected, every cause stated (``UDSS_LLR_0016``), where the addressing already has
+    /// a transmission outstanding (``UDSS_LLR_0061``), no association is free
+    /// (``UDSS_LLR_0062``), or a response-pending message is unconfirmed
+    /// (``UDSS_LLR_0118``) or too soon (``UDSS_LLR_0119``); the slice carries its own
+    /// length (``UDSS_LLR_0054``). Otherwise the request takes an association
+    /// (``UDSS_LLR_0059``) and is passed on as a `T_Data.req`; where it answers the
+    /// service in progress it stops `tP2_Server` and becomes the transmission whose
+    /// confirmation answers that service (``UDSS_LLR_0114``, ``UDSS_LLR_0109``). A
+    /// [`ServerTx::BusyRepeatRequest`] answers no service (``UDSS_LLR_0187``).
     pub fn s_data_req<'d>(
         &mut self,
         now: Timestamp,
@@ -416,19 +411,21 @@ impl<const A: usize> Server<A> {
     ///
     /// ``UDSS_LLR_0036`` indicates it to the application, successful or not;
     /// ``UDSS_LLR_0058`` states the kind required on a failed reception addressed to a
-    /// server. A request received successfully becomes the service in progress
-    /// (``UDSS_LLR_0107``, ``UDSS_LLR_0108``) and starts `tP2_Server` with
-    /// `tP2_Server_Max` (``UDSS_LLR_0113``). From the controlling client it stops
-    /// `tS3_Server` (``UDSS_LLR_0087``); from any other client, or in the default
-    /// session, it leaves the timer alone (``UDSS_LLR_0097``, ``UDSS_LLR_0099``). A
-    /// keep-alive received successfully reloads a running `tS3_Server` where it comes
-    /// from the controlling client (``UDSS_LLR_0095``) and otherwise changes nothing
-    /// (``UDSS_LLR_0096``). A failed reception of a request from the controlling client
-    /// restarts a stopped `tS3_Server` where no service is in progress
-    /// (``UDSS_LLR_0092``); a failed keep-alive changes nothing (``UDSS_LLR_0096``).
-    /// ``UDSS_LLR_0030`` bars a server from receiving a response, which [`ServerRx`]
-    /// cannot express, and from an indication naming a channel, which this signature has
-    /// no parameter for.
+    /// server. ``UDSS_LLR_0030`` bars a server from receiving a response, which
+    /// [`ServerRx`] cannot express, and from an indication naming a channel, which this
+    /// signature has no parameter for. What the reception does to the session:
+    ///
+    /// - A request received successfully becomes the service in progress
+    ///   (``UDSS_LLR_0107``, ``UDSS_LLR_0108``) and starts `tP2_Server` with
+    ///   `tP2_Server_Max` (``UDSS_LLR_0113``). From the controlling client it stops
+    ///   `tS3_Server` (``UDSS_LLR_0087``); from any other client, or in the default
+    ///   session, it leaves the timer alone (``UDSS_LLR_0097``, ``UDSS_LLR_0099``).
+    /// - A keep-alive received successfully from the controlling client reloads a running
+    ///   `tS3_Server` (``UDSS_LLR_0095``); otherwise it changes nothing
+    ///   (``UDSS_LLR_0096``).
+    /// - A failed reception of a request from the controlling client restarts a stopped
+    ///   `tS3_Server` where no service is in progress (``UDSS_LLR_0092``).
+    /// - Every other case changes nothing (``UDSS_LLR_0096``).
     pub fn t_data_ind<'d>(
         &mut self,
         now: Timestamp,
@@ -441,7 +438,7 @@ impl<const A: usize> Server<A> {
         let from = ai.source();
         match (result, class) {
             (SResult::Ok, ServerRx::Request { .. }) => {
-                // UDSS_LLR_0107 / 0108: this request is now the service in progress, and
+                // UDSS_LLR_0107 / 0108: this request becomes the service in progress, and
                 // UDSS_LLR_0113: its tP2_Server starts with tP2_Server_Max.
                 let mut p2 = Timer::STOPPED;
                 p2.start(now, self.params.p2_server_max);
@@ -486,17 +483,20 @@ impl<const A: usize> Server<A> {
     /// A transmission has completed.
     ///
     /// ``UDSS_LLR_0025`` — addressing and a result. ``UDSS_LLR_0059`` matches it to the
-    /// outstanding association by addressing, and ``UDSS_LLR_0063`` rejects one matching
-    /// none. ``UDSS_LLR_0039`` forwards it to the application as an `S_Data.conf`.
-    /// Matching frees the association, and the confirmation acts on the session
-    /// (``UDSS_LLR_0085``, ``UDSS_LLR_0088``, ``UDSS_LLR_0093``, ``UDSS_LLR_0098``) and,
-    /// only where the service in progress submitted the transmission it confirms
-    /// (``UDSS_LLR_0109``), on that service and its response timer (``UDSS_LLR_0110``,
-    /// ``UDSS_LLR_0116``); a busy refusal's acts on neither (``UDSS_LLR_0187``). A
-    /// confirmation that a later request from the controlling client overtook restarts no
-    /// `tS3_Server`: that request's stop is the later event (``UDSS_LLR_0088``,
-    /// ``UDSS_LLR_0093``). One selecting a non-default session that a later request from
-    /// the requester overtook enters it with `tS3_Server` stopped (``UDSS_LLR_0085``).
+    /// outstanding association by addressing, ``UDSS_LLR_0063`` rejects one matching none,
+    /// and ``UDSS_LLR_0039`` forwards it to the application as an `S_Data.conf`. Matching
+    /// frees the association, and then:
+    ///
+    /// - The confirmation acts on the session (``UDSS_LLR_0085``, ``UDSS_LLR_0088``,
+    ///   ``UDSS_LLR_0093``, ``UDSS_LLR_0098``).
+    /// - Only where the service in progress submitted the transmission it confirms
+    ///   (``UDSS_LLR_0109``) does it act on that service and its response timer
+    ///   (``UDSS_LLR_0110``, ``UDSS_LLR_0116``); a busy refusal's acts on neither
+    ///   (``UDSS_LLR_0187``).
+    /// - A confirmation that a later request from the controlling client overtook restarts
+    ///   no `tS3_Server`: that request's stop is the later event (``UDSS_LLR_0088``,
+    ///   ``UDSS_LLR_0093``). One selecting a non-default session that a later request from
+    ///   the requester overtook enters it with `tS3_Server` stopped (``UDSS_LLR_0085``).
     pub fn t_data_conf(
         &mut self,
         now: Timestamp,
@@ -597,22 +597,17 @@ impl<const A: usize> Server<A> {
         )
     }
 
-    /// Report that a received request is handled and no response will be transmitted.
+    /// Report that a received request is handled and will get no response; no output.
     ///
-    /// ``UDSS_LLR_0074`` — an act of the caller, not a primitive. ISO 14229-2:2021 9.5
-    /// Table 6 restarts `tS3_Server` on completion where no response is required, and no
-    /// message is transmitted in that case, so without this input the session layer
-    /// cannot detect it and a suppressed-response request in a non-default session would
-    /// never restart the timer.
-    ///
-    /// `ai` is the request's addressing. A report for a request not marked keep-alive
-    /// that answers the service in progress ends it (``UDSS_LLR_0109``) and with it stops
-    /// `tP2_Server` (``UDSS_LLR_0115``). A request selecting a non-default session enters
-    /// it with the requester as controlling client and starts `tS3_Server`
-    /// (``UDSS_LLR_0086``); one selecting the default session enters the default session
+    /// ``UDSS_LLR_0074`` — an act of the caller, not a primitive: where ISO 14229-2:2021
+    /// 9.5 Table 6 restarts `tS3_Server` on a completion without response, no message
+    /// reaches the session layer. `ai` is the request's addressing. A report for a request
+    /// not marked keep-alive that answers the service in progress ends it
+    /// (``UDSS_LLR_0109``) and stops `tP2_Server` (``UDSS_LLR_0115``). A request selecting
+    /// a non-default session enters it with the requester as controlling client and starts
+    /// `tS3_Server` (``UDSS_LLR_0086``); one selecting the default session enters it
     /// (``UDSS_LLR_0098``); any other, from the controlling client, restarts `tS3_Server`
-    /// (``UDSS_LLR_0089``). A keep-alive report changes nothing (``UDSS_LLR_0096``). The
-    /// reaction carries no output of its own.
+    /// (``UDSS_LLR_0089``). A keep-alive report changes nothing (``UDSS_LLR_0096``).
     pub fn completion_report(
         &mut self,
         now: Timestamp,

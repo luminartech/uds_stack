@@ -16,17 +16,17 @@ fn a_server_is_created_from_caller_storage_and_three_parameters() {
     );
 }
 
-/// Type-checked, never run: every entry point the server has, with the types it takes.
+/// A compile-time test, never called: every entry point the server has, with its types.
 /// ``UDSS_LLR_0030`` has six bullets. Its last three are discharged by the methods this
 /// impl does *not* have — there is no `open_channel`, `withdraw_channel`, `reset_channel`
 /// or `release_keep_alive` on a `Server`. Its third bullet, an indication identifying a
 /// channel, is discharged by the absent channel parameter on `t_data_som_ind` and
 /// `t_data_ind` below.
-#[allow(dead_code, reason = "type-checked, never run")]
+#[expect(dead_code, reason = "compile-time test: compiled, never called")]
 fn every_server_entry_point(server: &mut Server<4>, payload: &[u8]) {
     // ``UDSS_LLR_0080`` — a query the caller reads for itself, taking `&self`, not an
-    // output in ``UDSS_LLR_0011``'s sense. Type-checked here; `server_behaviour.rs`
-    // exercises what it returns.
+    // output in ``UDSS_LLR_0011``'s sense. Checked at compile time here;
+    // `server_behaviour.rs` exercises what it returns.
     let _: Option<Timestamp> = server.next_deadline();
 
     let now = Timestamp(0);

@@ -93,32 +93,25 @@ mod role {
 
 /// How the client keeps servers alive.
 ///
-/// ``UDSS_LLR_0149`` — one of two modes, fixed when the instance is created, changed by
+/// ``UDSS_LLR_0149`` — one of two modes, fixed when the instance is created and changed by
 /// no input. The mode selects which state ``UDSS_LLR_0150`` or ``UDSS_LLR_0151``
 /// requires, and which of ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184``
-/// act.
-///
-/// It is a type parameter of [`crate::Client`] rather than a value inside it because
-/// ``UDSS_LLR_0149`` settles it at creation and nothing afterwards can move it. Holding it
-/// in the type is what lets ``UDSS_LLR_0152`` be satisfied without a check: the methods
-/// that supply a `tS3_Client` reload exist only on the mode that gives one a meaning, so
-/// none of that requirement's three disagreements can be written.
-///
-/// The trait is sealed. A mode is not an extension point — the standard names two — and
-/// ``UDSS_LLR_0011`` forbids the session layer to deliver an output through a
-/// caller-supplied trait implementation, which sealing keeps true of every trait here.
+/// act. It is a type parameter of [`crate::Client`], since ``UDSS_LLR_0149`` settles it
+/// at creation and nothing afterwards can move it, and the methods that supply a
+/// `tS3_Client` reload exist only on the mode that gives one a meaning
+/// (``UDSS_LLR_0152``). The trait is sealed: the standard names two modes, and
+/// ``UDSS_LLR_0011`` forbids delivering an output through a caller-supplied trait
+/// implementation.
 pub trait KeepAliveMode: crate::sealed::Sealed + role::Role {}
 
 /// Functional keep-alive: one `TesterPresent` for the client, functionally addressed.
 ///
 /// ``UDSS_LLR_0150`` — a single `tS3_Client` timer and a single keeping-alive fact for
 /// the instance, with the single reload of ``UDSS_LLR_0152``. ISO 14229-2:2021 9.6 Table 8
-/// allots one timer here, so this value is fixed in size; it is caller-supplied all the
-/// same, because ``UDSS_LLR_0008`` puts every fact the client holds in the caller's
-/// storage and a fact with nothing left to size is no exception.
-/// Storage is moved into the instance, never duplicated — see [`crate::Association`]. A
-/// copy of this is a second `tS3_Client` timer, which ``UDSS_LLR_0150`` gives the client
-/// exactly one of.
+/// allots one timer here, so this value is fixed in size; it is still caller-supplied,
+/// because ``UDSS_LLR_0008`` puts every fact the client holds in the caller's storage. It
+/// is moved into the instance, never copied: a copy would be a second `tS3_Client` timer,
+/// and ``UDSS_LLR_0150`` gives the client exactly one.
 #[derive(Debug)]
 pub struct FunctionalKeepAlive {
     pub(crate) reload: u32,
@@ -204,9 +197,8 @@ impl FunctionalKeepAlive {
 /// ``UDSS_LLR_0151`` — the timer and session fact live in each physical channel's own
 /// storage, and ``UDSS_LLR_0152`` gives each physical channel its own reload, supplied at
 /// [`crate::Client::open_physical_channel`]. Nothing is client-wide, so this mode
-/// carries no value at all.
-/// It holds nothing, but it is still moved rather than copied, so that a keep-alive mode
-/// reaches [`crate::Client::new`] the same way in both modes — see [`crate::Association`].
+/// carries no value at all. It is still moved rather than copied, so that a keep-alive
+/// mode reaches [`crate::Client::new`] the same way in both modes.
 #[derive(Debug)]
 pub struct PhysicalKeepAlive;
 
