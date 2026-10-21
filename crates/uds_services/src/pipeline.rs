@@ -1,14 +1,12 @@
-//! The clause 8.7 pipeline. ``UDSSVC_ARCH_0004`` — an ordered sequence of stages, each
-//! settling the request or passing it on; ``UDSSVC_ARCH_0018`` — nothing outside this
+//! The clause 8.7 pipeline. ``UDSSVC_ARCH_0004``: an ordered sequence of stages, each
+//! settling the request or passing it on; ``UDSSVC_ARCH_0018``: nothing outside this
 //! crate calls it. Every item is `pub` only because `uds_server!` expands in the
 //! application's crate and routes here; none is API an application writes against.
 //!
-//! **The pipeline takes no context struct.** Under ``UDSSVC_ARCH_0035`` this crate
-//! already holds the active session, the security level and the authentication state,
-//! because it implements the services that own them — so reading them back out of a
-//! struct it had just built would be a copy, not an input. What the driver does pass is
-//! `uds_session::Ai`, which ISO 14229-1:2020 clause 7.4.1 makes a mandatory parameter of
-//! every application layer service primitive anyway.
+//! The stages read the active session and the security state from this crate's own
+//! [`State`] (``UDSSVC_ARCH_0035``) and take the request's `uds_session::Ai`, which
+//! ISO 14229-1:2020 clause 7.4.1 makes a parameter of every application layer service
+//! primitive.
 
 use crate::services::transfer::{DataTransfer, TransferRequest};
 use crate::services::{Effect, SessionTransition};
@@ -117,12 +115,13 @@ pub enum Stage<'a> {
 
 /// The common stages, in ISO 14229-1:2020 8.7.2 Figure 5's order (``UDSSVC_ARCH_0006``):
 ///
-/// 1. No service identifier at all: [`Stage::Empty`] (``UDSSVC_ARCH_0005``'s declared
-///    reading — the standard does not model the case).
-/// 2. Service identifier supported? An unmodelled byte, or a service the assembly list
+/// 1. No service identifier at all: [`Stage::Empty`] (``UDSSVC_ARCH_0005``; the standard
+///    does not model the case).
+/// 2. Service identifier supported? An unmodeled byte, or a service the assembly list
 ///    does not name, settles `serviceNotSupported` (0x11).
 /// 3. Supported in the active session? Table 23's refusals settle
-///    `serviceNotSupportedInActiveSession` (0x7F).
+///    `serviceNotSupportedInActiveSession` (0x7F). Figure 5's authentication check
+///    (0x34), between 2 and 3, is unconditionally true.
 /// 3a. The service's checks ahead of its decode (`ahead`): `DataTransfer::SESSIONS`'s
 ///    0x7F for the three staged transfer services, and Figure 31's minimum length (0x13)
 ///    and format checks (0x31) for `RequestDownload`, both before its full length (see
@@ -137,22 +136,15 @@ pub enum Stage<'a> {
 ///    All three read the byte after the service identifier, with
 ///    `suppressPosRspMsgIndicationBit` stripped, before any exact-length test, so a
 ///    trailing byte cannot turn 0x12, 0x7E or 0x33 into 0x13. A request with no such byte
-///    fails Figure 6's minimum-length check, which the decode in 5 settles. Row 3,
-///    authentication (0x34), is unconditionally true, as in Figure 5.
+///    fails Figure 6's minimum-length check, which the decode in 5 settles.
 /// 5. Only then the service-specific check, where length and format live: a decode
 ///    failure settles the code `uds_protocol` assigns it, `requestOutOfRange` (0x31) for
 ///    a parameter outside its range and otherwise `incorrectMessageLengthOrInvalidFormat`
 ///    (0x13), as do bytes left over (``UDSSVC_ARCH_0005``).
 ///
-/// Clause 8.7.5's pseudo-code agrees: its outer `SWITCH` on the service identifier falls
-/// to `DEFAULT: responseCode = SNS` before any `message_length` test, so a malformed
-/// request for a service this server lacks is 0x11, not 0x13; and its inner `SWITCH` on
-/// the sub-function falls to `DEFAULT: responseCode = SFNS` before the length test of a
-/// supported sub-function's arm. Figure 5's authentication check (0x34), between 2 and 3,
-/// is unconditionally true here (architecture open question 4). Figure 5's optional SID
-/// security check is not evaluated here: no service this crate stages requires a level
-/// for its service identifier alone, and a service whose requirement turns on an
-/// identifier in its data-parameters checks it in its own stage.
+/// Figure 5's optional SID security check is not evaluated: no service this crate stages
+/// requires a level for its service identifier alone, and a service whose requirement
+/// turns on an identifier in its data-parameters checks it in its own stage.
 #[doc(hidden)]
 #[must_use]
 pub fn begin_with<'a, F, G, H>(
@@ -214,7 +206,7 @@ where
     }
     match Request::decode(request) {
         // A service `uds_protocol` names but does not model has no stage either: 0x11,
-        // as for an unmodelled byte, and never 0x13 for a request that may be well formed.
+        // as for an unmodeled byte, and never 0x13 for a request that may be well formed.
         Ok((Request::Other { .. }, _)) => Stage::Settle {
             sid,
             nrc: NegativeResponseCode::ServiceNotSupported,
@@ -533,7 +525,7 @@ pub async fn read_data_by_identifier<A: ReadDataByIdentifier>(
     }
 }
 
-/// ISO 14229-1:2020 clause 11.7, Figure 26 — the check `WriteDataByIdentifier` makes
+/// ISO 14229-1:2020 clause 11.7, Figure 26: the check `WriteDataByIdentifier` makes
 /// ahead of the record's length: an identifier the application does not define, or one
 /// [`WriteDataByIdentifier::access`] does not admit in the active session, is
 /// `requestOutOfRange` (0x31). Asked by [`write_data_by_identifier`], and by `dispatch`
@@ -555,18 +547,14 @@ pub fn writable_identifier<A: WriteDataByIdentifier>(
         .ok_or(NegativeResponseCode::RequestOutOfRange)
 }
 
-/// ISO 14229-1:2020 clause 11.7 — `WriteDataByIdentifier`'s own stage, in Figure 26's
-/// order. The decode settled a request without a data record (0x13); then:
-///
-/// * [`writable_identifier`]'s check (0x31);
-/// * a record [`DataIdentifier::split_record`] finds short, or followed by further bytes,
-///   is `incorrectMessageLengthOrInvalidFormat` (0x13);
-/// * an identifier none of whose [`Access::levels`] `state` holds unlocked is
-///   `securityAccessDenied` (0x33);
-/// * a record `split_record` finds malformed is `requestOutOfRange` (0x31).
-///
-/// The handler's verdict decides the rest, and the positive response is `6E` and the
-/// echoed identifier (Table 279).
+/// ISO 14229-1:2020 clause 11.7: `WriteDataByIdentifier`'s own stage, in Figure 26's
+/// order. The decode settled a request without a data record (0x13); then
+/// [`writable_identifier`]'s check (0x31); a record [`DataIdentifier::split_record`]
+/// finds short, or followed by further bytes, is `incorrectMessageLengthOrInvalidFormat`
+/// (0x13); an identifier none of whose [`Access::levels`] `state` holds unlocked is
+/// `securityAccessDenied` (0x33); a record `split_record` finds malformed is
+/// `requestOutOfRange` (0x31). The handler's verdict decides the rest, and the positive
+/// response is `6E` and the echoed identifier (Table 279).
 #[doc(hidden)]
 pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
     services: &mut A,
@@ -614,7 +602,7 @@ impl Routine {
     }
 }
 
-/// ISO 14229-1:2020 clause 14.2, Figure 30 — the checks `RoutineControl` makes ahead of
+/// ISO 14229-1:2020 clause 14.2, Figure 30: the checks `RoutineControl` makes ahead of
 /// the option record's length, in order: an identifier the application does not define,
 /// or one [`RoutineControl::access`] does not admit in the active session, is
 /// `requestOutOfRange` (0x31); a routine none of whose [`Access::levels`] `state` holds
@@ -656,13 +644,10 @@ fn admitted<A: RoutineControl>(
         .ok_or(NegativeResponseCode::SubFunctionNotSupported)
 }
 
-/// ISO 14229-1:2020 clause 14.2 — `RoutineControl`'s own stage, in Figure 30's order.
-/// The decode settled a request shorter than its routine identifier (0x13); then:
-///
-/// * [`admitted_routine`]'s checks (0x31, 0x33, 0x12);
-/// * an option record longer than [`RoutineControl::MAX_OPTION_LEN`] is
-///   `incorrectMessageLengthOrInvalidFormat` (0x13).
-///
+/// ISO 14229-1:2020 clause 14.2: `RoutineControl`'s own stage, in Figure 30's order.
+/// The decode settled a request shorter than its routine identifier (0x13); then
+/// [`admitted_routine`]'s checks (0x31, 0x33, 0x12), and an option record longer than
+/// [`RoutineControl::MAX_OPTION_LEN`] is `incorrectMessageLengthOrInvalidFormat` (0x13).
 /// The pipeline then writes `71`, the echoed `routineControlType` and the identifier, and
 /// the sub-function's own method writes the rest and decides Figure 30's remaining checks.
 #[doc(hidden)]
@@ -722,14 +707,11 @@ pub async fn clear_diagnostic_information<A: ClearDiagnosticInformation>(
     Ok(None)
 }
 
-/// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s own stage
+/// ISO 14229-1:2020 clause 10.2: `DiagnosticSessionControl`'s own stage
 /// (``UDSSVC_ARCH_0035``): the positive response carries the session and the
-/// application's timing, and the session is selected. Whether the session is supported
-/// at all (0x12) and from the active one (0x7E) was settled by [`begin`] before the
-/// request was decoded, so it is not asked again here.
-///
-/// [`SessionTiming`](crate::SessionTiming) is held in Table 29's wire form, so it is sent
-/// as stated.
+/// application's [`SessionTiming`](crate::SessionTiming), in Table 29's wire form, and
+/// the session is selected. Whether the session is supported at all (0x12) and from the
+/// active one (0x7E) was settled by [`begin`] before the request was decoded.
 #[doc(hidden)]
 pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     services: &mut A,
@@ -951,7 +933,7 @@ pub fn transfer_before_length(
     }
 }
 
-/// ISO 14229-1:2020 clause 10.4 and Annex I — `SecurityAccess`'s own stage
+/// ISO 14229-1:2020 clause 10.4 and Annex I: `SecurityAccess`'s own stage
 /// (``UDSSVC_ARCH_0037``). Whether the level is supported (0x12) and in the active session
 /// (0x7E) was settled by [`begin`]; this runs Figure I.1 against `state`.
 ///
@@ -966,8 +948,8 @@ pub fn transfer_before_length(
 ///   [`SecurityAccess::MAX_SEED_LEN`] bytes, discarding any seed awaiting a key
 ///   (transitions 7 and 10);
 /// * otherwise is answered with the application's seed, and its level becomes the one
-///   whose key is awaited (transitions 2, 5 and 8). A delay supported by the policy and
-///   no longer running has expired, so an attempt count at the limit is reset first.
+///   whose key is awaited (transitions 2, 5 and 8). A delay supported by the policy that
+///   has stopped running has expired, so an attempt count at the limit is reset first.
 ///
 /// A `sendKey` discards the awaited seed whatever its outcome (transitions 9 and 10), and
 /// is:
@@ -1300,8 +1282,7 @@ mod tests {
         type Did = Did;
         const MAY_RESPOND_PENDING: bool = false;
         const MAX_DIDS_PER_REQUEST: usize = 2;
-        // A plain `fn` returning a ready future: an `async fn` with no `.await` is
-        // `clippy::unused_async_trait_impl`, which pedantic denies.
+        // A plain `fn` returning a ready future, since the body never awaits.
         fn read(
             &mut self,
             did: Did,
@@ -1545,7 +1526,7 @@ mod tests {
         ));
     }
 
-    /// ``UDSSVC_ARCH_0005``, ``UDSSVC_ARCH_0006`` check 1 — an unmodelled or unlisted
+    /// ``UDSSVC_ARCH_0005``, ``UDSSVC_ARCH_0006`` check 1 — an unmodeled or unlisted
     /// SID settles 0x11, not 0x13.
     #[test]
     fn an_unsupported_service_settles_0x11() {
@@ -1944,8 +1925,7 @@ mod tests {
         }
     }
 
-    /// The list is closed. Silencing any other code would be a server that never
-    /// reports the failure it actually had.
+    /// The list is closed: no other code is silenced.
     #[test]
     fn other_codes_are_never_silenced() {
         for code in [

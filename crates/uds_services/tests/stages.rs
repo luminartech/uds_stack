@@ -1999,7 +1999,7 @@ fn read_dtc_a_wrong_length_is_0x13() {
     }
 }
 
-/// Clause 12.3.4 — a `DTCMaskRecord` the server does not recognise is the handler's 0x31.
+/// Clause 12.3.4 — a `DTCMaskRecord` the server does not recognize is the handler's 0x31.
 #[test]
 fn read_dtc_an_unknown_dtc_is_the_handler_0x31() {
     let mut ecu = Ecu::default();
@@ -2777,7 +2777,7 @@ fn a_refused_block_advances_nothing() {
 /// Table 451 — the counter rolls `FF` to `00`, and the block after the roll repeated is a
 /// repeat.
 #[test]
-fn the_counter_rolls_over_and_a_repeat_after_the_roll_is_recognised() {
+fn the_counter_rolls_over_and_a_repeat_after_the_roll_is_recognized() {
     let mut ecu = Ecu::default();
     // 4 KiB at 0x2000, uncompressed: room for 300 one-byte blocks.
     let mut state = downloading(&mut ecu, &[0x34, 0x00, 0x22, 0x20, 0x00, 0x10, 0x00]);

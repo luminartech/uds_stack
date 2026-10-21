@@ -3,7 +3,7 @@ name = "uds_services"
 version.workspace = true
 edition = "2024"
 rust-version.workspace = true
-description = "ISO 14229-1 behaviour: typed UDS service dispatch over caller-defined identifiers, and the clause 8.7 server response implementation rules"
+description = "ISO 14229-1 behavior: typed UDS service dispatch over caller-defined identifiers, and the clause 8.7 server response implementation rules"
 license = "MIT OR Apache-2.0"
 repository.workspace = true
 homepage.workspace = true
@@ -24,20 +24,16 @@ uds_session = { workspace = true }
 automotive-wire-codec = { workspace = true }
 
 # No [features] table. This crate is no_std and allocation-free in every
-# configuration, and nothing in src/ reads a cfg — `alloc` and `std` only forwarded to
-# uds_protocol, so they promised a variation this crate's surface never made. An
-# application already depends on uds_protocol directly (its handlers return
-# NegativeResponseCode) and enables those there.
+# configuration, and nothing in src/ reads a cfg. An application enables uds_protocol's
+# `alloc` and `std` on its own dependency, which its handlers already have.
 #
-# No binding is ever a dependency either: UDSSVC_ARCH_0002 points the dependency arrow
-# one way and UDSSVC_ARCH_0003 makes bindings additive at the application. No runtime is
-# named (UDSSVC_ARCH_0030) — an `async fn` implies neither std nor an executor, so a
-# bare-metal target stays reachable.
+# No binding is a dependency either: UDSSVC_ARCH_0002 points the dependency arrow one
+# way and UDSSVC_ARCH_0003 makes bindings additive at the application. No runtime is
+# named (UDSSVC_ARCH_0030).
 
 [dev-dependencies]
-# The in-place `static` pattern the docs prescribe for a server: `ConstStaticCell`
-# yields the `&'static mut` that `Server::step` needs without a stack temporary. A
-# dev-dependency only, for the doctest and the composition test that show it.
+# The in-place `static` pattern the docs show for a server: `ConstStaticCell` yields
+# the `&'static mut` that `Server::step` needs without a stack temporary.
 static_cell = { workspace = true }
 
 [lints]

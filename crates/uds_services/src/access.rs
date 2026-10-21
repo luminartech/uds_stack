@@ -1,11 +1,10 @@
 //! Where a sub-function or identifier is available, and which security levels unlock it.
 //!
 //! ISO 14229-1:2020 8.7.3.1 Figure 6 asks three questions of a sub-function before its
-//! service runs — supported at all (0x12), supported in the active session (0x7E), and
-//! unlocked (0x33) — and Figures 26 and 30 ask the same of an identifier. A service trait
-//! answers all three at once with an [`Access`], or `None` where it does not support the
-//! sub-function or identifier at all, so the answers cannot disagree and the pipeline asks
-//! them in the figure's order.
+//! service runs (supported at all, 0x12; supported in the active session, 0x7E; unlocked,
+//! 0x33), and Figures 26 and 30 ask the same of an identifier. A service trait answers
+//! all three at once with an [`Access`], or `None` where it does not support the
+//! sub-function or identifier at all, and the pipeline asks them in the figure's order.
 
 use crate::SecurityLevel;
 use uds_protocol::DiagnosticSessionType;

@@ -715,18 +715,10 @@ fn a_session_pair_the_lead_does_not_fit_panics() {
 
 /// A request longer than the in-flight buffer, with no service in progress, is checked as
 /// clause 8.7 checks any request, in ISO 14229-1:2020 Figure 5's and Figure 6's order:
-/// `serviceNotSupported` (0x11) for a service this server lacks, `subFunctionNotSupported`
-/// (0x12) for a sub-function it lacks, and only then
-/// `incorrectMessageLengthOrInvalidFormat` (0x13), that buffer holding the longest request
-/// any assembled service accepts. Never `busyRepeatRequest`, which would have the client
-/// repeat it forever. 0x11 and 0x12 to a functional request are suppressed (8.7.5). The
-/// session checks precede 0x13 too: 0x7F is pinned in `composition.rs`, and 0x7E in
-/// [`an_over_long_request_for_a_sub_function_not_in_this_session_is_refused_0x7e`].
-///
-/// `Timed`'s in-flight buffer is six bytes, `DiagnosticSessionControl`'s bound, so what
-/// fits of `SESSION` is itself too long and 0x13 comes from decoding it;
-/// [`an_over_long_request_whose_front_decodes_is_not_handled`] pins the 0x13 a request
-/// whose front decodes owes.
+/// `serviceNotSupported` (0x11), `subFunctionNotSupported` (0x12), and only then
+/// `incorrectMessageLengthOrInvalidFormat` (0x13); never `busyRepeatRequest`. 0x11 and
+/// 0x12 to a functional request are suppressed (8.7.5). `Timed`'s in-flight buffer is six
+/// bytes, so what fits of `SESSION` is itself too long and 0x13 comes from decoding it.
 #[test]
 fn a_request_too_long_for_any_service_is_refused_in_figure_5s_order() {
     const NOT_SUPPORTED: &[u8] = &[0x2E, 0xF1, 0x90, 1, 2, 3, 4, 5, 6];

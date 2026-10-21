@@ -1,14 +1,10 @@
 //! The run loop.
 //!
-//! ``UDSSVC_ARCH_0040`` — this crate owns the loop. It supplies `uds_session` with
+//! ``UDSSVC_ARCH_0040``: this crate owns the loop. It supplies `uds_session` with
 //! timestamps and drains its outputs, calls a transport to send and receive bytes, and
 //! dispatches inbound requests to the application's handlers. No other crate in the stack
-//! contains a driver, and a consuming application writes none.
-//!
-//! ISO 14229-2 defines a service interface between the session layer and its user and
-//! names that user as the ISO 14229-1 layer. A third party sitting between them is a
-//! component no standard describes, and it is the component that went a full design cycle
-//! with no owner.
+//! contains a driver, and a consuming application writes none: ISO 14229-2 names the
+//! session layer's user as the ISO 14229-1 layer, which is this crate.
 
 use crate::pipeline::settle;
 use crate::select::{Either, select2};
@@ -30,17 +26,10 @@ use uds_session::{
 /// The UDS server: an application's services, its storage, a session layer and a
 /// transport.
 ///
-/// Named `Server` although `uds_session::Server` exists, because a consuming application
-/// never imports `uds_session` — only a binding author does, and a binding author can
-/// alias.
-///
 /// `A` is the [`ServiceSet`] marker [`crate::uds_server`] generates; the application it
-/// holds is `A::App`.
-///
-/// `PEERS` is a parameter rather than a derived constant because the session layer's type
-/// is `uds_session::Server<PEERS>`, and an associated const of a generic cannot be a const
-/// generic argument. An application does not write it: [`crate::uds_server`]'s
-/// `peers = N` supplies it and the macro emits the alias, so the count appears once.
+/// holds is `A::App`. `PEERS` sizes the session layer's `uds_session::Server<PEERS>`;
+/// [`crate::uds_server`]'s `peers = N` supplies it through the alias it emits, so an
+/// application never writes it.
 #[derive(Debug)]
 pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     services: A::App,
@@ -63,29 +52,18 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
 impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// Assemble a server.
     ///
-    /// A `const fn`, so a server can be built in place, in a `static` initialiser, rather
-    /// than on the stack: the storage is inline and can be several kilobytes, which a
-    /// small-stack target could not hold as a temporary. [`Storage::EMPTY`] being an
-    /// associated const is what allows it.
-    ///
-    /// [`Self::step`] takes `&mut self`, so the `static` has to yield a `&'static mut`
-    /// once. `static_cell::ConstStaticCell::new(EcuServer::new(..))` and its `take()` do
-    /// that without a stack temporary, as [`crate::uds_server`]'s example shows. A plain
-    /// `static SERVER: EcuServer` lands in read-only memory and can never be stepped, and
-    /// `StaticCell::init(EcuServer::new(..))` builds the value on the stack before moving
-    /// it. In a `ConstStaticCell` the server lives in initialised data, so its initial
-    /// image, buffers included, is also stored in flash.
-    ///
-    /// A transport built at run time, such as `uds_on_ip`'s `DoIpTransport` over
-    /// `simple_doip`'s entity, cannot be in a `const` initialiser. Its server goes in a
-    /// `StaticCell` through `init_with(|| EcuServer::new(..))`, and is built on the
-    /// caller's stack and copied in, so that stack holds the whole server once; see
-    /// `DoIpTransport`'s bare-metal notes for what that costs.
+    /// A `const fn`, so a server whose inline storage runs to kilobytes is built in a
+    /// `static` initializer rather than as a stack temporary. [`Self::step`] takes
+    /// `&mut self`, so the `static` is a `static_cell::ConstStaticCell` whose `take()`
+    /// yields the one `&'static mut`, as [`crate::uds_server`]'s example shows; a plain
+    /// `static` is read-only and cannot be stepped. A transport built at run time, such
+    /// as `uds_on_ip`'s `DoIpTransport`, cannot be in a `const` initializer: its server
+    /// goes in a `StaticCell` through `init_with(|| EcuServer::new(..))`, built on the
+    /// caller's stack and copied in.
     ///
     /// The driver builds its own session, so an application never names `uds_session`.
     ///
-    /// `PEERS` must be 1, checked at compile time: milestone 1 keeps one slot for a
-    /// selecting response awaiting its confirmation (see [`crate::uds_server`]).
+    /// `PEERS` must be 1, checked at compile time (see [`crate::uds_server`]).
     ///
     /// # Arguments
     ///
@@ -96,8 +74,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// * `own` - the [`Address`] every response is sent from: its `S_SA`, which
     ///   ``UDSS_LLR_0051`` makes the sending entity's. It is not derived from the request,
     ///   because a functionally addressed request's `S_TA` is the functional group
-    ///   address, and a response sent from that address would not say which server
-    ///   answered.
+    ///   address.
     /// * `params` - the session layer's [`ServerParams`]: `tS3_Server` and the
     ///   response-pending lead, which the server enforces, and the `P2Server_max` and
     ///   `P2*Server_max` it enforces only where `services` has no
@@ -129,8 +106,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         &mut self.services
     }
 
-    /// The transport, for inspection between events — the counterpart of
-    /// [`Self::services`].
+    /// The transport, for inspection between events.
     #[must_use]
     pub fn transport(&self) -> &T {
         &self.transport
@@ -147,24 +123,18 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// Handle one transport event. Returns [`Stepped::Stopped`] where a restarting reset
     /// was confirmed during this step, which the caller acts on before stepping again.
     ///
-    /// **An `Err` is terminal for this server instance** (``UDSSVC_ARCH_0040``, a
-    /// milestone-1 limit). A transport error unwinds through the drains with `?`, so a
-    /// session-hook decision a drain already recorded — a `tS3_Server` expiry, a
-    /// confirmed session — may not have been applied, and the application's state and
-    /// the session layer may disagree afterwards. Do not call `step` on this instance
-    /// again. Nothing here recovers it in place; [`Self::into_parts`] takes the services
-    /// and the transport back out.
+    /// **An `Err` is terminal for this server instance** (``UDSSVC_ARCH_0040``). A
+    /// transport error unwinds through the drains, so a session-hook decision a drain
+    /// recorded (a `tS3_Server` expiry, a confirmed session) may not have been applied,
+    /// and the application's state and the session layer may disagree afterwards. Do not
+    /// call `step` on this instance again; [`Self::into_parts`] takes the services and
+    /// the transport back out.
     ///
     /// # Cancel safety
     ///
     /// The returned future is **not** cancel-safe: drop it only between `step` calls.
     /// Dropped at any await other than the transport's `next_event`, it leaves the
-    /// instance in the state the terminal-`Err` paragraph above describes — outputs
-    /// drained but not applied, a `Pending` slot cleared without its confirmation
-    /// applied, a handler dropped with its association still outstanding — and
-    /// `uds_services::State` may disagree with the session layer. Tracked in
-    /// `luminartech/uds_stack#19` (<https://github.com/luminartech/uds_stack/issues/19>),
-    /// together with recovery after an `Err`.
+    /// instance in the state an `Err` does.
     ///
     /// # Errors
     ///
@@ -327,19 +297,15 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 
     /// Run until a restarting reset is confirmed, or the transport fails.
     ///
-    /// **The `Err` this returns is terminal for this server instance**
-    /// (``UDSSVC_ARCH_0040``, a milestone-1 limit), as an `Err` from [`Self::step`] is: a
-    /// session-hook decision already recorded may not have been applied, so the
-    /// application's state and the session layer may disagree afterwards. Do not call
-    /// `run` or `step` on this instance again. Nothing here recovers it in place;
+    /// **The `Err` this returns is terminal for this server instance**, as an `Err` from
+    /// [`Self::step`] is. Do not call `run` or `step` on this instance again;
     /// [`Self::into_parts`] takes the services and the transport back out.
     ///
     /// # Cancel safety
     ///
-    /// Not cancel-safe, for the reason [`Self::step`] is not: dropping this future drops
-    /// a `step` future, and not necessarily at the transport's `next_event`. See
-    /// `step`'s `# Cancel safety` section, which also names the tracking issue,
-    /// `luminartech/uds_stack#19`. To stop between events, drive `step` in your own loop.
+    /// Not cancel-safe: dropping this future drops a `step` future, and not necessarily
+    /// at the transport's `next_event`. To stop between events, drive `step` in your own
+    /// loop.
     ///
     /// # Errors
     ///
@@ -391,12 +357,10 @@ pub enum Stopped {
 }
 
 /// Load the `P2` pair of the session in force into the session layer, so the request about
-/// to be indicated at `now` opens the window its session advertised.
-///
-/// The session layer is ticked at `now` first and its expiries applied, so a `tS3_Server`
-/// running out at that instant returns to the default session before its pair is read.
-/// The parameters are then set at the same `now`, which can expire nothing further, and
-/// ``UDSS_LLR_0076`` leaves any window already open on the value it was loaded with.
+/// to be indicated at `now` opens the window its session advertised. The session layer is
+/// ticked at `now` first, so a `tS3_Server` running out at that instant returns to the
+/// default session before its pair is read; ``UDSS_LLR_0076`` leaves any window already
+/// open on the value it was loaded with.
 ///
 /// # Panics
 ///
@@ -440,15 +404,10 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
 
 /// The response in flight that carries an effect, such as a `DiagnosticSessionControl`
 /// response's session: the effect takes place on the `Confirm` that reports it sent
-/// (``UDSS_LLR_0085``). One slot: a server answers one request at a time
-/// (``UDSS_LLR_0108``), so with one peer one such response is in flight at most.
-///
-/// **Milestone 1 accepts `peers = 1` only** ([`Server::new`] fails to compile for any
-/// other `PEERS`). A server answers one request at a time, but a response awaiting its
-/// confirmation is no longer the request in progress: with a second tester, that
-/// tester's selecting response could be accepted while the first is still unconfirmed,
-/// and it would overwrite this slot. The first confirmation would then match nothing and
-/// its session would never be applied.
+/// (``UDSS_LLR_0085``). One slot, which is why [`Server::new`] accepts `PEERS == 1` only:
+/// a server answers one request at a time (``UDSS_LLR_0108``), but a response awaiting
+/// its confirmation is not the request in progress, and a second tester's selecting
+/// response could overwrite this slot before the first was confirmed.
 #[derive(Debug, Clone, Copy)]
 struct Pending {
     /// The response's addressing, exactly as submitted: `t_data_conf` matches by it.
@@ -457,17 +416,11 @@ struct Pending {
     effect: Effect,
 }
 
-/// Where a response to `request` goes: the request went tester -> ECU, the response goes
-/// back the other way. The exact `Ai` `s_data_req` registers, and so the one the
-/// response's `DataConf` must carry to match it.
-///
-/// Sent from `own`, never from the request's `S_TA`: for a functional request that is
-/// the group address, and ``UDSS_LLR_0051`` makes `S_SA` the sending entity's address.
-///
-/// Physically addressed whatever the request was: a server answers the one client that
-/// asked, so a response to a functional request is a physical message to that client.
-/// That is an observation the requirement set relies on, not a clause of
-/// ISO 14229-2:2021 9.6 (``UDSS_LLR_0026``'s rationale).
+/// Where a response to `request` goes: the `Ai` `s_data_req` registers, and so the one
+/// the response's `DataConf` carries to match it. Sent from `own`, never from the
+/// request's `S_TA`, which for a functional request is the group address
+/// (``UDSS_LLR_0051``), and physically addressed whatever the request was, since a server
+/// answers the one client that asked (``UDSS_LLR_0026``).
 const fn reply_address(own: Address, request: Ai) -> Ai {
     Ai {
         sa: own,
@@ -495,12 +448,11 @@ impl Deferred {
 
     /// Both records, in arrival order: `self` was recorded first.
     ///
-    /// A later timeout clears an earlier session confirmation. [`apply`] runs the timeout
-    /// before the confirmation, so keeping both would leave the application in the
-    /// confirmed session while the session layer, which expired it afterwards, is in the
-    /// default one. A confirmed reset is kept: its response was sent, and both end in the
-    /// default session. A later confirmation after an earlier timeout keeps both, which is
-    /// already the order `apply` runs them in; of two confirmations the later wins.
+    /// A later timeout clears an earlier session confirmation, since [`apply`] runs the
+    /// timeout first and the session layer has expired the session. A confirmed reset is
+    /// kept: its response was sent, and both end in the default session. A later
+    /// confirmation after an earlier timeout keeps both; of two confirmations the later
+    /// wins.
     fn merge(self, later: Self) -> Self {
         Self {
             timed_out: self.timed_out || later.timed_out,
@@ -532,7 +484,7 @@ struct Drained<'d> {
 
 /// What follows a transmission: [`AfterSend::ServerLeaves`] for the final positive
 /// `DiagnosticSessionControl` response to `leaving`, and [`AfterSend::Continue`] for
-/// everything else — a 0x78 to the same addressing and a negative response included, as
+/// everything else, a 0x78 to the same addressing and a negative response included, as
 /// neither starts with the positive response identifier.
 fn after_send(leaving: Option<Ai>, ai: Ai, data: &[u8]) -> AfterSend {
     let positive = UdsServiceType::DiagnosticSessionControl.to_response_sid();
@@ -543,15 +495,11 @@ fn after_send(leaving: Option<Ai>, ai: Ai, data: &[u8]) -> AfterSend {
     }
 }
 
-/// The one place every session output is handled (``UDSSVC_ARCH_0040``). Every reaction,
+/// The one place every session output is handled (``UDSSVC_ARCH_0040``): every reaction,
 /// from every input, passes through here, because an expiry can surface from any of
-/// them. Acts on what needs only the transport and the pending record; records the rest.
-///
-/// Inside the drain, not after it: a reaction may yield several `Transmit`s and all of
-/// them must reach the transport. The reaction borrows the session and `t_data_req`
-/// borrows the transport, which is why they arrive as separate arguments rather than as
-/// one `&mut self` — disjoint fields are disjoint borrows only while nothing has merged
-/// them.
+/// them. Acts on what needs only the transport and the pending record, every `Transmit`
+/// included, and records the rest. The reaction borrows the session and `t_data_req`
+/// borrows the transport, so they arrive as separate arguments.
 async fn drain<'d, T: UdsTransport, const PEERS: usize>(
     mut reaction: uds_session::ServerReaction<'_, 'd, PEERS>,
     transport: &mut T,
@@ -612,13 +560,9 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
 /// restarting reset is confirmed or its completion is reported (``UDSSVC_ARCH_0002``,
 /// ``UDSSVC_ARCH_0038``, ``UDSSVC_ARCH_0045``). Returns `Some` where that reset restarts.
 ///
-/// That fixed order is the arrival order. Within one drain, ``UDSS_LLR_0081`` puts the
-/// expiry snapshots ahead of the input's own outputs, so a `SessionTimeout` always
-/// precedes the `Confirm` beside it. Across drains, [`Deferred::merge`] drops a session
-/// confirmation that a later timeout overtook, so a surviving session confirmation is
-/// one a timeout preceded. A reset confirmation is kept, since its response was sent,
-/// and running it after a timeout that overtook it ends in the same state: a restart
-/// ends in the default session either way, and a continuing reset changes no session.
+/// That fixed order is the arrival order: within one drain ``UDSS_LLR_0081`` puts the
+/// expiry snapshots ahead of the input's own outputs, and across drains
+/// [`Deferred::merge`] drops a session confirmation that a later timeout overtook.
 fn apply<A: ServiceSet>(
     services: &mut A::App,
     state: &mut A::State,
@@ -666,7 +610,7 @@ struct Serving {
     reply_to: Ai,
     /// The request's service identifier, which a negative response echoes.
     sid: u8,
-    /// ``UDSSVC_ARCH_0032`` — whether the service admits a 0x78 at all, as
+    /// ``UDSSVC_ARCH_0032``: whether the service admits a 0x78 at all, as
     /// `ServiceSet::may_respond_pending` reported it.
     may_pend: bool,
     /// `reply_to`, where the final positive response selects a session that
@@ -677,9 +621,7 @@ struct Serving {
 
 impl Serving {
     /// The request `ai` sent, its service identifier `sid`, before it is dispatched.
-    ///
-    /// ``UDSSVC_ARCH_0032`` — whether 0x78 is admissible is the service's to say, never
-    /// the driver's.
+    /// ``UDSSVC_ARCH_0032``: whether 0x78 is admissible is the service's to say.
     fn new<A: ServiceSet>(own: Address, ai: Ai, sid: u8) -> Self {
         Self {
             ai,
@@ -746,16 +688,12 @@ struct Served {
 ///
 /// Returns how the handling ended, whether a 0x78 was accepted meanwhile, and what the
 /// drains recorded for the application, which waits until the handler releases
-/// `&mut services`/`&mut state`. The caller settles: the handler future holds the sink
-/// until it drops. `waiting` is scoped per iteration so it drops before the 0x78 path
-/// needs `&mut transport`.
-///
-/// A message arriving meanwhile finds the protocol instance occupied (ISO 14229-1:2020
-/// 8.7.6): the keep-alive `TesterPresent` bypasses it ([`keep_alive`]) and anything else
-/// is refused ([`refuse_busy`]). The requesting client's close ends the handling; another
-/// client's ends nothing. Every event other than the requesting client's close first
-/// answers an overrun due by its own timestamp ([`overrun_at`]), so none is lost to the
-/// event's own input.
+/// `&mut services`/`&mut state`. The caller settles, once the handler has released the
+/// sink. A message arriving meanwhile finds the protocol instance occupied (ISO
+/// 14229-1:2020 8.7.6): the keep-alive `TesterPresent` bypasses it ([`keep_alive`]) and
+/// anything else is refused ([`refuse_busy`]). The requesting client's close ends the
+/// handling; another client's ends nothing. Every other event first answers an overrun due
+/// by its own timestamp ([`overrun_at`]), so none is lost to the event's own input.
 async fn serve<
     A: ServiceSet,
     H: Future<Output = Unsettled>,
@@ -772,17 +710,14 @@ async fn serve<
     let mut deferred = Deferred::NONE;
     let mut pending_sent = false;
     let mut owed = false;
-    // A loop over `handler.as_mut()`, not a one-shot: a plain
-    // `select2(handler, waiting)` drops the handler the moment the deadline wins,
-    // which is the opposite of what a response-pending is for.
+    // A loop over `handler.as_mut()`: the handler survives each deadline it loses.
     loop {
         let deadline = session.next_deadline();
         let event = {
             let waiting = core::pin::pin!(transport.next_event(concurrent, deadline));
             select2(handler.as_mut(), waiting).await
         };
-        // milestone-1 limit: an `Err` at any `?` below drops what was recorded; see
-        // `Server::step`'s doc.
+        // An `Err` at any `?` below drops what was recorded; see `Server::step`'s doc.
         match event {
             Either::Left(unsettled) => {
                 return Ok(Served {
@@ -795,12 +730,10 @@ async fn serve<
             Either::Right(Ok(TransportEvent::Closed { peer, .. }))
                 if peer == serving.ai.sa =>
             {
-                // The exchange is over either way: a server does not reconnect
-                // (ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have the client reconnect and
-                // activate routing). A close reaching *this* arm is never
-                // ISO 14229-5:2022 REQ 7.9's or 7.11's — those follow a positive response,
-                // and nothing positive has been sent yet — so whether it was expected
-                // changes nothing.
+                // The exchange is over: a server does not reconnect (ISO 14229-5:2022
+                // REQ 7.8 and REQ 7.10 have the client reconnect). Nothing positive has
+                // been sent yet, so this close is never REQ 7.9's or 7.11's, and whether
+                // it was expected changes nothing.
                 return Ok(Served {
                     ended: Ended::Closed,
                     pending_sent,
@@ -810,8 +743,7 @@ async fn serve<
             Either::Right(Ok(event)) => {
                 let now = transport.now();
                 let o = overrun_at(session, transport, pending, now, serving).await?;
-                // UDSSVC_ARCH_0009 rule 3 — kept for `settle`, which runs once the
-                // handler has finished. Never cleared: one accepted 0x78 is enough.
+                // UDSSVC_ARCH_0009 rule 3, kept for `settle`: one accepted 0x78 is enough.
                 pending_sent |= o.sent_pending;
                 owed |= o.owed;
                 deferred = deferred.merge(o.deferred);
@@ -875,16 +807,13 @@ async fn keep_alive<T: UdsTransport, const PEERS: usize>(
     Ok(drain(reaction, transport, pending, None).await?.deferred)
 }
 
-/// ISO 14229-1:2020 8.7.6 — any other message arriving while a service is in progress
+/// ISO 14229-1:2020 8.7.6: any other message arriving while a service is in progress
 /// finds the protocol instance occupied and is refused `busyRepeatRequest` (Annex A) from
-/// its service identifier alone; the service in progress continues.
-///
-/// Never indicated as a request, which ``UDSS_LLR_0108`` would have replace the service
-/// in progress, and submitted as a busy refusal, which answers no service
-/// (``UDSS_LLR_0187``). A refusal the session layer refuses in turn, the client's
-/// addressing still awaiting a confirmation, is dropped: ignoring the request is Annex J
-/// Figure J.2's other branch, and the client's own timeout recovers it. A message with no
-/// service identifier has nothing to echo and is dropped too (``UDSSVC_ARCH_0005``).
+/// its service identifier alone; the service in progress continues. Never indicated as a
+/// request (``UDSS_LLR_0108``), and submitted as a busy refusal, which answers no service
+/// (``UDSS_LLR_0187``). A refusal the session layer refuses in turn is dropped, which is
+/// Annex J Figure J.2's other branch; so is a message with no service identifier
+/// (``UDSSVC_ARCH_0005``).
 async fn refuse_busy<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
@@ -933,18 +862,13 @@ async fn conclude<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
 }
 
 /// Submit the handler's outcome: a final response, or the completion report a
-/// suppressed request owes.
+/// suppressed request owes. Returns what the application must hear about, for the caller
+/// to [`apply`].
 ///
-/// A free function rather than a method because `response` borrows the server's store.
-/// Returns what the application must hear about, for the caller to [`apply`].
-///
-/// A final response refused under ``UDSS_LLR_0061`` or ``UDSS_LLR_0062`` is waited out
-/// and resubmitted once. The first is reachable because [`select2`] lets the handler win
-/// a tie, so a handler can finish after a 0x78 was accepted and before that 0x78's
-/// `DataConf` was drained; the second wherever every association is still awaiting a
-/// confirmation. A refusal for any other cause loses the response. The tester has had
-/// at most a 0x78, and the service stays in progress until its timer runs out. That is
-/// a milestone-1 limit; nothing retries it.
+/// A final response refused under ``UDSS_LLR_0061`` (the 0x78's `DataConf` not yet
+/// drained) or ``UDSS_LLR_0062`` (every association awaiting a confirmation) is waited
+/// out and resubmitted once. A refusal for any other cause loses the response: the tester
+/// has had at most a 0x78, and the service stays in progress until its timer runs out.
 async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
@@ -961,8 +885,7 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     let now = transport.now();
     let reaction =
         final_response(session, now, serving.reply_to, response, selection(effect));
-    // milestone-1 limit: an `Err` at any `?` below drops what was recorded; see
-    // `Server::step`'s doc.
+    // An `Err` at any `?` below drops what was recorded; see `Server::step`'s doc.
     let mut d = drain(reaction, transport, pending, serving.leaving).await?;
     let mut deferred = d.deferred;
     let awaited = match d.rejected {
@@ -1001,9 +924,8 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
                 });
             }
         }
-        // UDSSVC_ARCH_0040 — a milestone-1 limit: a final response refused for any
-        // cause but an outstanding or unavailable association (or refused again after
-        // waiting one out) is lost, with no retry. See `answer`'s doc.
+        // UDSSVC_ARCH_0040: a final response refused for any other cause, or refused
+        // again after waiting one out, is lost. See `answer`'s doc.
         Some(_refused) => {}
     }
     Ok(deferred)
@@ -1076,21 +998,16 @@ enum Awaited {
 }
 
 /// Wait for a transmission outstanding to be confirmed, so the final response
-/// ``UDSS_LLR_0061`` or ``UDSS_LLR_0062`` refused can be resubmitted.
-///
-/// Each event takes the path it takes mid-handler: an overrun due by its timestamp is
-/// answered first ([`overrun_at`]), a `DataConf` then reaches `t_data_conf`, and a
-/// message arriving is bypassed or refused as in [`serve`]. A 0x78 refused here is not
-/// owed: the final response the awaited confirmation frees the way for supersedes it.
+/// ``UDSS_LLR_0061`` or ``UDSS_LLR_0062`` refused can be resubmitted. Each event takes
+/// the path it takes mid-handler: an overrun due by its timestamp is answered first
+/// ([`overrun_at`]), a `DataConf` reaches `t_data_conf`, and a message arriving is
+/// bypassed or refused as in [`serve`]. A 0x78 refused here is not owed: the final
+/// response supersedes it.
 ///
 /// Returns what the drains recorded once the awaited `DataConf` has been drained and
-/// accepted — `serving.reply_to`'s for [`Awaited::Reply`], any for [`Awaited::Any`] — or
-/// `None` where the requesting client's link closed first.
-///
-/// **Unbounded** (milestone-1 limit, ``UDSSVC_ARCH_0040``). The wait ends on the awaited
-/// `DataConf`, that client's `Closed`, or a transport error, and on nothing else: a
-/// transport that never confirms stalls the driver here. That is the assumption of use
-/// [`UdsTransport`] states, a `DataConf` for every accepted `t_data_req`.
+/// accepted, or `None` where the requesting client's link closed first. The wait is
+/// unbounded (``UDSSVC_ARCH_0040``): it ends on the awaited `DataConf`, that client's
+/// `Closed`, or a transport error, which [`UdsTransport`]'s obligations make certain.
 async fn await_confirmation<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
@@ -1108,8 +1025,8 @@ async fn await_confirmation<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         {
             return Ok(None);
         }
-        // The handler's outcome is already settled, so whether a 0x78 goes out no
-        // longer reaches `settle`; only what the drains recorded is kept.
+        // The handler's outcome is already settled, so whether a 0x78 goes out does
+        // not reach `settle`; only what the drains recorded is kept.
         let now = transport.now();
         let o = overrun_at(session, transport, pending, now, serving).await?;
         deferred = deferred.merge(o.deferred);
@@ -1183,7 +1100,7 @@ async fn overrun_at<T: UdsTransport, const PEERS: usize>(
 
 /// Answer `requestCorrectlyReceivedResponsePending` (0x78) if one has come due.
 ///
-/// ``UDSSVC_ARCH_0031``/``0032`` — the deadline passing is not itself the overrun: the
+/// ``UDSSVC_ARCH_0031``/``0032``: the deadline passing is not itself the overrun; the
 /// session layer is ticked and ``UDSS_LLR_0117``'s `ResponseOverrun` is the output that
 /// says a 0x78 is owed. It is an ordinary transmission, and whether it was *accepted* is
 /// the verdict ``UDSSVC_ARCH_0009`` rule 3 reads.
@@ -1213,8 +1130,8 @@ async fn answer_overrun<T: UdsTransport, const PEERS: usize>(
 /// Submit the 0x78 for `serving`.
 ///
 /// The overrun that makes it due is reported once, so a 0x78 refused because the
-/// client's addressing awaits a confirmation — a busy refusal's, or a final response's
-/// to another request — is reported `owed`, for the caller to resubmit once a
+/// client's addressing awaits a confirmation (a busy refusal's, or a final response's
+/// to another request) is reported `owed`, for the caller to resubmit once a
 /// confirmation has freed it.
 async fn submit_pending<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
@@ -1297,9 +1214,7 @@ mod tests {
     }
 
     /// A confirmation recorded mid-handler and then overtaken by a `tS3_Server` expiry
-    /// is dropped. `apply` runs the timeout first, so keeping it would leave the
-    /// application in the confirmed session while the session layer is in the default
-    /// one.
+    /// is dropped.
     #[test]
     fn a_later_timeout_clears_an_earlier_confirmation() {
         let merged = confirm(S::ExtendedDiagnosticSession).merge(TIMEOUT);

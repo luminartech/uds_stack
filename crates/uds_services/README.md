@@ -14,10 +14,10 @@ understands UDS: everything below it deals in bytes. It depends on
 [`uds_protocol`](https://crates.io/crates/uds_protocol) (ISO 14229-1 messages)
 and [`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)
 (ISO 14229-2 session timing), and drives the latter by value. Everything above
-it is application code; everything it calls through is a transport binding —
-today that means
+it is application code; everything it calls through is a transport binding,
+such as
 [`uds_on_ip`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_on_ip)
-(ISO 14229-5) — that implements the `UdsTransport` trait this crate declares.
+(ISO 14229-5), that implements the `UdsTransport` trait this crate declares.
 This crate never depends on a binding: the Cargo edge runs the other way.
 
 ## Status
@@ -30,47 +30,40 @@ the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 that compares to the rest of the stack.
 
-The architecture is authored as a sphinx-needs set under
+The architecture is a sphinx-needs set under
 [`docs/architecture/uds_services/`](https://github.com/luminartech/uds_stack/tree/main/docs/architecture/uds_services)
-at the workspace root — not inside this crate's own directory — and is meant to
-be read rendered, at
-<https://luminartech.github.io/uds_stack/architecture/uds_services/index.html>. It carries
-forty-five architecture elements (`UDSSVC_ARCH_####`), each recording either
-the clause that forces it or the reasoning behind choosing it, and an
+at the workspace root, rendered at
+<https://luminartech.github.io/uds_stack/architecture/uds_services/index.html>.
+Each architecture element (`UDSSVC_ARCH_####`) records the clause that forces
+it or the reasoning behind choosing it, and an
 [open questions](https://github.com/luminartech/uds_stack/blob/main/docs/architecture/uds_services/open-questions.rst)
-page for what is still unsettled. That set is provisional in the same sense as
-every crate's: it supersedes any `ARCHITECTURE.md`, and nothing here carries
-one.
+page holds what is still unsettled.
 
 ## What this is
 
 The point where an application meets a diagnostic stack, in both directions: the interface
 by which a server integrates the stack, and the set of requests available to a client
-application. Everything below it deals in bytes — this is the last layer that understands
+application. Everything below it deals in bytes; this is the last layer that understands
 UDS.
 
-Its scope is ISO 14229-1's *behaviour*. That document is split in two across the stack:
-[`uds_protocol`](https://crates.io/crates/uds_protocol) owns the format — the bits,
-the bytes, and which messages are valid — and this crate owns everything else in it.
-Clause 8.7, the server response implementation rules, is the densest part of that scope
-and the reason the crate exists, but it is not the boundary.
+Its scope is ISO 14229-1's *behavior*. That document is split in two across the stack:
+[`uds_protocol`](https://crates.io/crates/uds_protocol) owns the format, the bits,
+the bytes, and which messages are valid, and this crate owns everything else in it,
+clause 8.7's server response implementation rules above all.
 
 ### The server side
 
-A UDS server has to do more than answer the requests it supports. ISO 14229-1
-clause 8.7 specifies the whole validation sequence — which checks run in which
-order, which negative response code each failure produces, and when the correct
-answer is no response at all. Those rules are easy to get subtly wrong, and the
-mistakes are invisible when testing against a cooperative client.
-
-This crate centralises them, so an application defines its identifiers,
-implements the services it supports, and everything else follows:
+ISO 14229-1 clause 8.7 specifies the whole validation sequence: which checks
+run in which order, which negative response code each failure produces, and
+when the correct answer is no response at all. This crate runs it, so an
+application defines its identifiers, implements the services it supports, and
+everything else follows:
 
 - A service that is not implemented answers `serviceNotSupported`.
 - An identifier outside the supported set answers `requestOutOfRange`.
 - Session and security preconditions produce the right in-session codes.
 - A functionally addressed request that the server does not support gets
-  **silence**, not a negative response — because the same request reached every
+  **silence**, not a negative response, because the same request reached every
   server on the bus.
 
 Identifiers are the application's own, so adding one breaks the application's
@@ -82,26 +75,23 @@ A client application names a service and its parameters in the same identifier
 vocabulary its server handlers use, and gets back a typed result. It never
 assembles request bytes or parses responses.
 
-That includes interpreting negative responses, which the layer below explicitly
-declines: `uds_on_ip`'s transport has no view of a negative response at all — it
-maps bytes onto `DoIP`, and interpreting what came back belongs to this layer.
+That includes interpreting negative responses: a transport binding maps bytes
+onto its protocol and has no view of a negative response at all.
 
-One identifier catalogue, both roles. A vehicle programme that builds an ECU and
+One identifier catalog, both roles. A vehicle program that builds an ECU and
 a tester from the same definitions gets a compiler error when only one of them
 was updated, rather than a mismatch found on a bench.
 
-## What this is not
+## Scope
 
-Not a codec — messages are [`uds_protocol`](https://crates.io/crates/uds_protocol).
-Not a session layer — session timing is
-[`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session),
-though deciding to send a response-pending is this crate's (ISO 14229-2 makes it turn on
-whether the server supports the service). Not a
-connection manager: the diagnostic conversation is portable across transports,
-connection setup is not, and no API here pretends otherwise. Not
-transport-aware: a handler that knows how to fetch a data identifier has nothing
-to say about IP, so the transport binding is an optional feature and the same
-server works over DoIP or CAN.
+Messages are [`uds_protocol`](https://crates.io/crates/uds_protocol)'s to encode
+and decode, and session timing is
+[`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)'s.
+Deciding to send a response-pending is this crate's, because ISO 14229-2 makes it
+turn on whether the server supports the service. Connection setup is the
+binding's: the diagnostic conversation is portable across transports, and
+connection setup is not. The application names the binding, so a handler that
+fetches a data identifier is written once for every transport.
 
 ## Layering
 
@@ -121,18 +111,16 @@ server works over DoIP or CAN.
 ```
 
 One crate per ISO document, so "does this belong here?" is answered by asking
-which document specifies the behaviour. ISO 14229-1 is the single exception —
-too large for that rule to settle, so `uds_protocol` takes its format and this
-crate takes the rest. `uds_on_can` is drawn to show the shape the design buys,
-not a crate that exists in this workspace yet.
+which document specifies the behavior. ISO 14229-1 is the single exception:
+`uds_protocol` takes its format and this crate takes the rest. `uds_on_can` is
+drawn to show the shape the design admits, not a crate that exists in this
+workspace.
 
 ## Design constraints
 
-`no_std` and allocation-free. Responses are written into a caller-supplied sink
-rather than returned as a `Vec`, and no public type carries a `Vec` or a
-`String`. This is designed in rather than deferred: alloc-freedom cannot be
-retrofitted, because the signatures that make an API alloc-free are the ones
-callers depend on.
+`no_std` and allocation-free. Responses are written into a sink this crate
+owns rather than returned as a `Vec`, and no public type carries a `Vec` or a
+`String`.
 
 There is no feature table: this crate has no `[features]` in `Cargo.toml`. It
 is `no_std` and allocation-free in every configuration, with no cfg anywhere in
@@ -140,7 +128,7 @@ is `no_std` and allocation-free in every configuration, with no cfg anywhere in
 
 ## Relationship to the standards
 
-Neither licence granted here conveys any right in the ISO standards this crate
+Neither license granted here conveys any right in the ISO standards this crate
 implements or cites, which remain ISO's. No standard's text is reproduced. See
 ["Relationship to the standards"](https://github.com/luminartech/uds_stack#relationship-to-the-standards)
 in the workspace README for the fuller statement that applies to every crate in
@@ -148,12 +136,12 @@ this stack.
 
 ## Contributing
 
-Pull requests, bug reports and questions are welcome — see
+Pull requests, bug reports and questions are welcome; see
 [`CONTRIBUTING.md`](https://github.com/luminartech/uds_stack/blob/main/CONTRIBUTING.md).
 Security reports go through GitHub's private vulnerability reporting; see
 [`SECURITY.md`](https://github.com/luminartech/uds_stack/blob/main/SECURITY.md).
 
-## Licence
+## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
 at your option. Both files are the workspace's, shared by every crate here.

@@ -1,13 +1,13 @@
-//! Data transmission — ISO 14229-1:2020 clause 11.
+//! Data transmission, ISO 14229-1:2020 clause 11.
 
 use crate::{Access, DataIdentifier, ResponseSink};
 use uds_protocol::NegativeResponseCode;
 
 /// `ReadDataByIdentifier` (0x22).
 ///
-/// ``UDSSVC_ARCH_0008`` — a request naming several identifiers of which some are
-/// supported yields a **positive** response carrying the supported ones, which is why the
-/// response buffer must hold the worst case rather than one record.
+/// ``UDSSVC_ARCH_0008``: a request naming several identifiers of which some are
+/// supported yields a **positive** response carrying the supported ones, so the response
+/// buffer holds the worst case rather than one record.
 pub trait ReadDataByIdentifier {
     /// This application's data identifier enumeration.
     type Did: DataIdentifier;
@@ -42,7 +42,7 @@ pub trait ReadDataByIdentifier {
 
 /// `WriteDataByIdentifier` (0x2E).
 ///
-/// ISO 14229-1:2020 clause 11.7, Figure 26 — the pipeline settles, in order: a request
+/// ISO 14229-1:2020 clause 11.7, Figure 26: the pipeline settles, in order, a request
 /// with no data record (0x13), an identifier [`DataIdentifier::from_u16`] rejects or
 /// [`Self::access`] does not admit in the active session (0x31), a record
 /// [`DataIdentifier::split_record`] finds short or followed by more bytes (0x13), an
@@ -52,14 +52,13 @@ pub trait WriteDataByIdentifier {
     /// This application's data identifier enumeration.
     type Did: DataIdentifier;
 
-    /// ``UDSSVC_ARCH_0033`` — a write reaching non-volatile memory usually cannot accept
-    /// further requests while it completes.
+    /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
     /// Where `did` may be written and which levels unlock writing it, or `None` where it
     /// is not writable at all.
     ///
-    /// Figure 26 — `None`, or an active session outside [`Access::sessions`], settles the
+    /// Figure 26: `None`, or an active session outside [`Access::sessions`], settles the
     /// request `requestOutOfRange` (0x31), as clause 11.7.4 has it for a read-only
     /// identifier, before the record's length is checked; none of [`Access::levels`]
     /// unlocked settles it `securityAccessDenied` (0x33), after the length is checked and

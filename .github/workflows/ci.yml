@@ -127,6 +127,7 @@ jobs:
           --strict crates/simple_doip
           --strict crates/uds_session
           --strict crates/uds_protocol
+          --strict crates/uds_services
 
   # ===================================================================================
   # Fuzz Tests (hand-rolled: the reusable workflow's fuzz-tests job cannot reach these)

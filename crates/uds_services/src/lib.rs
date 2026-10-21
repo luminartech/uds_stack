@@ -5,66 +5,55 @@
 //! set of requests available to a client application. Everything below deals
 //! in bytes; this is the last layer that understands UDS.
 //!
-//! Its scope is ISO 14229-1:2020's *behaviour*: `uds_protocol` owns that
-//! document's format — the bits, the bytes, and which messages are valid — and
-//! this crate owns everything else in it. Clause 8.7, the server response
-//! implementation rules, is the densest part of that and the reason the crate
-//! exists, but it is not the boundary. A table, figure, clause or requirement
+//! Its scope is ISO 14229-1:2020's *behavior*: `uds_protocol` owns that
+//! document's format, the bits, the bytes, and which messages are valid, and
+//! this crate owns everything else in it, clause 8.7's server response
+//! implementation rules above all. A table, figure, clause or requirement
 //! cited in this crate with no document named is ISO 14229-1:2020's, and any
 //! other document is named where it is cited.
 //!
-//! A UDS server must do more than answer the requests it supports. Clause 8.7
-//! specifies the whole validation sequence: which checks run in which order,
-//! which negative response code each failure produces, and when the correct
-//! answer is no response at all. This crate centralises those rules so an
-//! application defines its identifiers, implements the services it supports,
-//! and the rest follows.
+//! Clause 8.7 specifies the whole validation sequence: which checks run in
+//! which order, which negative response code each failure produces, and when
+//! the correct answer is no response at all. This crate runs that sequence, so
+//! an application defines its identifiers and implements the services it
+//! supports, and the rest follows.
 //!
 //! A client application names services in that same identifier vocabulary and
 //! gets its results back in it: a `ReadDataByIdentifier` response arrives as the
 //! identifier/record pairs the application declared, not as the bytes the server
-//! concatenated. Negative responses come back too — the layer below explicitly
-//! declines to interpret them, and this is the layer that does.
+//! concatenated. A negative response is interpreted here, by the one layer that
+//! reads a response code.
 //!
 //! # Status
 //!
-//! The server role runs end to end over any `UdsTransport` (see
-//! `tests/end_to_end.rs`), and every service trait has a pipeline stage (see
-//! `tests/stages.rs`); `DataTransfer` stages the download, and its upload and file
-//! transfer are not supported (0x11). The client role
-//! runs end to end over any `ClientTransport`, a `UdsTransport` it can close (see
-//! `tests/client.rs`).
-//! `tests/composition.rs` assembles a server against the whole surface.
+//! The server role runs end to end over any [`UdsTransport`], and every
+//! service trait has a pipeline stage; `DataTransfer` stages the download, and
+//! its upload and file transfer are not supported (0x11). The client role runs
+//! end to end over any [`ClientTransport`], a `UdsTransport` it can close.
 //!
 //! # Scope
 //!
-//! ISO 14229-1's behaviour is what is implemented; being the stack's
-//! integration surface is what the crate is. Message encode/decode is
-//! `uds_protocol`; session timing is `uds_session`; framing and transport are
-//! the binding's. Deciding to
-//! answer `requestCorrectlyReceivedResponsePending` (0x78) is this crate's,
-//! because ISO 14229-2 makes that decision turn on whether the server supports
-//! the service; *when* one is due remains the session layer's.
-//!
-//! A handler that knows how to fetch a data identifier has nothing to say
-//! about IP. A binding is never a feature of this crate — it implements
-//! [`UdsTransport`], and the application names it (`UDSSVC_ARCH_0003`).
+//! Message encode/decode is `uds_protocol`'s; session timing is `uds_session`'s;
+//! framing and transport are the binding's. Deciding to answer
+//! `requestCorrectlyReceivedResponsePending` (0x78) is this crate's, because
+//! ISO 14229-2 makes that decision turn on whether the server supports the
+//! service; *when* one is due is the session layer's. A binding is never a
+//! feature of this crate: it implements [`UdsTransport`], and the application
+//! names it (`UDSSVC_ARCH_0003`).
 //!
 //! # Design constraints
 //!
 //! `no_std` and allocation-free. A handler writes its response into a
-//! [`ResponseSink`] this crate owns rather than returning a `Vec`,
-//! and no public type carries a `Vec` or a `String`. This is designed in
-//! rather than deferred: the signatures that make an API alloc-free are the
-//! ones callers depend on, so it cannot be retrofitted later.
+//! [`ResponseSink`] this crate owns rather than returning a `Vec`, and no
+//! public type carries a `Vec` or a `String`.
 //!
 //! # Exhaustive matching
 //!
 //! An enumeration is exhaustive only where ISO 14229 fixes the set it mirrors, such as
 //! [`SessionTransition`]'s four transitions of clause 10.2 Figure 7, [`KeyVerdict`]'s
 //! Annex I key outcomes, or [`Repeats`]'s ISO 14229-2:2021 Table 9 range. Every other
-//! one — an error, an outcome of a call, an event at the transport seam, a set this
-//! crate chose — is `#[non_exhaustive]`, because it can grow without a new edition of
+//! one (an error, an outcome of a call, an event at the transport seam, a set this
+//! crate chose) is `#[non_exhaustive]`, because it can grow without a new edition of
 //! the standard.
 
 #![no_std]
@@ -100,18 +89,14 @@ pub use state::{ProtocolState, State};
 
 /// The write vocabulary a handler needs to use a [`ResponseSink`].
 ///
-/// [`Sink`] is re-exported because `write_all` is one of its methods: without the trait
-/// in scope a handler cannot write a byte, and importing it meant declaring a dependency
-/// on a crate the application otherwise never names.
+/// `write_all` is a [`Sink`] method, so the trait has to be in scope for a handler to
+/// write a byte. `uds_protocol`'s types [`Encode`] into a [`Sink`], and [`ResponseSink`]
+/// is one, so a handler writes `DtcRecord::new(0xC0, 0x01, 0x23).encode(out)` rather than
+/// assembling the bytes by hand.
 ///
-/// [`Encode`] is the reason that matters beyond convenience. `uds_protocol`'s types
-/// encode *into* a [`Sink`], and [`ResponseSink`] is one — so a handler writes
-/// `DtcRecord::new(0xC0, 0x01, 0x23).encode(out)` rather than assembling the bytes by
-/// hand, and the length cannot disagree with the value.
-///
-/// A handler discards the write's `Result`. A refused write is recorded by the sink, and
-/// the pipeline answers `responseTooLong` (0x14) in its place, so it needs no handling;
-/// there is no `From` conversion to a [`NegativeResponseCode`] for `?` to use either.
+/// A handler discards the write's `Result`: a refused write is recorded by the sink, and
+/// the pipeline answers `responseTooLong` (0x14) in its place. There is no `From`
+/// conversion to a [`NegativeResponseCode`] for `?` to use.
 ///
 /// ```
 /// use uds_services::{
@@ -155,9 +140,8 @@ pub use transport::{
 
 /// The keep-alive modes a client is built in, from `uds_session`.
 ///
-/// Re-exported for the reason the protocol vocabulary above is: [`crate::uds_client`]'s
-/// `keep_alive = ..` names one, and an application should not take a dependency on
-/// `uds_session` to write it.
+/// Re-exported so that [`crate::uds_client`]'s `keep_alive = ..` can name one without the
+/// application depending on `uds_session`.
 pub use uds_session::{FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive};
 
 mod select;
@@ -179,10 +163,8 @@ pub use services::{Received, Unsettled};
 /// The protocol vocabulary this crate's handler signatures are written in.
 ///
 /// Re-exported so an application implementing a service trait names one crate, not two.
-/// Every one of these is `uds_protocol`'s — this crate defines no sub-function, no reset
-/// type and no negative response code (``UDSSVC_ARCH_0002``). They are re-exported rather
-/// than re-modelled because a parallel enumeration here would be a second place for the
-/// same clause to be written down, and the two would drift.
+/// Every one of these is `uds_protocol`'s: this crate defines no sub-function, no reset
+/// type and no negative response code (``UDSSVC_ARCH_0002``).
 ///
 /// Each sub-function type is range-checked to `0x00`-`0x7F` on construction, so none of
 /// them can carry `suppressPosRspMsgIndication`: that bit is the pipeline's and never
