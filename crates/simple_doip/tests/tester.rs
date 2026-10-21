@@ -166,7 +166,7 @@ fn an_alive_check_during_activation_is_answered() {
 }
 
 /// `Tester::connect`'s contract: a message that is neither a routing activation response
-/// nor a header negative acknowledgement does not answer the request, and is passed over.
+/// nor a header negative acknowledgment does not answer the request, and is passed over.
 #[test]
 fn other_messages_during_activation_are_passed_over() {
     let _clock = clock();
@@ -509,7 +509,7 @@ fn a_diagnostic_message_too_short_for_its_addresses_is_ignored() {
 /// ISO 14229-5:2022 REQ 7.7 defines payload type `0x8004`, which ISO 13400-2:2019 Table 17
 /// reserves: a valid message this crate does not model is reported, not dropped.
 #[test]
-fn payload_type_0x8004_is_unmodelled() {
+fn payload_type_0x8004_is_unmodeled() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
@@ -650,7 +650,7 @@ fn the_entity_closing_is_closed_once_until_a_reconnect() {
 }
 
 /// ISO 13400-2:2019 Table 19: a header out of sync cannot be skipped. The tester, which
-/// must not answer it with a negative acknowledgement (REQ 7.DoIP-040), closes.
+/// must not answer it with a negative acknowledgment (REQ 7.DoIP-040), closes.
 #[test]
 fn a_header_out_of_sync_closes_the_connection() {
     let _clock = clock();
@@ -778,7 +778,7 @@ fn a_request_is_written_as_one_diagnostic_message() {
 }
 
 /// ISO 13400-2:2019 Table 23, and ISO 14229-5:2022 clause 11: the positive
-/// acknowledgement is the request's `DoIP_Data.confirm`, with the request's addressing.
+/// acknowledgment is the request's `DoIP_Data.confirm`, with the request's addressing.
 #[test]
 fn a_positive_ack_confirms_ok() {
     let _clock = clock();
@@ -795,7 +795,7 @@ fn a_positive_ack_confirms_ok() {
 }
 
 /// `Tester`'s contract: a diagnostic message is indicated when it arrives, so a response
-/// the entity sends before its acknowledgement is not lost, and the acknowledgement still
+/// the entity sends before its acknowledgment is not lost, and the acknowledgment still
 /// confirms the request.
 #[test]
 fn a_response_before_its_ack_is_indicated_and_the_ack_confirms() {
@@ -824,7 +824,7 @@ fn a_response_before_its_ack_is_indicated_and_the_ack_confirms() {
     );
 }
 
-/// ISO 13400-2:2019 Table 26 against 8.2.5: each negative acknowledgement code confirms
+/// ISO 13400-2:2019 Table 26 against 8.2.5: each negative acknowledgment code confirms
 /// with the `DoIP_Result` that names it, and `DoIP_ERROR` where none does.
 #[test]
 fn every_nack_code_confirms_its_result() {
@@ -854,7 +854,7 @@ fn every_nack_code_confirms_its_result() {
 }
 
 /// ISO 13400-2:2019 Table 19 and REQ 7.DoIP-040: a generic header negative
-/// acknowledgement tells the tester what was wrong with the message it just sent.
+/// acknowledgment tells the tester what was wrong with the message it just sent.
 #[test]
 fn a_header_nack_confirms_the_outstanding_request() {
     let _clock = clock();
@@ -880,8 +880,8 @@ fn a_header_nack_confirms_the_outstanding_request() {
     }
 }
 
-/// ISO 13400-2:2019 Table 12: `A_DoIP_Diagnostic_Message` — after 2 s without an
-/// acknowledgement the request is considered lost, which is `DoIP_TIMEOUT_A`.
+/// ISO 13400-2:2019 Table 12: `A_DoIP_Diagnostic_Message`. After 2 s without an
+/// acknowledgment the request is considered lost, which is `DoIP_TIMEOUT_A`.
 #[test]
 fn no_ack_within_a_doip_diagnostic_message_is_timeout_a() {
     let _clock = clock();
@@ -901,7 +901,7 @@ fn no_ack_within_a_doip_diagnostic_message_is_timeout_a() {
     );
 }
 
-/// An acknowledgement timeout other than Table 12's applies from the next request.
+/// An acknowledgment timeout other than Table 12's applies from the next request.
 #[test]
 fn a_shorter_ack_timeout_is_timeout_a_sooner() {
     let _clock = clock();
@@ -922,7 +922,7 @@ fn a_shorter_ack_timeout_is_timeout_a_sooner() {
     );
 }
 
-/// An acknowledgement timeout past the clock's longest is the clock's longest: the
+/// An acknowledgment timeout past the clock's longest is the clock's longest: the
 /// request waits.
 #[test]
 fn an_ack_timeout_past_the_clocks_longest_waits() {
@@ -954,7 +954,7 @@ fn a_reconnect_backoff_past_the_clocks_longest_waits() {
     assert_eq!(stack.connects(), 1, "still backing off");
 }
 
-/// Table 12: `A_DoIP_Diagnostic_Message` is the whole 2 s, so an acknowledgement late in
+/// Table 12: `A_DoIP_Diagnostic_Message` is the whole 2 s, so an acknowledgment late in
 /// it still confirms the request.
 #[test]
 fn an_ack_late_in_a_doip_diagnostic_message_confirms_ok() {
@@ -1021,7 +1021,7 @@ fn an_ack_for_another_tester_is_ignored() {
     );
 }
 
-/// ISO 13400-2:2019 Table 23 gives the acknowledgement's source as the request's
+/// ISO 13400-2:2019 Table 23 gives the acknowledgment's source as the request's
 /// intended receiver, which for a functional request is no single address; the
 /// tester does not hold it to the requested target.
 #[test]
@@ -1047,7 +1047,7 @@ fn a_functional_requests_ack_from_any_source_confirms() {
 }
 
 #[test]
-fn an_acknowledgement_with_nothing_outstanding_is_ignored() {
+fn an_acknowledgment_with_nothing_outstanding_is_ignored() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
@@ -1375,8 +1375,8 @@ fn cancelled_while_answering_an_alive_check_writes_the_answer_once() {
     );
 }
 
-/// An alive check between a request and its acknowledgement is answered
-/// once, and the acknowledgement still confirms the request.
+/// An alive check between a request and its acknowledgment is answered
+/// once, and the acknowledgment still confirms the request.
 #[test]
 fn an_alive_check_between_a_request_and_its_ack_is_answered_once() {
     let _clock = clock();
@@ -1406,7 +1406,7 @@ fn an_alive_check_between_a_request_and_its_ack_is_answered_once() {
 /// A message longer than the tester's buffer, dropped anywhere in it,
 /// still leaves the next message whole.
 #[test]
-fn a_cancelled_oversized_message_leaves_the_stream_in_sync() {
+fn a_canceled_oversized_message_leaves_the_stream_in_sync() {
     let _clock = clock();
     let long: Vec<u8> = (0..100).collect();
     drop_at_every_poll(
@@ -1439,7 +1439,7 @@ fn a_cancelled_oversized_message_leaves_the_stream_in_sync() {
     );
 }
 
-/// The acknowledgement timer lives in the tester, not the future: dropping `next_event`
+/// The acknowledgment timer lives in the tester, not the future: dropping `next_event`
 /// while it waits neither restarts nor loses `A_DoIP_Diagnostic_Message`.
 #[test]
 fn cancelled_while_waiting_for_the_ack_keeps_its_deadline() {
@@ -1586,9 +1586,9 @@ fn a_dropped_reconnect_leaves_the_tester_closed() {
     assert_quiet_until_the_deadline(&mut tester);
 }
 
-/// Issue #17 item 2: a socket dropped mid-activation may still hold the tester's address
-/// at the entity, so the next reconnect backs off from the drop, not from when the
-/// dropped socket opened.
+/// A socket dropped mid-activation may still hold the tester's address at the entity,
+/// so the next reconnect backs off from the drop, not from when the dropped socket
+/// opened.
 #[test]
 fn a_reconnect_dropped_mid_activation_still_backs_off_the_next() {
     let _clock = clock();
@@ -1630,7 +1630,7 @@ fn sent(stack: &MockStack, tester: &mut ActiveTester<'_>) {
 
 /// ISO 13400-2:2019 Table 12: once `A_DoIP_Diagnostic_Message` has passed, the request
 /// is lost, however late the caller comes back. The tester gives the
-/// connection up, so neither its acknowledgement nor its response can reach a later
+/// connection up, so neither its acknowledgment nor its response can reach a later
 /// request.
 #[test]
 fn timeout_a_gives_up_the_connection() {
@@ -1692,7 +1692,7 @@ fn timeout_a_is_reported_before_traffic_that_follows_it() {
     );
 }
 
-/// ISO 13400-2:2019 Table 23: a physical request's acknowledgement comes from the target
+/// ISO 13400-2:2019 Table 23: a physical request's acknowledgment comes from the target
 /// it was sent to; one from elsewhere is not its confirm.
 #[test]
 fn a_physical_requests_ack_from_another_source_is_ignored() {
@@ -1748,7 +1748,7 @@ fn a_request_while_a_confirm_is_owed_is_pending() {
     );
 }
 
-/// The caller's deadline is kept while an acknowledgement is awaited, even though
+/// The caller's deadline is kept while an acknowledgment is awaited, even though
 /// `A_DoIP_Diagnostic_Message` ends later.
 #[test]
 fn the_callers_deadline_comes_first_while_an_ack_is_awaited() {
@@ -1984,8 +1984,8 @@ fn messages_of_the_wrong_length_for_their_type_are_ignored() {
     );
 }
 
-/// ISO 13400-2:2019 Table 24: `0x00` is the only positive acknowledgement code. One with
-/// a reserved code is still the entity's acknowledgement, confirmed as the error 8.2.5
+/// ISO 13400-2:2019 Table 24: `0x00` is the only positive acknowledgment code. One with
+/// a reserved code is still the entity's acknowledgment, confirmed as the error 8.2.5
 /// gives what no other result names, as a reserved negative code is.
 #[test]
 fn a_positive_ack_with_a_reserved_code_confirms_error() {
@@ -2194,7 +2194,7 @@ fn an_activation_response_in_error_fails_at_once() {
 /// buffer or the caller's, is reported truncated with its whole length, and the stream
 /// stays in sync.
 #[test]
-fn an_unmodelled_message_too_long_to_hold_is_reported_truncated() {
+fn an_unmodeled_message_too_long_to_hold_is_reported_truncated() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
@@ -2226,7 +2226,7 @@ fn an_unmodelled_message_too_long_to_hold_is_reported_truncated() {
 
 /// ISO 13400-2:2019 REQ 7.DoIP-040: a generic header NACK reports an error in a message
 /// the tester sent, which once it has answered an alive check need not be its request;
-/// the request then waits for its own acknowledgement.
+/// the request then waits for its own acknowledgment.
 #[test]
 fn a_header_nack_after_an_alive_check_answer_is_not_the_requests() {
     let _clock = clock();
@@ -2405,9 +2405,9 @@ fn an_alive_check_is_answered_before_the_deadline_is_reported() {
     assert_eq!(stack.latest().take_written(), alive_check_response());
 }
 
-// --- which acknowledgement is the request's --------------------------------------------
+// --- which acknowledgment is the request's --------------------------------------------
 
-/// An acknowledgement can only follow the request it acknowledges, so one read before
+/// An acknowledgment can only follow the request it acknowledges, so one read before
 /// the request's first byte was written is not the request's, even if the tester only
 /// takes it from its buffer afterwards.
 #[test]
@@ -2444,7 +2444,7 @@ fn a_header_nack_read_before_the_request_is_not_its() {
     );
 }
 
-/// The same for a positive acknowledgement.
+/// The same for a positive acknowledgment.
 #[test]
 fn an_ack_read_before_the_request_is_not_its() {
     let _clock = clock();
@@ -2885,9 +2885,9 @@ fn a_reconnect_stops_at_its_deadline_and_a_later_one_connects() {
     assert_eq!(stack.connects(), 2);
 }
 
-/// Issue #17 item 2: an entity holds the tester's address for a while after its socket
-/// closes and refuses a second activation for it meanwhile, so a reconnect gives the
-/// old connection up first, backs off, and only then connects.
+/// An entity holds the tester's address for a while after its socket closes and
+/// refuses a second activation for it meanwhile, so a reconnect gives the old
+/// connection up first, backs off, and only then connects.
 #[test]
 fn a_reconnect_drops_the_old_connection_then_backs_off_then_connects() {
     let _clock = clock();
@@ -2911,8 +2911,8 @@ fn a_reconnect_drops_the_old_connection_then_backs_off_then_connects() {
     assert_eq!(stack.connects(), 2);
 }
 
-/// An entity that frees a tester's address sooner, or later, than the sensor the default
-/// was measured on gets a back-off of its own.
+/// An entity that frees a tester's address sooner, or later, than the default allows
+/// for gets a back-off of its own.
 #[test]
 fn a_reconnect_backs_off_for_as_long_as_the_tester_was_given() {
     let _clock = clock();

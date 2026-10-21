@@ -103,7 +103,7 @@ pub struct VehicleIdentificationResponse {
     /// Whether the tester must take further action (e.g. routing activation with
     /// central security) before diagnostics can proceed.
     pub further_action: FurtherActionRequired,
-    /// Whether all entities have synchronised their VIN or GID, or `None` where the
+    /// Whether all entities have synchronized their VIN or GID, or `None` where the
     /// entity omits this optional field.
     pub vin_gid_sync_status: Option<VinGidSyncStatus>,
 }

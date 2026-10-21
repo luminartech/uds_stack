@@ -36,8 +36,8 @@ pub enum Frame {
     },
 }
 
-/// Codec for the `DoIP` messages, used to encode and decode messages from
-/// the TCP stream
+/// A `tokio-util` codec for `DoIP` on a TCP stream: decodes [`Frame`]s and encodes
+/// [`OwnedMessage`]s.
 #[derive(Debug)]
 pub struct MessageCodec {
     max_payload_length: u32,
@@ -155,10 +155,9 @@ impl Encoder<&OwnedMessage> for MessageCodec {
         dst: &mut BytesMut,
     ) -> Result<(), Self::Error> {
         let size = message.encoded_size()?;
-        // `automotive_wire_codec` ships no growable sink (see MIGRATION notes),
-        // and the orphan rule blocks a local `Sink for Vec<u8>`/`BytesMut` impl
-        // here. `size` is the exact byte count `encode` will write, so a slice
-        // sized to it is bounded and exact, not actually open-ended.
+        // `automotive_wire_codec` has no growable sink and the orphan rule bars one for
+        // `BytesMut` here, so the message is encoded into a slice of exactly `size`
+        // bytes, the count `encode` writes.
         let mut out = std::vec![0u8; size];
         let mut sink = automotive_wire_codec::SliceSink::new(&mut out);
         message.encode(&mut sink)?;
@@ -224,7 +223,7 @@ mod tests {
     /// A payload type this crate does not model reaches the caller with its bytes, and
     /// the frame after it still decodes.
     #[test]
-    fn an_unmodelled_payload_type_is_handed_over_undecoded() {
+    fn an_unmodeled_payload_type_is_handed_over_undecoded() {
         let mut codec = MessageCodec::new();
         let mut src = BytesMut::new();
         src.extend_from_slice(&UNSUPPORTED_FRAME);
@@ -236,7 +235,7 @@ mod tests {
             error,
         }) = codec.decode(&mut src).unwrap()
         else {
-            panic!("an unmodelled payload type must be handed over");
+            panic!("an unmodeled payload type must be handed over");
         };
         assert_eq!(header.payload_type(), PayloadType::from(0x9999));
         assert_eq!(&payload[..], &[0x07]);

@@ -1,28 +1,17 @@
 //! Property tests over the wire format: every byte-coded enum survives a byte
-//! conversion round trip, and every message type survives an encode/decode
-//! round trip, for arbitrary inputs rather than the handful of values a
-//! table-driven test happens to name.
+//! conversion round trip, and every message type an encode/decode round trip, for
+//! arbitrary inputs.
 //!
-//! These complement `golden_vectors.rs` rather than duplicating it. The golden
-//! vectors pin the exact bytes the crate emits, so they catch a change to the
-//! wire format; these check that `encode` and `decode` agree with each other
-//! across the whole input space, which catches a field written in one order and
-//! read in another. Neither finds a misreading of the standard that `encode`
-//! and `decode` share symmetrically -- that is what the golden fixtures are for.
-//!
-//! The cases here were written by `@gavin-dunlap-luminar` in `simple_doip#1`
-//! against the pre-`no_std` `write`/`read` API that 0.2.0 removed. The
-//! properties are his; the calls are rewritten for `Encode`/`Decode`.
+//! `golden_vectors.rs` pins the exact bytes the crate emits, which catches a change to
+//! the wire format; these check that `encode` and `decode` agree across the input
+//! space, which catches a field written in one order and read in another. Neither
+//! finds a misreading of the standard that both share.
 
-// Not under Miri. The suite passes there, but Miri interprets every generated case, and
-// it takes about 45 minutes against seconds natively. The lib tests cover the same
-// encode and decode paths under Miri.
+// Not under Miri, which interprets every generated case and takes the better part of
+// an hour over them. The lib tests cover the same encode and decode paths under Miri.
 #![cfg(not(miri))]
-// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
-// test that indexes a known-length golden vector reads better than one that does
-// not. The workspace lint standard in the root Cargo.toml reaches this target too --
-// an integration test is its own crate, so lib.rs cannot speak for it -- which is why
-// the relaxation is stated here rather than left implicit.
+// Test code: `unwrap`, `expect`, `panic` and indexing are the failure mechanism here.
+// An integration test is its own crate, so the lib's relaxation does not reach it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -68,7 +57,7 @@ fn encode_to<'buf>(
 }
 
 /// `byte -> enum -> byte` for every enum whose wire form is a single byte.
-/// A variant that discards the byte it did not recognise fails here.
+/// A variant that discards the byte it did not recognize fails here.
 macro_rules! byte_code_roundtrip {
     ($name:ident, $ty:ty) => {
         proptest! {

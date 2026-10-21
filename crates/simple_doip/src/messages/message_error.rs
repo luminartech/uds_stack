@@ -1,7 +1,7 @@
 //! Error taxonomy for the `no_std` decode/encode core.
 //!
-//! [`MessageError`] variants fall along **two orthogonal axes**, not one flat tier
-//! list:
+//! [`MessageError`]'s variants fall along two axes: the framing tier, and the layer
+//! that produces them.
 //!
 //! | Variant | Framing tier (per [`MessageError::is_framing_fatal`]) | Layer |
 //! |---|---|---|
@@ -115,11 +115,8 @@ impl MessageError {
     }
 }
 
-/// Required by `tokio_util::codec::Decoder` (its `Error` must be `From<std::io::Error>`).
-///
-/// Preserves the full [`std::io::Error`] (OS code and message) rather than flattening to
-/// a bare [`WriteError`](automotive_wire_codec::WriteError), so the tokio layer keeps
-/// actionable error detail.
+/// `tokio_util::codec::Decoder` requires its `Error` to be `From<std::io::Error>`. The
+/// error is kept whole, as [`MessageError::Std`].
 #[cfg(feature = "std")]
 impl From<std::io::Error> for MessageError {
     fn from(err: std::io::Error) -> Self {

@@ -3,9 +3,8 @@ use automotive_wire_codec::{read_u8, write_u8};
 use super::message_error::MessageError;
 use super::traits::{Decode, Encode};
 
-/// Negative Acknowledgement payload
-/// Only sent by the server except in development
-/// Indicates error condition in previously received message
+/// Generic `DoIP` header negative acknowledge code (Table 19): why a `DoIP` entity
+/// rejected the message it received, and what it then does with the socket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum NackCode {
@@ -70,7 +69,7 @@ impl From<NackCode> for u8 {
 impl<'a> Decode<'a> for NackCode {
     type Error = MessageError;
 
-    /// Deserialize a negative acknowledgement code from a byte slice
+    /// Decodes a negative acknowledge code from the front of `buf`.
     ///
     /// # Errors
     /// Returns [`MessageError::Incomplete`] if `buf` is too short
@@ -87,7 +86,7 @@ impl Encode for NackCode {
         Ok(1)
     }
 
-    /// Serialize this negative acknowledgement code into `writer`
+    /// Encodes this negative acknowledge code into `writer`.
     ///
     /// # Errors
     /// Returns [`MessageError::Io`] if the writer fails.

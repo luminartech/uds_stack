@@ -37,8 +37,8 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(message, reparsed, "round trip changed the message");
 
     // Encoding is idempotent: having normalized once, a second pass must
-    // produce the very same bytes. This is the property that would catch a
-    // field order asymmetry, now that the length no longer masks it.
+    // produce the very same bytes. This is the property that catches a field
+    // order asymmetry.
     let mut again = vec![0u8; reparsed.encoded_size().expect("size of a decoded message")];
     {
         let mut writer = SliceSink::new(&mut again);

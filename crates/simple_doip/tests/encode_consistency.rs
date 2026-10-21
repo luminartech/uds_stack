@@ -1,17 +1,10 @@
-//! `Message::encode` must never emit a frame `Message::decode` rejects, and
-//! `Message::decode` must reject a frame whose declared length its payload does not
-//! occupy exactly.
-//!
-//! Regression tests for the asymmetry the `fuzz_roundtrip` target found: a decoded
-//! `Message` once carried a declared length its payload did not occupy. `decode` now
-//! refuses such a frame with `InvalidPayloadLength` (REQ 7.DoIP-045), and `encode`
-//! derives the length from the payload.
+//! `Message::encode` never emits a frame `Message::decode` rejects, and `Message::decode`
+//! refuses a frame whose declared length its payload does not occupy exactly, with
+//! `InvalidPayloadLength` (REQ 7.DoIP-045); `encode` derives the length from the
+//! payload.
 
-// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
-// test that indexes a known-length golden vector reads better than one that does
-// not. The workspace lint standard in the root Cargo.toml reaches this target too --
-// an integration test is its own crate, so lib.rs cannot speak for it -- which is why
-// the relaxation is stated here rather than left implicit.
+// Test code: `unwrap`, `expect`, `panic` and indexing are the failure mechanism here.
+// An integration test is its own crate, so the lib's relaxation does not reach it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

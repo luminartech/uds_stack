@@ -38,14 +38,13 @@ const ROUTING_CONFIRMATION_RETRY: Duration = Duration::from_secs(2);
 /// How long [`TesterConnection::reconnect`] waits after a connection is lost before it
 /// connects again, unless [`Tester::with_reconnect_backoff`] says otherwise: an entity
 /// may hold the tester's address for a couple of seconds after the socket closes and
-/// refuse its routing activation meanwhile (`0x03`, ISO 13400-2:2019 Table 49). Three
-/// seconds is what a sensor that does so was measured to need.
+/// refuse its routing activation meanwhile (`0x03`, ISO 13400-2:2019 Table 49).
 pub const RECONNECT_BACKOFF: core::time::Duration = core::time::Duration::from_secs(3);
 
 /// The protocol version a tester puts in every message it sends: one ISO 13400-2:2019
 /// Table 16 defines for `DoIP` messages. Table 16's `0xFF` is for vehicle identification
 /// requests only, and an entity answers a version it does not implement with a generic
-/// header negative acknowledgement `0x00` (REQ 7.DoIP-041).
+/// header negative acknowledgment `0x00` (REQ 7.DoIP-041).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TesterVersion {
     /// ISO/DIS 13400-2:2010, `0x01`.
@@ -244,13 +243,10 @@ pub enum ConnectError<E> {
 ///   connection. While a request is being written, nothing is read.
 /// - **A new connection after a lost request.** A request not acknowledged within
 ///   `A_DoIP_Diagnostic_Message` ([`TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`] unless
-///   [`Tester::with_ack_timeout`]
-///   set another) is confirmed
-///   [`DoIpResult::TimeoutA`], and once any of it was written the connection is given
-///   up and [`ConnectionEvent::Closed`] follows. Past that timeout, Table 12 treats the
-///   request or its response as lost; keeping the connection would let the late
-///   acknowledgement or response be taken for a later request's, which a tester that
-///   carries one request at a time cannot tell apart.
+///   [`Tester::with_ack_timeout`] set another) is confirmed [`DoIpResult::TimeoutA`],
+///   and once any of it was written the connection is given up and
+///   [`ConnectionEvent::Closed`] follows, so that a late acknowledgment or response
+///   cannot be taken for a later request's.
 /// - **[`TesterConnection::close`] to end it.** It closes the connection gracefully;
 ///   dropping the tester leaves that to the backend.
 ///
@@ -361,7 +357,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// is asked again on the same connection every two seconds until it answers
     /// otherwise, as ISO 13400-2:2019 REQ 3.DoIP-063 allows. While it waits for an answer,
     /// alive checks are answered, and a message that is neither a routing activation
-    /// response nor a header negative acknowledgement is passed over.
+    /// response nor a header negative acknowledgment is passed over.
     ///
     /// # Cancel safety
     ///
@@ -384,7 +380,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// - [`ConnectError::ActivationAnsweredForAnotherTester`],
     ///   [`ConnectError::HeaderNack`], [`ConnectError::Closed`] or
     ///   [`ConnectError::InvalidMessage`] where the entity answers with a response for
-    ///   another tester, a header negative acknowledgement, its close, or a malformed
+    ///   another tester, a header negative acknowledgment, its close, or a malformed
     ///   response.
     pub async fn connect(
         stack: &'s C,
@@ -456,12 +452,12 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         self
     }
 
-    /// Sets how long a request waits for its acknowledgement before it is confirmed
+    /// Sets how long a request waits for its acknowledgment before it is confirmed
     /// [`DoIpResult::TimeoutA`], in place of [`TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`].
     ///
     /// # Arguments
     ///
-    /// * `timeout` - the entity's longest acknowledgement time, with the network's
+    /// * `timeout` - the entity's longest acknowledgment time, with the network's
     ///   delays. One past the clock's longest is the clock's longest.
     #[must_use]
     pub const fn with_ack_timeout(mut self, timeout: core::time::Duration) -> Self {
@@ -652,7 +648,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// did.
     ///
     /// A request none of which was written is withdrawn; otherwise the connection is
-    /// given up, so that neither a late acknowledgement nor a late response can be taken
+    /// given up, so that neither a late acknowledgment nor a late response can be taken
     /// for a later request's.
     async fn time_out(&mut self, until: Option<Instant>) -> bool {
         let Some(outstanding) = self.exchange.outstanding else {
@@ -699,22 +695,22 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// Queues `pdu` to `ta` as one diagnostic message, from the tester's source address,
     /// for [`DiagnosticConnection::next_event`] to write.
     ///
-    /// Its [`ConnectionEvent::Confirm`] comes from the entity's acknowledgement
+    /// Its [`ConnectionEvent::Confirm`] comes from the entity's acknowledgment
     /// (ISO 13400-2:2019 9.5): [`DoIpResult::Ok`] for a positive one,
     /// [`DoIpResult::Error`] for a positive one with a reserved code, and the result
-    /// naming a negative one's code. A physical request's acknowledgement must come from
+    /// naming a negative one's code. A physical request's acknowledgment must come from
     /// `ta`, and nothing the tester had read before it started writing the request is
-    /// its acknowledgement. A generic header negative acknowledgement confirms the
+    /// its acknowledgment. A generic header negative acknowledgment confirms the
     /// request only if no alive check response was written within
     /// `A_DoIP_Diagnostic_Message` before the request or since, as it may otherwise be
     /// about that response.
     ///
-    /// The confirm is [`DoIpResult::TimeoutA`] where no acknowledgement arrives within
+    /// The confirm is [`DoIpResult::TimeoutA`] where no acknowledgment arrives within
     /// `A_DoIP_Diagnostic_Message` (Table 12) of the request's last byte, or where its
     /// bytes cannot all be written within that time of the tester starting to write
     /// them. The request is then lost: one none of which was written is withdrawn, and
     /// otherwise the tester gives the connection up, so that neither a late
-    /// acknowledgement nor a late response can be taken for a later request's.
+    /// acknowledgment nor a late response can be taken for a later request's.
     ///
     /// # Errors
     ///
@@ -770,7 +766,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// every message in error (8.3.3), and a diagnostic message addressed to another
     /// tester. Gives up the connection on a header it cannot delimit or a protocol
     /// version Table 16 does not define for `DoIP` messages, and after a negative
-    /// acknowledgement on which the entity closes its socket: diagnostic `0x02`
+    /// acknowledgment on which the entity closes its socket: diagnostic `0x02`
     /// (REQ 7.DoIP-070), and generic header `0x00` and `0x04` (Table 19).
     ///
     /// Once `deadline` has passed, it still delivers what has arrived, reading the
@@ -901,12 +897,11 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     /// passed since a connection was last lost, then connects and activates routing
     /// again, as [`Tester::connect`] did.
     ///
-    /// The order is the point: an entity may hold this tester's address for a while
-    /// after the socket closes, and refuse its activation meanwhile, so a reconnect
-    /// that opened the new connection before closing the old, or straight after, would
-    /// be refused. A reconnect made long after the connection was lost does not wait.
-    /// A request still awaiting its confirm is confirmed with [`DoIpResult::Error`] or
-    /// [`DoIpResult::NoSocket`] by the next
+    /// The old connection goes first and the back-off follows because an entity may
+    /// hold this tester's address for a while after the socket closes, and refuse its
+    /// activation meanwhile. A reconnect made long after the connection was lost does
+    /// not wait. A request still awaiting its confirm is confirmed with
+    /// [`DoIpResult::Error`] or [`DoIpResult::NoSocket`] by the next
     /// [`next_event`](DiagnosticConnection::next_event), before anything from the new
     /// connection.
     ///
@@ -991,7 +986,7 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     }
 }
 
-/// The request awaiting its acknowledgement, and how long it waits for one.
+/// The request awaiting its acknowledgment, and how long it waits for one.
 #[derive(Debug)]
 struct Exchange {
     outstanding: Option<Outstanding>,
@@ -1045,7 +1040,7 @@ impl Exchange {
         }
     }
 
-    /// Takes an acknowledgement from `source`, or a generic header NACK where `source`
+    /// Takes an acknowledgment from `source`, or a generic header NACK where `source`
     /// is `None`, as the outstanding request's, if it can be. `answered_at` is when the
     /// last alive check response was written.
     fn acknowledge(
@@ -1074,7 +1069,7 @@ struct Outstanding {
 }
 
 impl Outstanding {
-    /// Whether an acknowledgement from `source`, or a generic header NACK where `source`
+    /// Whether an acknowledgment from `source`, or a generic header NACK where `source`
     /// is `None`, is this request's. A header NACK is not where an alive check response
     /// was written within `ack_timeout` before the request or since, as it may be about
     /// that response.

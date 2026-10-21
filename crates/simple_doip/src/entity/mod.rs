@@ -180,7 +180,7 @@ pub enum Error<E> {
 /// - `MAX_MESSAGE` is the largest `DoIP` message, generic header included, the entity
 ///   receives or sends on a registered connection. Each of the `MCTS` connections holds
 ///   one receive buffer and one transmit queue of that size, for the diagnostic messages
-///   it sends, and a small one apart for its own acknowledgements and other control
+///   it sends, and a small one apart for its own acknowledgments and other control
 ///   frames; the reserve holds small ones only.
 /// - `TESTERS` is [`EntityConfig`]'s count of tester addresses.
 ///
@@ -194,10 +194,8 @@ pub enum Error<E> {
 ///
 /// The connections' buffers are most of an `Entity`: `2 × MCTS × MAX_MESSAGE` bytes.
 /// Each slot's control queue, the reserve's buffers and the bookkeeping add a few
-/// hundred bytes more, and
-/// each of the `MCTS + 1` slots holds an accepted socket, [`TcpAccept::Socket`], inline
-/// beside about a hundred bytes of its own. With `MCTS` 1, `MAX_MESSAGE` 4096 and
-/// `edge-nal-std`'s sockets an `Entity` is about 8.7 KiB.
+/// hundred bytes more, and each of the `MCTS + 1` slots holds an accepted socket,
+/// [`TcpAccept::Socket`], inline beside about a hundred bytes of its own.
 ///
 /// # Examples
 ///
@@ -1069,7 +1067,7 @@ impl<
     /// Takes in what each socket a passed deadline judges has ready, so input that
     /// reached it in time is handled before the deadline is acted on: for each deadline,
     /// at most as much as the socket's receive buffer holds, so a peer that keeps sending
-    /// holds it off no longer. Whether anything was taken in.
+    /// cannot hold it off indefinitely. Whether anything was taken in.
     async fn take_in(&mut self, now: Instant) -> bool {
         poll_fn(|cx| {
             let mut took = false;
@@ -1276,7 +1274,7 @@ impl<
 
     /// `MAX_MESSAGE` less what a diagnostic message adds to its PDU,
     /// [`DIAGNOSTIC_MESSAGE_OVERHEAD`]. A response this long fits however many of the
-    /// entity's own frames, its acknowledgements among them, are queued ahead of it:
+    /// entity's own frames, its acknowledgments among them, are queued ahead of it:
     /// they queue apart.
     const MAX_PDU: usize = MAX_MESSAGE.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD);
 
@@ -1372,11 +1370,10 @@ impl<
         }
     }
 
-    /// Writes what is queued on `connection`, then closes it.
-    ///
-    /// The close is bounded: a socket that has not closed within
-    /// [`EntityConfig::close_limit`] is aborted, and one whose abort has not finished
-    /// within [`TCP_TIMEOUT_ALIVE_CHECK`](crate::TCP_TIMEOUT_ALIVE_CHECK) is dropped. Only
+    /// Writes what is queued on `connection`, then closes it. The close is bounded: a
+    /// socket that has not closed within [`EntityConfig::close_limit`] is aborted, and
+    /// one whose abort has not finished within
+    /// [`TCP_TIMEOUT_ALIVE_CHECK`](crate::TCP_TIMEOUT_ALIVE_CHECK) is dropped. Only
     /// `connection`'s own timer is acted on meanwhile; every other socket's waits for
     /// the next [`DiagnosticEntity::next_event`].
     ///
