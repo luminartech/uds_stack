@@ -1,26 +1,19 @@
-//! The `DiagnosticSessionControl` service is used to enable different diagnostic sessions
-//! in the server. A diagnostic session enables a specific set of diagnostic services and/or
-//! functionality in the server. This service provides the capability that the server can
-//! report data link layer specific parameter values valid for the enabled diagnostic
-//! session (e.g. timing parameter values). The user of this document shall define the exact
-//! set of services and/or functionality enabled in each diagnostic session. There shall
-//! always be exactly one diagnostic session active in a server. A server shall always start
-//! the default diagnostic session when powered up. If no other diagnostic session is
-//! started, then the default diagnostic session shall be running as long as the server is
-//! powered. A server shall be capable of providing diagnostic functionality under normal
-//! operating conditions, as well as in other operation conditions defined by the vehicle
-//! manufacturer (e.g. limp home operation condition).
+//! `DiagnosticSessionControl` (0x10) service implementation.
+//!
+//! A diagnostic session enables a set of services in the server, which the vehicle
+//! manufacturer defines per session. ISO 14229-1:2020 clause 10.2 has exactly one session
+//! active in a server at a time: the default session from power-up until another is
+//! started. The positive response carries the session's timing parameters.
 
 use crate::shared::SuppressablePositiveResponse;
 use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
 use automotive_wire_codec::{write_u8, write_u16_be};
 
-/// `DiagnosticSessionType` is used to specify or describe the session type of the server
+/// The `diagnosticSessionType` sub-function: the session a request asks for, or a response
+/// reports.
 ///
-/// *Note*:
-///
-/// Conversions from `u8` to `DiagnosticSessionType` are fallible and will return an
-/// [`Error`] if the Suppress Positive Response bit is set.
+/// Conversion from `u8` is fallible and returns an [`Error`] if bit 7, the suppress
+/// positive response bit, is set.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -112,7 +105,7 @@ impl TryFrom<u8> for DiagnosticSessionType {
 #[cfg(test)]
 mod diagnostic_session_type_tests {
     use super::*;
-    /// Check that we properly decode and encode hex bytes
+    /// Every byte classifies as ISO 14229-1:2020 Table 24 assigns it, or fails for bit 7.
     #[test]
     fn from_all_u8_values() {
         for i in 0..=u8::MAX {
@@ -284,7 +277,7 @@ impl P2StarServerMax {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct DiagnosticSessionControlResponse {
-    /// The session type that is now active.
+    /// The session type active after the request.
     pub session_type: DiagnosticSessionType,
     /// `P2Server_max`: how long the client should wait for a response, in milliseconds
     /// (ISO 14229-1:2020 Table 29).

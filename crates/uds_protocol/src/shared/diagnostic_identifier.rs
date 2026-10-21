@@ -1,9 +1,9 @@
-//! DIDs are used to identify the data that is requested or sent in a diagnostic service.
+//! Data and routine identifiers: the 16-bit values that name the data a diagnostic service
+//! reads or writes, and the routines it controls.
 
-/// C.1 DID - Diagnostic Data Identifier specified in ISO 14229-1
+/// A data identifier (DID), ISO 14229-1:2020 Annex C Table C.1.
 ///
-/// The identifiers listed here are defined and should be implemented by the vehicle
-/// manufacturer/system supplier.
+/// Every `u16` classifies into a named identifier or the range it falls in.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u16", into = "u16"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -102,21 +102,17 @@ pub enum UdsIdentifier {
     VehicleManufacturerEcuSoftwareVersionNumber,
     /// System supplier identifier (`0xF18A`).
     SystemSupplierIdentifier,
-    /// This value shall be used to reference the ECU (server) manufacturing date. Record
-    /// data content and format shall be unsigned numeric, ASCII or BCD, and shall be
-    /// ordered as Year, Month, Day.
+    /// ECU manufacturing date (`0xF18B`): unsigned numeric, ASCII or BCD, ordered year,
+    /// month, day.
     EcuManufacturingDate,
-    /// Get the serial number of the ECU, format shall be server specific.
+    /// ECU serial number (`0xF18C`), in a server-specific format.
     EcuSerialNumber,
-    /// Request the supported functional units of the ECU.
+    /// Supported functional units (`0xF18D`).
     SupportedFunctionalUnits,
-    /// This value shall be used to reference the vehicle manufacturer order number for a
-    /// kit (assembled parts bought as a whole for production e.g. cockpit), when the spare
-    /// part number designates only the server (e.g. for aftersales). The record data
-    /// content and format shall be server specific and defined by the vehicle manufacturer.
+    /// Vehicle manufacturer order number for a kit (`0xF18E`), when the spare part number
+    /// designates only the server; server-specific content.
     VehicleManufacturerKitAssemblyPartNumber,
-    /// See 14229-1 C.1 for details on Regulation X information.
-    /// Recursive ASCII string
+    /// Regulation X software identification numbers (`0xF18F`); see Table C.1.
     RegulationXSoftwareIdentificationNumbers,
     /// Vehicle Identification Number (`0xF190`).
     Vin,
@@ -136,8 +132,8 @@ pub enum UdsIdentifier {
     SystemNameOrEngineType,
     /// Repair shop or tester serial number (`0xF198`).
     RepairShopCodeOrTesterSerialNumber,
-    /// When the server was last programmed, the record data content and format shall be
-    /// unsigned numeric, ASCII or BCD, and shall be ordered as Year, Month, Day.
+    /// Programming date (`0xF199`): unsigned numeric, ASCII or BCD, ordered year, month,
+    /// day.
     ProgrammingDate,
     /// Calibration repair-shop code or calibration equipment serial number (`0xF19A`).
     CalibrationRepairShopCodeOrCalibrationEquipmentSerialNumber,
@@ -149,7 +145,7 @@ pub enum UdsIdentifier {
     EcuInstallationDate,
     /// ODX file identifier (`0xF19E`).
     OdxFile,
-    /// Used to reference the entity data identifier for a secured data transfer
+    /// Entity data identifier for a secured data transfer (`0xF19F`).
     Entity,
     /// UDS version data (`0xFF00`).
     UdsVersionData,
@@ -307,10 +303,10 @@ impl core::fmt::Debug for UdsIdentifier {
     }
 }
 
-/// Standard UDS Routine Identifier for the `RoutineControl` (0x31, 0x71) service
+/// A routine identifier for the `RoutineControl` (0x31, 0x71) service, ISO 14229-1:2020
+/// Annex F Table F.1.
 ///
-/// Some services will be defined by the Vehicle manufacturer or a system supplier,
-/// and they must be implemented by the tester system.
+/// Every `u16` classifies into a named routine or the range it falls in.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u16", into = "u16"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -366,8 +362,7 @@ pub enum UdsRoutineIdentifier {
     CheckProgrammingDependencies,
 }
 
-/// We know all values for the Routine Identifier, so we can implement `From<u16>` for
-/// `UdsRoutineIdentifier`
+/// Total: Table F.1 assigns every `u16` to a routine or a range.
 impl From<u16> for UdsRoutineIdentifier {
     fn from(value: u16) -> Self {
         match value {

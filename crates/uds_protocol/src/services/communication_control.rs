@@ -3,37 +3,29 @@ use crate::shared::SuppressablePositiveResponse;
 use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
 use automotive_wire_codec::{write_bytes, write_u8, write_u16_be};
 
-/// `CommunicationControlType` is used to specify the type of communication behavior to be
-/// modified
+/// The `controlType` sub-function of `CommunicationControl`: which communication behavior
+/// the server is to change.
 ///
-/// *Note*:
-///
-/// Conversions from `u8` to `CommunicationControlType` are fallible and will return an
-/// [`Error`] if the Suppress Positive Response bit is set.
+/// Conversion from `u8` is fallible and returns an [`Error`] if bit 7, the suppress
+/// positive response bit, is set.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommunicationControlType {
-    /// This value indicates that the reception and transmission of messages
-    /// shall be enabled for the specified [`CommunicationType`]
+    /// Turn on both receiving and sending for the [`CommunicationType`] (`0x00`, Table 54).
     EnableRxAndTx,
-    /// This value indicates that the reception of messages shall be enabled and the
-    /// transmission of messages shall be disabled for the specified [`CommunicationType`]
+    /// Keep receiving but stop sending for the [`CommunicationType`] (`0x01`, Table 54).
     EnableRxAndDisableTx,
-    /// This value indicates that the reception of messages shall be disabled and the
-    /// transmission of messages shall be enabled for the specified [`CommunicationType`]
+    /// Stop receiving but keep sending for the [`CommunicationType`] (`0x02`, Table 54).
     DisableRxAndEnableTx,
-    /// This value indicates that the reception and transmission of messages
-    /// shall be disabled for the specified [`CommunicationType`]
+    /// Stop both receiving and sending for the [`CommunicationType`] (`0x03`, Table 54).
     DisableRxAndTx,
-    /// This value indicates that the reception of messages shall be enabled and the
-    /// transmission of messages shall be disabled for the specified [`CommunicationType`]
-    /// Additionally, enhanced address information shall be included in the request
+    /// As [`EnableRxAndDisableTx`](Self::EnableRxAndDisableTx), for the node the request's
+    /// enhanced address information names (`0x04`, Table 54).
     EnableRxAndDisableTxWithEnhancedAddressInfo,
-    /// This value indicates that the reception and transmission of messages
-    /// shall be enabled for the specified [`CommunicationType`]
-    /// Additionally, enhanced address information shall be included in the request
+    /// As [`EnableRxAndTx`](Self::EnableRxAndTx), for the node the request's enhanced
+    /// address information names (`0x05`, Table 54).
     EnableRxAndTxWithEnhancedAddressInfo,
     /// These values are reserved by the ISO 14229-1 Specification.
     ///
@@ -61,10 +53,9 @@ pub enum CommunicationControlType {
 impl CommunicationControlType {
     /// The raw sub-function byte, without the SPRMIB bit.
     ///
-    /// `const` so [`CommunicationControlRequest::new`] and
-    /// [`new_with_node_id`](CommunicationControlRequest::new_with_node_id) can be `const`
-    /// too: they need the byte for their error payload, and `u8::from` is a trait method,
-    /// which is not callable in a `const fn` on stable.
+    /// `const`, unlike `u8::from`, so [`CommunicationControlRequest::new`] and
+    /// [`new_with_node_id`](CommunicationControlRequest::new_with_node_id) can build their
+    /// error payload in a `const fn`.
     #[must_use]
     pub const fn value(&self) -> u8 {
         match self {
@@ -118,7 +109,7 @@ impl TryFrom<u8> for CommunicationControlType {
 #[cfg(test)]
 mod communication_control_type_tests {
     use super::*;
-    /// Check that we properly decode and encode hex bytes
+    /// Every byte classifies into its named value or range, or fails for bit 7.
     #[test]
     fn from_all_u8_values() {
         for i in 0..=u8::MAX {
@@ -187,7 +178,7 @@ mod communication_control_type_tests {
     }
 }
 
-/// Which network the `communicationType` byte applies to — its high nibble (bits 7-4).
+/// Which network the `communicationType` byte applies to: its high nibble (bits 7-4).
 ///
 /// See ISO 14229-1:2020 Annex B Table B.1. The low nibble of the same byte is the
 /// [`CommunicationType`].
@@ -195,19 +186,19 @@ mod communication_control_type_tests {
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SubnetNumber {
-    /// `0x0` — apply to the receiving node, including communication to all connected
+    /// `0x0`: apply to the receiving node, including communication to all connected
     /// networks.
     ///
     /// The default, and what a request that does not target a particular subnet carries.
     #[default]
     AllConnectedNetworks,
-    /// `0x1`-`0xE` — apply to the specific subnet identified by this number.
+    /// `0x1`-`0xE`: apply to the specific subnet identified by this number.
     ///
     /// Construct through [`SubnetNumber::try_from`] so the value is range-checked and
     /// cannot collide with the other two variants.
     #[non_exhaustive]
     Specific(u8),
-    /// `0xF` — apply to the network the request was received on.
+    /// `0xF`: apply to the network the request was received on.
     ReceivedOn,
 }
 
@@ -244,7 +235,7 @@ impl TryFrom<u8> for SubnetNumber {
     }
 }
 
-/// Which messages the control applies to — the low nibble (bits 3-0) of the
+/// Which messages the control applies to: the low nibble (bits 3-0) of the
 /// `communicationType` byte.
 ///
 /// ISO 14229-1:2020 Annex B Table B.1 defines bits 1-0 and reserves bits 3-2; the high
@@ -389,7 +380,7 @@ impl CommunicationControlRequest {
     ///
     /// # Errors
     /// Returns [`Error::InvalidCommunicationControlType`] if `control_type` is an
-    /// enhanced-address variant — those require a node identifier and must be built
+    /// enhanced-address variant; those require a node identifier and must be built
     /// with [`new_with_node_id`](Self::new_with_node_id).
     pub const fn new(
         suppress_positive_response: bool,
@@ -412,7 +403,7 @@ impl CommunicationControlRequest {
     ///
     /// # Errors
     /// Returns [`Error::InvalidCommunicationControlType`] if `control_type` is not an
-    /// enhanced-address variant — a node identifier is only carried by the
+    /// enhanced-address variant; a node identifier is only carried by the
     /// `*WithEnhancedAddressInfo` variants.
     pub const fn new_with_node_id(
         suppress_positive_response: bool,
@@ -462,7 +453,7 @@ impl CommunicationControlRequest {
         self.communication_type
     }
 
-    /// Which network the control applies to — the high nibble of the `communicationType`
+    /// Which network the control applies to: the high nibble of the `communicationType`
     /// byte.
     #[must_use]
     pub const fn subnet(&self) -> SubnetNumber {
@@ -510,11 +501,11 @@ impl Encode for CommunicationControlRequest {
 impl<'a> Decode<'a> for CommunicationControlRequest {
     type Error = crate::Error;
 
-    /// Decodes a request, reading every `communicationType` Annex B Table B.1 reserves —
-    /// bits 1-0 clear, or bits 3-2 set — as [`CommunicationType::IsoSaeReserved`] rather
+    /// Decodes a request, reading every `communicationType` Annex B Table B.1 reserves
+    /// (bits 1-0 clear, or bits 3-2 set) as [`CommunicationType::IsoSaeReserved`] rather
     /// than rejecting it. A server answers it `requestOutOfRange` (0x31), but ISO
     /// 14229-1:2020 8.7.5 tests the message length first, so a request that also carries
-    /// a stray byte must still reach the length check and be 0x13.
+    /// a stray byte still reaches the length check and is answered 0x13.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
         if buf.len() < 2 {
             return Err(Error::InsufficientData(Incomplete {
@@ -619,10 +610,8 @@ mod request {
     fn the_communication_type_byte_carries_a_subnet_number() {
         // ISO 14229-1:2020 Annex B Table B.1 splits this byte: bits 0-1 are the message
         // type, bits 4-7 the subnet number (0 = the specified types on all connected
-        // networks, 1-E = a specific subnet, F = the network the request arrived on). The
-        // whole byte was matched against 0x00..=0x03, so 0xF3 -- "network management and
-        // normal messages on the network this request came in on", a common real-world
-        // value -- was rejected.
+        // networks, 1-E = a specific subnet, F = the network the request arrived on). 0xF3,
+        // both message types on the network the request came in on, is a common value.
         for (byte, message_type, subnet) in [
             (
                 0x03u8,
@@ -787,8 +776,8 @@ mod request {
 
     #[test]
     fn new_rejects_enhanced_address_variant() {
-        // An enhanced-address control type has no node id via `new`; it must error
-        // rather than silently encode a frame missing the mandatory node identifier.
+        // An enhanced-address control type has no node id via `new`, so `new` errors
+        // rather than encoding a frame without the mandatory node identifier.
         let result = CommunicationControlRequest::new(
             false,
             CommunicationControlType::EnableRxAndTxWithEnhancedAddressInfo,
@@ -845,9 +834,9 @@ mod response {
 /// `node_id` must be present exactly when `control_type` is one of the two enhanced-address
 /// variants (`0x04`, `0x05`) and absent otherwise; a payload that breaks that rule is
 /// rejected rather than encoded into a frame this crate's own decoder would refuse.
-///
-/// This doc comment is the published schema description for `CommunicationControlRequest`,
-/// because its hand-written `PartialSchema` delegates here.
+//
+// This doc comment is the published schema description for `CommunicationControlRequest`,
+// whose hand-written `PartialSchema` delegates here.
 #[cfg(feature = "serde")]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
@@ -909,10 +898,8 @@ impl utoipa::ToSchema for CommunicationControlRequest {
 
     /// Register the child schemas this one `$ref`s.
     ///
-    /// `ToSchema::schemas` defaults to a no-op, and the derive is what normally overrides
-    /// it. A hand-written impl that only implements `schema()` therefore emits `$ref`s to
-    /// types the document never defines, which every client generator either rejects or
-    /// degrades to an untyped object -- strictly worse than the derived schema it replaced.
+    /// `ToSchema::schemas` defaults to a no-op; a hand-written impl that forwards only
+    /// `schema()` emits `$ref`s to types the document never defines.
     fn schemas(
         schemas: &mut Vec<(
             String,

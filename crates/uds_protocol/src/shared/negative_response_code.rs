@@ -10,8 +10,8 @@
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NegativeResponseCode {
-    /// This response code shall not be used in a negative response message.
-    /// This positiveResponse parameter value is reserved for server internal implementation
+    /// `0x00`, which Table A.1 reserves for a server's internal use; it never appears in a
+    /// negative response.
     PositiveResponse,
     /// A byte Table A.1 reserves for future definition: `0x01`–`0x0F`, `0x15`–`0x20`,
     /// `0x23`, `0x27`–`0x30`, `0x32`, `0x3B`–`0x4F`, `0x5E`–`0x6F`, `0x74`–`0x77`,
@@ -19,87 +19,54 @@ pub enum NegativeResponseCode {
     #[cfg_attr(feature = "clap", clap(skip))]
     #[non_exhaustive]
     IsoSaeReserved(u8),
-    /// This response code indicates that the requested action has been rejected by the
-    /// server. The `GeneralReject` response code shall only be implemented in the server if
-    /// none of the negative response codes meet the needs of the implementation. This
-    /// response code shall not be used as a general replacement for other response codes
-    /// defined.
+    /// The server rejected the request and no more specific code fits (`0x10`, Table A.1).
+    /// A server answers it only where no other code applies.
     GeneralReject,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server does not support the requested service. The server shall send this response
-    /// code in the case where the client has sent a request message with a service
-    /// identifier which is either unknown or not supported. This negative response code is
-    /// not shown in the list of negative response codes to be supported for a diagnostic
-    /// service, because this negative response code is not applicable for supported
-    /// services.
+    /// The service identifier is unknown to the server or unsupported (`0x11`, Table A.1).
+    /// It applies only to a service the server does not support, so no service's own list
+    /// of response codes names it.
     ServiceNotSupported,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server does not support the service specific parameters of the request message. The
-    /// server shall send this response code in case the client has sent a request message
-    /// with a known and supported service identifier but with "sub function“ which is
-    /// either unknown or not supported.
+    /// The service is supported but its sub-function is unknown or unsupported (`0x12`,
+    /// Table A.1).
     SubFunctionNotSupported,
-    /// This response code indicates that the requested action will not be taken because the
-    /// length of the received request message does not match the prescribed length for the
-    /// specified service, or that the format of the parameters do not match the prescribed
-    /// format for the specified service.
+    /// The request's length, or the format of its parameters, does not match what the
+    /// service prescribes (`0x13`, Table A.1).
     IncorrectMessageLengthOrInvalidFormat,
-    /// This response code shall be reported by the server if the response to be generated
-    /// exceeds the maximum number of bytes available by the underlying network layer.
+    /// The response would be longer than the underlying network layer can carry (`0x14`,
+    /// Table A.1).
     ResponseTooLong,
-    /// This response code indicates that the server is temporarily too busy to perform the
-    /// requested operation. In this circumstance the client shall perform repetition of the
-    /// request message or "try again later". The repetition of the request shall be delayed
-    /// by a time specified in the respective implementation documents.
+    /// The server is temporarily too busy; the client repeats the request after a delay its
+    /// implementation documents set (`0x21`, Table A.1).
     BusyRepeatRequest,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite conditions are not met.
+    /// A precondition the server checks before the action is not met (`0x22`, Table A.1).
     ConditionsNotCorrect,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server expects a different sequence of request messages or message as sent by the
-    /// client. This may occur when sequence sensitive requests are issued in the wrong
-    /// order.
+    /// The request arrived out of the order the server expects, such as a
+    /// sequence-sensitive request sent too early (`0x24`, Table A.1).
     RequestSequenceError,
     /// A subnet component the action needed did not answer in time (`0x25`, Table A.1).
     NoResponseFromSubnetComponent,
     /// A fault the server holds as a DTC prevents the action (`0x26`, Table A.1).
     FailurePreventsExecutionOfRequestedAction,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server has detected that the request message contains a parameter which attempts to
-    /// substitute a value beyond its range of authority (e.g. attempting to substitute a
-    /// data byte of 111 when the data is only defined to 100), or which attempts to access
-    /// a dataIdentifier/routineIdentifer that is not supported or not supported in active
-    /// session. This response code shall be implemented for all services which allow the
-    /// client to read data, write data, or adjust functions by data in the server.
+    /// A parameter is outside its permitted range, or names a data or routine identifier
+    /// that is unsupported, or unsupported in the active session (`0x31`, Table A.1). Every
+    /// service that reads, writes or adjusts data in the server supports it.
     RequestOutOfRange,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server's security strategy has not been satisfied by the client. The server shall
-    /// send this response code if one of the following cases occur:
-    /// - the test conditions of the server are not met,
-    /// - the required message sequence e.g. `DiagnosticSessionControl`, securityAccess is
-    ///   not met,
-    /// - the client has sent a request message which requires an unlocked server.
-    ///
-    /// Beside the mandatory use of this negative response code as specified in the
-    /// applicable services within this standard, this negative response code can also be
-    /// used for any case where security is required and is not yet granted to perform the
-    /// required service.
+    /// The server's security conditions are not met: its test conditions, the required
+    /// message sequence (for example `DiagnosticSessionControl` then `SecurityAccess`), or
+    /// an unlocked server (`0x33`, Table A.1). Beyond the services that mandate it, a
+    /// server may use it wherever security is required and not yet granted.
     SecurityAccessDenied,
-    /// This response code indicates that the requested action will not be taken because the
-    /// client has insufficient rights based on its Authentication state.
+    /// The client's authentication state does not grant the rights the request needs
+    /// (`0x34`, Table A.1).
     AuthenticationRequired,
-    /// This response code indicates that the server has not given security access because
-    /// the key sent by the client did not match with the key in the server's memory. This
-    /// counts as an attempt to gain security. The server shall remain locked and increment
-    /// its internal securityAccessFailed counter.
+    /// The key the client sent does not match the server's (`0x35`, Table A.1). The attempt
+    /// counts: the server stays locked and increments its `securityAccessFailed` counter.
     InvalidKey,
-    /// This response code indicates that the requested action will not be taken because the
-    /// client has unsuccessfully attempted to gain security access more times than the
-    /// server's security strategy will allow.
+    /// The client has failed security access more times than the server's security strategy
+    /// allows (`0x36`, Table A.1).
     ExceedNumberOfAttempts,
-    /// This response code indicates that the requested action will not be taken because the
-    /// client's latest attempt to gain security access was initiated before the server's
-    /// required timeout period had elapsed.
+    /// The client tried security access again before the server's required delay had
+    /// elapsed (`0x37`, Table A.1).
     RequiredTimeDelayNotExpired,
     /// The request must arrive over secured transmission (`0x38`, Table A.1).
     SecureDataTransmissionRequired,
@@ -137,122 +104,81 @@ pub enum NegativeResponseCode {
     ConfigurationDataUsageFailed,
     /// De-authentication failed (`0x5D`).
     DeAuthenticationFailed,
-    /// This response code indicates that an attempt to upload/download to a server's memory
-    /// cannot be accomplished due to some fault conditions.
+    /// A fault prevents the upload or download to the server's memory (`0x70`, Table A.1).
     UploadDownloadNotAccepted,
-    /// This response code indicates that a data transfer operation was halted due to some
-    /// fault. The active transferData sequence shall be aborted.
+    /// A fault halted the data transfer, and the active `TransferData` sequence is aborted
+    /// (`0x71`, Table A.1).
     TransferDataSuspended,
-    /// This response code indicates that the server detected an error when erasing or
-    /// programming a memory location in the permanent memory device (e.g. Flash Memory).
+    /// Erasing or programming the server's non-volatile memory, such as flash, failed
+    /// (`0x72`, Table A.1).
     GeneralProgrammingFailure,
-    /// This response code indicates that the server detected an error in the sequence of
-    /// `BlockSequenceCounter` values. Note that the repetition of a `TransferDataRequest`
-    /// message with a `BlockSequenceCounter` equal to the one included in the previous
-    /// `TransferDataRequest` message shall be accepted by the server.
+    /// The `BlockSequenceCounter` is out of sequence (`0x73`, Table A.1). A repeated
+    /// `TransferDataRequest` carrying the previous request's counter is accepted, not
+    /// answered with this code.
     WrongBlockSequenceCounter,
-    /// The request was received correctly and all its parameters were valid, but the server
-    /// has not finished the requested action and is not yet ready to accept another
-    /// request.
-    ///
-    /// The server sends a final positive or negative response once the service completes,
-    /// and may repeat this code until then. It affects the application-layer timing
-    /// parameters (it extends P2\*), and per ISO 14229-1:2020 Annex A.1 the server "shall
-    /// always send a final response (positive or negative) independent of the
-    /// `suppressPosRspMsgIndicationBit` value" once it has used this code.
-    ///
-    /// Typically used while writing or erasing flash, when the programming routine cannot
-    /// service the bus. Generally supported by every service, which is why it is not listed
-    /// in the individual services' `allowed_nack_codes`.
+    /// The request was received correctly and its parameters are valid, but the action is
+    /// unfinished and the server cannot yet take another request (`0x78`, Table A.1). The
+    /// server may send it repeatedly, each one extending the client's timeout to P2\*, and
+    /// once it has sent one it sends a final response, positive or negative, even for a
+    /// request that suppressed its positive response. Every service supports it, so no
+    /// service's `allowed_nack_codes` lists it.
     RequestCorrectlyReceivedResponsePending,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server does not support the requested sub-function in the session currently active.
-    /// Within the programmingSession negative response code 0x12 (subFunctionNotSupported)
-    /// may optionally be reported instead of negative response code 0x7F
-    /// (subFunctionNotSupportedInActiveSession). This response code shall only be used when
-    /// the requested sub-function is known to be supported in another session, otherwise
-    /// response code 0x12 (subFunctionNotSupported) shall be used. This response code shall
-    /// be supported by each diagnostic service with a sub-function parameter, if not
-    /// otherwise stated in the data link specific implementation document, therefore it is
-    /// not listed in the list of applicable response codes of the diagnostic services.
+    /// The sub-function is supported, but not in the active session (`0x7E`, Table A.1);
+    /// one no session supports is answered
+    /// [`SubFunctionNotSupported`](Self::SubFunctionNotSupported) instead, which a server
+    /// may also use in the programming session. Every service with a sub-function supports
+    /// it unless a data link document says otherwise, so no service's own list of response
+    /// codes names it.
     SubFunctionNotSupportedInActiveSession,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server does not support the requested service in the session currently active. This
-    /// response code shall only be used when the requested service is known to be supported
-    /// in another session, otherwise response code 0x11 (serviceNotSupported) shall be
-    /// used. This response code is in general supported by each diagnostic service, as not
-    /// otherwise stated in the data link specific implementation document, therefore it is
-    /// not listed in the list of applicable response codes of the diagnostic services.
+    /// The service is supported, but not in the active session (`0x7F`, Table A.1); one no
+    /// session supports is answered [`ServiceNotSupported`](Self::ServiceNotSupported)
+    /// instead. Every service supports it unless a data link document says otherwise, so no
+    /// service's own list of response codes names it.
     ServiceNotSupportedInActiveSession,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for RPM is not met (current RPM is above a
-    /// pre-programmed maximum threshold).
+    /// Engine speed is above the maximum the action allows (`0x81`, Table A.1).
     RpmTooHigh,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for RPM is not met (current RPM is below a
-    /// pre-programmed minimum threshold).
+    /// Engine speed is below the minimum the action requires (`0x82`, Table A.1).
     RpmTooLow,
-    /// This is required for those actuator tests which cannot be actuated while the Engine
-    /// is running. This is different from RPM too high negative response and needs to be
-    /// allowed.
+    /// The engine is running, and the action, such as an actuator test, needs it stopped
+    /// (`0x83`, Table A.1). Distinct from [`RpmTooHigh`](Self::RpmTooHigh).
     EngineIsRunning,
-    /// This is required for those actuator tests which cannot be actuated unless the Engine
-    /// is running. This is different from RPM too low negative response, and needs to be
-    /// allowed.
+    /// The engine is not running, and the action, such as an actuator test, needs it
+    /// running (`0x84`, Table A.1). Distinct from [`RpmTooLow`](Self::RpmTooLow).
     EngineIsNotRunning,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for engine run time is not met (current engine run
-    /// time is below a preprogrammed limit).
+    /// The engine has not run for as long as the action requires (`0x85`, Table A.1).
     EngineRunTimeTooLow,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for temperature is not met (current temperature is
-    /// above a preprogrammed maximum threshold).
+    /// The temperature is above the maximum the action allows (`0x86`, Table A.1).
     TemperatureTooHigh,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for temperature is not met (current temperature is
-    /// below a preprogrammed minimum threshold).
+    /// The temperature is below the minimum the action requires (`0x87`, Table A.1).
     TemperatureTooLow,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for vehicle speed is not met (current VS is above a
-    /// pre-programmed maximum threshold).
+    /// Vehicle speed is above the maximum the action allows (`0x88`, Table A.1).
     VehicleSpeedTooHigh,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for vehicle speed is not met (current VS is below a
-    /// pre-programmed minimum threshold).
+    /// Vehicle speed is below the minimum the action requires (`0x89`, Table A.1).
     VehicleSpeedTooLow,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for throttle/pedal position is not met (current TP/APP
-    /// is above a preprogrammed maximum threshold).
+    /// The throttle or accelerator pedal position is above the maximum the action allows
+    /// (`0x8A`, Table A.1).
     ThrottleOrPedalTooHigh,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for throttle/pedal position is not met (current TP/APP
-    /// is below a preprogrammed minimum threshold).
+    /// The throttle or accelerator pedal position is below the minimum the action requires
+    /// (`0x8B`, Table A.1).
     ThrottleOrPedalTooLow,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for being in neutral is not met (current transmission
-    /// range is not in neutral).
+    /// The transmission is not in neutral, which the action requires (`0x8C`, Table A.1).
     TransmissionRangeNotInNeutral,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for being in gear is not met (current transmission
-    /// range is not in gear).
+    /// The transmission is not in gear, which the action requires (`0x8D`, Table A.1).
     TransmissionRangeNotInGear,
-    /// For safety reasons, this is required for certain tests before it begins,
-    /// and must be maintained for the entire duration of the test.
+    /// The brake switch is not closed. Some tests require it closed, for safety, from
+    /// before they start until they end (`0x8F`, Table A.1).
     BrakeSwitchNotClosed,
-    /// For safety reasons, this is required for certain tests before it begins,
-    /// and must be maintained for the entire duration of the test.
+    /// The shift lever is not in park. Some tests require it in park, for safety, from
+    /// before they start until they end (`0x90`, Table A.1).
     ShifterLeverNotInPark,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for torque converter clutch is not met (current TCC
-    /// status above a preprogrammed limit or locked).
+    /// The torque converter clutch is locked, or its status is above the limit the action
+    /// allows (`0x91`, Table A.1).
     TorqueConverterClutchLocked,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for voltage at the primary pin of the server (ECU) is
-    /// not met (current voltage is above a pre-programmed maximum threshold).
+    /// The voltage at the server's primary supply pin is above the maximum the action
+    /// allows (`0x92`, Table A.1).
     VoltageTooHigh,
-    /// This response code indicates that the requested action will not be taken because the
-    /// server prerequisite condition for voltage at the primary pin of the server (ECU) is
-    /// not met (current voltage is below a pre-programmed maximum threshold).
+    /// The voltage at the server's primary supply pin is below the minimum the action
+    /// requires (`0x93`, Table A.1).
     VoltageTooLow,
     /// A resource the action needs is briefly unavailable; the client may retry
     /// (`0x94`, Table A.1). Any service may answer it, as any may answer response-pending.

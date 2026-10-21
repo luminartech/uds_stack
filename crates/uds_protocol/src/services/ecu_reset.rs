@@ -3,13 +3,11 @@ use crate::shared::SuppressablePositiveResponse;
 use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
 use automotive_wire_codec::write_u8;
 
-/// UDS defines a number of different types of resets that can be requested
-/// The reset type is used to specify the type of reset that the ECU should perform
+/// The `resetType` sub-function: which reset the server is to perform (ISO 14229-1:2020
+/// Table 34).
 ///
-/// *Note*:
-///
-/// Conversions from `u8` to `ResetType` are fallible and will return an [`Error`] if the
-/// Suppress Positive Response bit is set.
+/// Conversion from `u8` is fallible and returns an [`Error`] if bit 7, the suppress
+/// positive response bit, is set.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -22,42 +20,25 @@ pub enum ResetType {
     #[cfg_attr(feature = "clap", clap(skip))]
     #[non_exhaustive]
     IsoSaeReserved(u8),
-    /// This `SubFunction` identifies a "hard reset" condition which simulates the
-    /// power-on/start-up sequence typically performed after a server has been previously
-    /// disconnected from its power supply (i.e. battery). The performed action is
-    /// implementation specific and not defined by the spec. It might result in the
-    /// re-initialization of both volatile memory and non-volatile memory locations to
-    /// predetermined values.
+    /// A "hard reset": simulates the power-on sequence after the server is disconnected
+    /// from its power supply. The action is implementation specific; it may reinitialize
+    /// both volatile and non-volatile memory to predetermined values.
     HardReset,
-    /// This `SubFunction` identifies a condition similar to the driver turning the ignition
-    /// key off and back on. This reset condition should simulate a key-off-on sequence
-    /// (i.e. interrupting the switched power supply). The performed action is
-    /// implementation specific and not defined by the spec. Typically the values of
-    /// non-volatile mmemory locations are preserved; volatile memory will be initialized.
+    /// Simulates an ignition off-and-on cycle, interrupting the switched power supply. The
+    /// action is implementation specific; typically volatile memory is initialized and
+    /// non-volatile memory preserved.
     KeyOffOnReset,
-    /// This `SubFunction` identifies a "soft reset" condition, which causes the server to
-    /// immediately restart the application program if applicable. The performed action is
-    /// implementation specific and not defined by the spec. A typical action is to restart
-    /// the application without reinitializing of previously applied configuration data,
-    /// adaptive factors and other long-term adjustments.
+    /// A "soft reset": the server restarts its application program immediately. The action
+    /// is implementation specific; typically configuration data, adaptive factors and other
+    /// long-term adjustments survive.
     SoftReset,
-    /// This `SubFunction` applies to ECUs which are not ignition powered but battery
-    /// powered only. Therefore a shutdown forces the sleep mode rather than a power off.
-    /// Sleep means power off but still ready for wake-up (battery powered). The intention
-    /// of the `SubFunction` is to reduce the stand-by time of an ECU after ignition is
-    /// turned into the off position. This value requests the server to enable and perform a
-    /// "rapid powershut down" function. The server shall execute the function immediately
-    /// once the "key/ignition" is switched off. While the server executes the power down
-    /// function, it shall transition either directly or after a defined stand-by-time to
-    /// sleep mode. If the client requires a response message and the server is already
-    /// prepared to execute the "rapid power shutdown" function, the server shall send the
-    /// positive response message prior to the start of the "rapid power shut down"
-    /// function. The next occurrence of a "key on" or "ignition on" signal terminates the
-    /// "rapid power shut down" function. **NOTE** This `SubFunction` is only applicable to
-    /// a server supporting a stand-by-mode.
+    /// Enables the "rapid power shut down" function on a server that is battery powered
+    /// rather than ignition powered: once the ignition is switched off the server
+    /// transitions, directly or after a defined stand-by time, to sleep mode, from which
+    /// the next ignition-on wakes it. If a response is required, the server sends it before
+    /// shutting down. Applies only to a server with a stand-by mode.
     EnableRapidPowerShutDown,
-    /// This `SubFunction` requests the server to disable the previously enabled "rapid
-    /// power shut down" function.
+    /// Disables the "rapid power shut down" function.
     DisableRapidPowerShutDown,
     /// Reserved for use by vehicle manufacturers.
     ///
@@ -114,7 +95,7 @@ impl TryFrom<u8> for ResetType {
 #[cfg(test)]
 mod reset_type_tests {
     use super::*;
-    /// Check that we properly decode and encode hex bytes
+    /// Every byte classifies as ISO 14229-1:2020 Table 34 assigns it, or fails for bit 7.
     #[test]
     #[allow(clippy::match_same_arms)]
     fn reset_type_from_all_u8_values() {
@@ -363,7 +344,7 @@ mod request {
         )
         .unwrap();
         // The request is one byte: the second byte of `bytes` is the next frame's, and the
-        // decoder is expected to leave it alone.
+        // decoder leaves it alone.
         assert_eq!(&buffer[..written], &bytes[..1]);
         let (result, _) = <EcuResetRequest as Decode>::decode(&bytes).unwrap();
         assert_eq!(result, req);
@@ -395,8 +376,8 @@ mod response {
         let (result, _) = <EcuResetResponse as Decode>::decode(&bytes).unwrap();
         assert_eq!(result, resp);
 
-        // The encoded bytes themselves, not just their count: without this the two halves
-        // of the test are disconnected and swapping the two written bytes goes unnoticed.
+        // The encoded bytes themselves, not just their count, so a swap of the two written
+        // bytes fails.
         assert_eq!(&buffer[..written], &bytes);
         assert_eq!(written, 2);
         assert_eq!(written, resp.encoded_size().unwrap());
@@ -421,9 +402,8 @@ mod response {
 
     #[test]
     fn a_response_without_a_power_down_time_round_trips_unchanged() {
-        // Decoding and re-encoding must not invent a powerDownTime byte. This used to
-        // append a spurious 0x00, so any proxy that decoded and re-encoded ECU traffic
-        // rewrote every positive response except enableRapidPowerShutDown's.
+        // Decoding and re-encoding does not invent a powerDownTime byte, so a proxy that
+        // decodes and re-encodes ECU traffic passes every positive response unchanged.
         for wire in [[0x51, 0x01].as_slice(), [0x51, 0x04, 0x20].as_slice()] {
             let (resp, _) = crate::Response::decode(wire).unwrap();
             let mut buf = [0u8; 8];

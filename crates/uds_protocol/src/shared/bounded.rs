@@ -2,15 +2,9 @@
 //!
 //! A few request and response fields are length-bounded because the wire field that
 //! declares their length is one or two bytes wide, or because ISO marks the first byte
-//! mandatory. Their constructors enforce that, but `derive(Deserialize)` ignores
-//! constructors — so without these, deserializing is a second way in that produces a value
-//! `encode` rejects, or worse, one that encodes to a frame this crate's own decoder
-//! refuses.
-//!
-//! These are field-level `deserialize_with` hooks rather than whole-type mirror structs:
-//! every invariant here is a property of a single field, so there is nothing for an
-//! aggregate to coordinate. Two mirror structs were used for a single-field invariant
-//! elsewhere in this crate and cost about a hundred lines to say what one attribute says.
+//! mandatory. Their constructors enforce that, and `derive(Deserialize)` bypasses
+//! constructors, so these hooks enforce it on the way in. They are field-level because
+//! each invariant is a property of a single field.
 
 use serde::{Deserialize, Deserializer, de::Error as _};
 

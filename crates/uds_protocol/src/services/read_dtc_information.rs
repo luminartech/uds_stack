@@ -223,12 +223,9 @@ mod read_dtc_info_request_encode_tests {
 
     #[test]
     fn both_sprmib_values_round_trip_through_the_request_frame() {
-        // ISO 14229-1:2020 Table 11 requires that "values of both '0' and '1' shall be
-        // supported for all SubFunction parameter values ... supported by the server for
-        // any given service", and clause 12.3.2.2 introduces 0x19's sub-function table with
-        // "(suppressPosRspMsgIndicationBit (bit 7) not shown)". A suppressed
-        // reportDTCByStatusMask used to be rejected with TrailingBytes, because the raw
-        // 0x82 fell through to IsoSaeReserved, which consumes no payload.
+        // ISO 14229-1:2020 Table 11 has a server accept both values of the suppress bit on
+        // every sub-function it supports, and clause 12.3.2.2's sub-function table for 0x19
+        // leaves bit 7 out.
         for (wire, suppressed) in [
             ([0x19, 0x02, 0xFF].as_slice(), Some(false)),
             ([0x19, 0x82, 0xFF].as_slice(), Some(true)),
@@ -247,9 +244,7 @@ mod read_dtc_info_request_encode_tests {
 
     #[test]
     fn a_suppressed_sub_function_is_not_mistaken_for_a_reserved_one() {
-        // 0x8A is reportSupportedDTC with SPRMIB set. Matching on the raw byte decoded this
-        // as IsoSaeReserved(0x8A) and reported suppression as false, so a server built on
-        // this answered SubFunctionNotSupported to a request it was required to execute.
+        // 0x8A is reportSupportedDTC with SPRMIB set, not a reserved sub-function.
         let (req, _) = <ReadDtcInfoRequest as Decode>::decode(&[0x8A]).unwrap();
         assert_eq!(
             req.dtc_subfunction,
@@ -260,8 +255,8 @@ mod read_dtc_info_request_encode_tests {
 
     #[test]
     fn user_def_memory_dtc_by_status_mask_carries_a_memory_selection() {
-        // ISO 14229-1:2020 Table 310 marks both DTCStatusMask and MemorySelection `M`. The
-        // sibling sub-functions 0x18 and 0x19 (Tables 311/312) already carried theirs.
+        // ISO 14229-1:2020 Table 310 marks both DTCStatusMask and MemorySelection `M`, as
+        // Tables 311 and 312 do for the sibling sub-functions 0x18 and 0x19.
         let wire = [0x17, 0xFF, 0x01];
         let (req, rest) = <ReadDtcInfoRequest as Decode>::decode(&wire).unwrap();
         assert_eq!(
@@ -282,9 +277,8 @@ mod read_dtc_info_request_encode_tests {
     }
 
     #[test]
-    fn user_def_memory_dtc_by_status_mask_rejects_a_missing_memory_selection() {
-        // Without the MemorySelection byte the frame is malformed, and used to be accepted
-        // while the conformant 3-parameter form was rejected as having trailing bytes.
+    fn sub_function_0x17_requires_a_memory_selection() {
+        // Without the MemorySelection byte the frame is malformed.
         assert!(<ReadDtcInfoRequest as Decode>::decode_exact(&[0x17, 0xFF]).is_err());
     }
 
@@ -383,9 +377,8 @@ pub struct DtcFaultDetectionCounterRecord {
 impl DtcFaultDetectionCounterRecord {
     /// Create a `DtcFaultDetectionCounterRecord`.
     ///
-    /// This type is `#[non_exhaustive]`, so downstream crates cannot use a struct literal
-    /// and need this constructor — for a test fixture, or for a server building the record
-    /// list that [`DtcFaultDetectionIter`] reads back.
+    /// For a test fixture, or for a server building the record list that
+    /// [`DtcFaultDetectionIter`] reads back.
     #[must_use]
     pub const fn new(dtc_record: DtcRecord, dtc_fault_detection_counter: u8) -> Self {
         Self {
@@ -465,8 +458,7 @@ pub enum ReadDtcInfoSubFunction {
     ReportDtcExtDataRecordByRecordNumber(DtcExtDataRecordNumber),
 
     /// * Parameter: `DtcStatusMask`
-    /// * Parameter: `memorySelection`(1) — addresses the user-defined DTC memory to read
-    ///   from
+    /// * Parameter: `memorySelection`(1), the user-defined DTC memory to read from
     ///
     /// Both parameters are mandatory (ISO 14229-1:2020 Table 310).
     ///
@@ -475,14 +467,14 @@ pub enum ReadDtcInfoSubFunction {
 
     /// Parameter: `DtcRecord` (3 bytes)
     /// Parameter: `DtcSnapshotRecordNumber`(1)
-    /// Parameter: `memorySelection`(1) — addresses the user-defined DTC memory to read from
+    /// Parameter: `memorySelection`(1), the user-defined DTC memory to read from
     ///
     /// 0x18
     ReportUserDefMemoryDtcSnapshotRecordByDtcNumber(DtcRecord, DtcSnapshotRecordNumber, u8),
 
     /// Parameter: `DtcRecord` (3 bytes)
     /// Parameter: `DtcExtDataRecordNumber`(1) (0xFF for all records)
-    /// Parameter: `memorySelection`(1) — addresses the user-defined DTC memory to read from
+    /// Parameter: `memorySelection`(1), the user-defined DTC memory to read from
     ///
     /// 0x19
     ReportUserDefMemoryDtcExtDataRecordByDtcNumber(DtcRecord, DtcExtDataRecordNumber, u8),
@@ -528,17 +520,15 @@ pub enum ReadDtcInfoSubFunction {
 
 impl ReadDtcInfoSubFunction {
     /// Build the [`IsoSaeReserved`](Self::IsoSaeReserved) variant for a sub-function byte
-    /// this crate does not model.
-    ///
-    /// A tester needs this to originate a request for a report type the crate has not
-    /// implemented — `Self::IsoSaeReserved(byte)` is not writable outside this crate,
-    /// because the variant is `#[non_exhaustive]` to keep bit 7 out of it.
+    /// this crate does not model, which is how a tester originates a request for a report
+    /// type the crate has not implemented; the variant itself is `#[non_exhaustive]` so bit
+    /// 7 cannot be written into it.
     ///
     /// # Errors
     /// Returns [`Error::InvalidDtcSubfunctionType`] if bit 7 is set. That bit is the
     /// suppressPosRspMsgIndicationBit, not part of the sub-function value: pass it as the
-    /// first argument to [`ReadDtcInfoRequest::new`] instead. Letting it into the variant
-    /// would make `0x80` encode as a suppressed `0x00`.
+    /// first argument to [`ReadDtcInfoRequest::new`] instead, or `0x80` would encode as a
+    /// suppressed `0x00`.
     pub const fn try_reserved(byte: u8) -> Result<Self, Error> {
         if byte & !SPRMIB_VALUE_MASK != 0 {
             return Err(Error::InvalidDtcSubfunctionType(byte));
@@ -659,7 +649,7 @@ impl ReadDtcInfoSubFunction {
 
 /// A `ReadDTCInformation` report type, without the parameters it carries.
 ///
-/// ISO 14229-1:2020 clause 12.3.2.2, Table 317 — the sub-function byte alone. A server
+/// ISO 14229-1:2020 clause 12.3.2.2, Table 317: the sub-function byte alone. A server
 /// answers Figure 6's sub-function questions (`subFunctionNotSupported`, 0x12, and
 /// `subFunctionNotSupportedInActiveSession`, 0x7E) from this byte, before the request's
 /// length is checked, so it needs the report type apart from the parameters
@@ -881,7 +871,7 @@ mod read_dtc_info_report_type_tests {
     }
 
     /// A decoded sub-function's report type is the type its byte names, so the two
-    /// lookups a server makes — before and after decoding — agree.
+    /// lookups a server makes, before and after decoding, agree.
     #[test]
     fn a_sub_function_projects_onto_the_report_type_of_its_byte() {
         for byte in 0x00..=0x7F_u8 {
@@ -924,14 +914,12 @@ impl Encode for ReadDtcInfoSubFunction {
 ///
 /// Each pair is 4 bytes: 3 for the DTC record + 1 for the status mask.
 ///
-/// # Length
-///
-/// [`len`](DtcAndStatusIter::len) counts **complete records**;
-/// [`size_hint`](Iterator::size_hint) counts **items yielded**, which is one greater when a
-/// partial record trails the buffer (that tail surfaces as a single `Err`, after which the
-/// iterator is exhausted). The two therefore differ on malformed input, which is why this
-/// deliberately does not implement `ExactSizeIterator` — its `len()` would contradict the
-/// inherent one. It does implement [`FusedIterator`](core::iter::FusedIterator).
+/// [`len`](DtcAndStatusIter::len) counts complete records;
+/// [`size_hint`](Iterator::size_hint) counts items yielded, one more when a partial record
+/// trails the buffer, since that tail surfaces as a single `Err` after which the iterator
+/// is exhausted. The two differ on malformed input, so this is a
+/// [`FusedIterator`](core::iter::FusedIterator) but not an `ExactSizeIterator`, whose
+/// `len()` would contradict the inherent one.
 #[derive(Clone, Debug)]
 pub struct DtcAndStatusIter<'a> {
     remaining: &'a [u8],
@@ -975,8 +963,7 @@ impl Iterator for DtcAndStatusIter<'_> {
         }
         if self.remaining.len() < 4 {
             // Consume the partial tail so the error is reported exactly once and the
-            // iterator terminates. Returning without advancing would yield this error
-            // forever.
+            // iterator terminates.
             self.remaining = &[];
             return Some(Err(Error::IncorrectMessageLengthOrInvalidFormat));
         }
@@ -1000,14 +987,12 @@ impl core::iter::FusedIterator for DtcAndStatusIter<'_> {}
 ///
 /// Each record is 4 bytes: 3 for the DTC record + 1 for the fault detection counter.
 ///
-/// # Length
-///
-/// [`len`](DtcFaultDetectionIter::len) counts **complete records**;
-/// [`size_hint`](Iterator::size_hint) counts **items yielded**, which is one greater when a
-/// partial record trails the buffer (that tail surfaces as a single `Err`, after which the
-/// iterator is exhausted). The two therefore differ on malformed input, which is why this
-/// deliberately does not implement `ExactSizeIterator` — its `len()` would contradict the
-/// inherent one. It does implement [`FusedIterator`](core::iter::FusedIterator).
+/// [`len`](DtcFaultDetectionIter::len) counts complete records;
+/// [`size_hint`](Iterator::size_hint) counts items yielded, one more when a partial record
+/// trails the buffer, since that tail surfaces as a single `Err` after which the iterator
+/// is exhausted. The two differ on malformed input, so this is a
+/// [`FusedIterator`](core::iter::FusedIterator) but not an `ExactSizeIterator`, whose
+/// `len()` would contradict the inherent one.
 #[derive(Clone, Debug)]
 pub struct DtcFaultDetectionIter<'a> {
     remaining: &'a [u8],
@@ -1075,22 +1060,17 @@ impl Iterator for DtcFaultDetectionIter<'_> {
 impl core::iter::FusedIterator for DtcFaultDetectionIter<'_> {}
 
 /// Lazy iterator over the WWH-OBD `(DtcSeverityMask, DtcRecord, DtcStatusMask)` triples of
-/// a [`ReadDtcInfoResponse::WwhObdDtcByMaskRecord`] (sub-function `0x42`).
+/// a [`ReadDtcInfoResponse::WwhObdDtcByMaskRecord`] (sub-function `0x42`). Each triple is
+/// 5 bytes: 1 severity + 3 DTC record + 1 status mask. The `0x08`/`0x09`
+/// [`DtcSeverityList`](ReadDtcInfoResponse::DtcSeverityList) records are 6 bytes, with a
+/// DTC functional-unit byte, and have no iterator.
 ///
-/// Each triple is 5 bytes: 1 severity + 3 DTC record + 1 status mask.
-///
-/// This applies **only** to the WWH-OBD variant. The `0x08`/`0x09`
-/// [`DtcSeverityList`](ReadDtcInfoResponse::DtcSeverityList) records are 6 bytes and carry
-/// an extra DTC functional-unit byte, so they need a different iterator (not yet wired).
-///
-/// # Length
-///
-/// [`len`](WwhObdDtcSeverityIter::len) counts **complete records**;
-/// [`size_hint`](Iterator::size_hint) counts **items yielded**, which is one greater when a
-/// partial record trails the buffer (that tail surfaces as a single `Err`, after which the
-/// iterator is exhausted). The two therefore differ on malformed input, which is why this
-/// deliberately does not implement `ExactSizeIterator` — its `len()` would contradict the
-/// inherent one. It does implement [`FusedIterator`](core::iter::FusedIterator).
+/// [`len`](WwhObdDtcSeverityIter::len) counts complete records;
+/// [`size_hint`](Iterator::size_hint) counts items yielded, one more when a partial record
+/// trails the buffer, surfacing as a single `Err` after which the iterator is exhausted.
+/// The two differ on malformed input, so this is a
+/// [`FusedIterator`](core::iter::FusedIterator) but not an `ExactSizeIterator`, whose
+/// `len()` would contradict the inherent one.
 #[derive(Clone, Debug)]
 pub struct WwhObdDtcSeverityIter<'a> {
     remaining: &'a [u8],
@@ -1277,16 +1257,12 @@ impl From<DtcSeverityReport> for ReadDtcInfoReportType {
 
 /// Zero-copy parsed response for `ReadDTCInformation` (0x19).
 ///
-/// Stores raw bytes for record collections and provides lazy iterators
-/// that parse on demand without allocation.
-///
-/// # Coverage
-///
-/// The variants parse [`DtcCountReport`], [`DtcListReport`] and [`DtcSeverityReport`]'s
-/// report types, `0x04` and `0x06` (one DTC's snapshot or extended data records), `0x14`
-/// (fault detection counters) and `0x42` (WWH-OBD by mask). Any other report type of
-/// [`ReadDtcInfoReportType`] decodes as [`Self::Unmodeled`], its parameters raw; a
-/// reserved one is [`Error::InvalidDtcSubfunctionType`].
+/// Stores raw bytes for record collections and provides lazy iterators that parse on
+/// demand without allocation. The variants parse [`DtcCountReport`], [`DtcListReport`] and
+/// [`DtcSeverityReport`]'s report types, `0x04` and `0x06` (one DTC's snapshot or extended
+/// data records), `0x14` (fault detection counters) and `0x42` (WWH-OBD by mask). Any other
+/// report type of [`ReadDtcInfoReportType`] decodes as [`Self::Unmodeled`], its parameters
+/// raw; a reserved one is [`Error::InvalidDtcSubfunctionType`].
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1297,15 +1273,15 @@ pub enum ReadDtcInfoResponse<'a> {
         /// The report type echoed.
         report: DtcCountReport,
         /// Which status bits this server supports reporting. Same representation as
-        /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status — a
+        /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status: a
         /// server that does not support [`DtcStatusMask::WarningIndicatorRequested`] leaves
         /// that bit 'off' and sets the rest.
         status_availability_mask: DtcStatusMask,
         /// How the server's DTC numbers are formatted and encoded.
         ///
         /// Mandatory in this response (ISO 14229-1:2020 Table 319), and the only thing that
-        /// says how to interpret the three bytes of each DTC — ISO 14229-1 itself defines
-        /// no decoding method for them.
+        /// says how to interpret the three bytes of each DTC, for which ISO 14229-1 itself
+        /// defines no decoding method.
         format_identifier: DtcFormatIdentifier,
         /// Number of matching DTCs.
         count: u16,
@@ -1315,18 +1291,18 @@ pub enum ReadDtcInfoResponse<'a> {
         /// The report type echoed.
         report: DtcListReport,
         /// Which status bits this server supports reporting. Same representation as
-        /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status — a
+        /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status: a
         /// server that does not support [`DtcStatusMask::WarningIndicatorRequested`] leaves
         /// that bit 'off' and sets the rest.
         status_availability_mask: DtcStatusMask,
-        /// Raw record bytes, 4 per record (3-byte DTC + status) — use [`DtcAndStatusIter`].
+        /// Raw record bytes, 4 per record (3-byte DTC + status); use [`DtcAndStatusIter`].
         /// Decoding rejects a length that is not a whole number of records.
         #[cfg_attr(feature = "serde", serde(borrow))]
         raw_records: &'a [u8],
     },
     /// Sub-function 0x14: list of DTC fault detection counter records.
     DtcFaultDetectionCounterList {
-        /// Raw record bytes, 4 per record (3-byte DTC + counter) — use
+        /// Raw record bytes, 4 per record (3-byte DTC + counter); use
         /// [`DtcFaultDetectionIter`]. Decoding rejects a length that is not a whole number
         /// of records.
         #[cfg_attr(feature = "serde", serde(borrow))]
@@ -1365,13 +1341,13 @@ pub enum ReadDtcInfoResponse<'a> {
         /// The report type echoed.
         report: DtcSeverityReport,
         /// Which status bits this server supports reporting. Same representation as
-        /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status — a
+        /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status: a
         /// server that does not support [`DtcStatusMask::WarningIndicatorRequested`] leaves
         /// that bit 'off' and sets the rest.
         status_availability_mask: DtcStatusMask,
-        /// Raw `DTCAndSeverityRecord` bytes: 6 each — severity + DTC functional unit +
-        /// 3-byte DTC + status. No iterator is wired for this variant yet, so parse them
-        /// caller-side. Note these are *not* the 5-byte WWH-OBD records read by
+        /// Raw `DTCAndSeverityRecord` bytes, 6 each: severity + DTC functional unit +
+        /// 3-byte DTC + status. No iterator is provided for this variant, so parse them
+        /// caller-side. These are *not* the 5-byte WWH-OBD records read by
         /// [`WwhObdDtcSeverityIter`]. Decoding rejects a length that is not a multiple of
         /// 6.
         #[cfg_attr(feature = "serde", serde(borrow))]
@@ -1382,7 +1358,7 @@ pub enum ReadDtcInfoResponse<'a> {
         /// Functional group identifier echo.
         functional_group_identifier: FunctionalGroupIdentifier,
         /// Which status bits this server supports reporting. Same representation as
-        /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status — a
+        /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status: a
         /// server that does not support [`DtcStatusMask::WarningIndicatorRequested`] leaves
         /// that bit 'off' and sets the rest.
         status_availability_mask: DtcStatusMask,
@@ -1390,7 +1366,7 @@ pub enum ReadDtcInfoResponse<'a> {
         severity_availability_mask: DtcSeverityMask,
         /// DTC format identifier.
         format_identifier: DtcFormatIdentifier,
-        /// Raw record bytes, 5 per record — use [`WwhObdDtcSeverityIter`]. Decoding rejects
+        /// Raw record bytes, 5 per record; use [`WwhObdDtcSeverityIter`]. Decoding rejects
         /// a length that is not a whole number of records.
         #[cfg_attr(feature = "serde", serde(borrow))]
         raw_records: &'a [u8],
@@ -1449,17 +1425,6 @@ impl<'a> ReadDtcInfoResponse<'a> {
     }
 }
 
-/// Validate that a record list divides evenly into whole records.
-///
-/// A UDS frame is complete when it arrives — its length comes from the transport — so a
-/// trailing partial record means the frame is malformed, not that more bytes are coming.
-/// Rejecting it here matches how the crate treats every other length mismatch.
-///
-/// Consequently the iterators reached from a **decoded** [`ReadDtcInfoResponse`] never see
-/// a partial tail. A hand-constructed variant still can — the enum's `#[non_exhaustive]`
-/// stops exhaustive matching, not variant construction, and `Encode` writes `raw_records`
-/// verbatim — so the iterators keep their `Result` item type and their
-/// one-error-then-terminate behaviour.
 /// The echo, DTC and status that open sub-function `0x04` or `0x06`, then its records.
 fn encode_by_dtc_number(
     writer: &mut impl automotive_wire_codec::Sink,
@@ -1504,6 +1469,12 @@ fn encode_masked(
     Ok(written + write_bytes(writer, records)?)
 }
 
+/// `raw` if it divides evenly into records of `record_len` bytes.
+///
+/// A UDS frame is complete when it arrives, so a trailing partial record is a malformed
+/// frame, rejected like every other length mismatch. The iterators reached from a decoded
+/// [`ReadDtcInfoResponse`] therefore never see a partial tail; a hand-constructed variant
+/// still can, so they keep their `Result` item type.
 fn whole_records(raw: &[u8], record_len: usize) -> Result<&[u8], Error> {
     if raw.len().is_multiple_of(record_len) {
         Ok(raw)
@@ -1776,9 +1747,7 @@ mod response_decode_tests {
     fn the_dtc_count_response_carries_a_format_identifier() {
         // ISO 14229-1:2020 Table 341 (flow example #1) is exactly these six bytes: SID,
         // reportType, DTCStatusAvailabilityMask, DTCFormatIdentifier, count high, low.
-        // Table 319 marks all of them `M`. The format identifier used to be missing from
-        // the model, so it was read as the count high byte: this frame was rejected
-        // outright, and a count of 1 came back as 0x0100.
+        // Table 319 marks all of them `M`.
         let wire = [0x59, 0x01, 0x2F, 0x01, 0x00, 0x01];
         let (resp, _) = Response::decode(&wire).unwrap();
         let Response::ReadDtcInfo(ReadDtcInfoResponse::NumberOfDtcs {
@@ -1808,12 +1777,8 @@ mod response_decode_tests {
     fn the_wwh_obd_response_header_and_records_decode_field_by_field() {
         // ISO 14229-1:2020 Table 332: FGID, DTCStatusAvailabilityMask,
         // DTCSeverityAvailabilityMask, DTCFormatIdentifier, then 5-byte records of
-        // severity + 3-byte DTC + status.
-        //
-        // Nothing had ever asserted a value this iterator yields, nor any of the four
-        // header fields — every test checked only counts and `is_ok()`. Reversing the
-        // header fields, or swapping severity with status and reversing the DTC bytes,
-        // passed the whole suite.
+        // severity + 3-byte DTC + status. Every header field and every record field is
+        // asserted by value, so a reordering of either fails.
         let wire = [
             0x59, 0x42, 0x33, 0xFF, 0xF0, 0x01, 0x80, 0x01, 0x02, 0x03, 0x0A,
         ];
@@ -1869,9 +1834,8 @@ mod response_decode_tests {
 
     #[test]
     fn an_insufficient_data_shortfall_measures_both_counts_on_one_buffer() {
-        // `needed` used to include the sub-function byte while `available` was measured
-        // after it was sliced off, so a caller computing `needed - available` got a
-        // shortfall one byte too large. Both are now relative to the payload.
+        // `needed` and `available` are both relative to the payload after the sub-function
+        // byte, so `needed - available` is the shortfall.
         for (label, frame, needed, available) in [
             ("0x01 count", [0x59, 0x01, 0x2F].as_slice(), 4, 1),
             ("0x02 list", [0x59, 0x02].as_slice(), 1, 0),
@@ -1903,7 +1867,7 @@ mod response_decode_tests {
     const LISTS: [(&str, &[u8], usize); 4] = [
         // 0x02: status availability mask, then 4-byte (DTC, status) records.
         ("DtcList 0x02", &[0x02, 0xFF], 4),
-        // 0x14: no mask byte — records start immediately.
+        // 0x14: no mask byte; records start immediately.
         ("DtcFaultDetectionCounterList 0x14", &[0x14], 4),
         // 0x08: status availability mask, then 6-byte DTCAndSeverityRecord entries.
         ("DtcSeverityList 0x08", &[0x08, 0xFF], 6),
@@ -1935,14 +1899,10 @@ mod response_decode_tests {
 
     #[test]
     fn record_lists_must_divide_evenly_into_records() {
-        // A trailing partial record means the frame is malformed. Rejecting it here matches
-        // how the crate treats every other length mismatch, and means the iterators
-        // returned by the accessors can never see a partial tail. Every misaligned length
-        // below two whole records, which crucially includes 1..width -- a list too short to
-        // hold even one record. That range was untested, so a `whole_records` that accepted
-        // any short list passed: 0 records was covered by `empty_record_lists_are_valid`
-        // and 1 record by the aligned test, but the 0-valid / 1-invalid boundary, the whole
-        // point of the check, was not.
+        // A trailing partial record means the frame is malformed, so the iterators returned
+        // by the accessors never see a partial tail. Every misaligned length below two
+        // whole records is tried, including 1..width, a list too short to hold even one
+        // record, so the 0-valid / 1-invalid boundary is covered.
         for (label, prefix, width) in LISTS {
             for record_bytes in (1..2 * width).filter(|n| n % width != 0) {
                 let (buf, len) = frame(prefix, record_bytes);
@@ -1969,7 +1929,7 @@ mod response_decode_tests {
                     .map(Iterator::count)
                     .or_else(|| resp.dtc_fault_detection_iter().map(Iterator::count))
                     .or_else(|| resp.wwh_obd_dtc_severity_iter().map(Iterator::count));
-                // DtcSeverityList has no iterator wired yet, so it has no count to check.
+                // DtcSeverityList has no iterator, so it has no count to check.
                 if let Some(counted) = counted {
                     assert_eq!(counted, records, "{label}: wrong record count");
                 }
@@ -1991,7 +1951,7 @@ mod response_decode_tests {
 
     #[test]
     fn a_misaligned_list_is_rejected_at_the_frame_layer_too() {
-        // SID 0x59, sub 0x02, mask 0xFF, then 5 record bytes — one byte past a whole
+        // SID 0x59, sub 0x02, mask 0xFF, then 5 record bytes: one byte past a whole
         // record.
         let wire = [0x59, 0x02, 0xFF, 0x01, 0x02, 0x03, 0x0A, 0xEE];
         assert!(matches!(
@@ -2008,9 +1968,9 @@ mod response_decode_tests {
 
     #[test]
     fn iterators_from_a_decoded_response_never_yield_an_error() {
-        // The payoff: with decode validating alignment, every iterator obtained through an
-        // accessor is error-free. The `Err` arm remains reachable only via `Iter::new` on
-        // arbitrary bytes, which `iter_tests` covers.
+        // Decode validates alignment, so every iterator obtained through an accessor is
+        // error-free. The `Err` arm is reachable only via `Iter::new` on arbitrary bytes,
+        // which `iter_tests` covers.
         for (label, prefix, width) in LISTS {
             let (buf, len) = frame(prefix, width * 2);
             let (resp, _) = <ReadDtcInfoResponse as Decode>::decode(&buf[..len]).unwrap();
@@ -2041,7 +2001,7 @@ mod iter_tests {
         assert!(!iter.is_empty());
 
         // A buffer shorter than one record has zero complete records, and is_empty()
-        // agrees with len() == 0 (the previous bug reported is_empty() == false here).
+        // agrees with len() == 0.
         let partial_only = [0x01, 0x02, 0x03];
         let iter = DtcAndStatusIter::new(&partial_only);
         assert_eq!(iter.len(), 0);
@@ -2060,12 +2020,9 @@ mod iter_tests {
 
     #[test]
     fn partial_tail_yields_one_error_then_terminates() {
-        // Previously `next()` returned `Some(Err(..))` on a partial record *without*
-        // advancing `remaining`, so the iterator yielded that error forever: `for _ in
-        // iter` looped, `count()` hung, and `collect::<Vec<Result<..>>>()` allocated
-        // without bound. `collect_all()` happened to terminate only because
-        // `collect::<Result<Vec, _>>()` short-circuits on the first error. Bounded with
-        // `take` so a regression fails instead of hanging the suite.
+        // A partial record yields one `Err` and then `None`, so `for _ in iter`, `count()`
+        // and `collect()` all terminate. Bounded with `take` so a non-terminating iterator
+        // fails the test instead of hanging it.
         let data = [0x01, 0x02, 0x03, 0x0A, 0xFF]; // one complete record + 1 stray byte
         let items: heapless_vec::Bounded<8> =
             DtcAndStatusIter::new(&data).take(8).collect_bounded();
@@ -2095,8 +2052,8 @@ mod iter_tests {
     fn size_hint_matches_the_number_of_items_yielded() {
         // All three iterators, every buffer length across several record boundaries. The
         // two record widths differ (4 bytes vs 5), so each needs its own `div_ceil`
-        // checked. `take` bounds the count so a non-termination regression fails rather
-        // than hangs.
+        // checked. `take` bounds the count so a non-terminating iterator fails rather than
+        // hangs.
         let data = [0u8; 16];
         for len in 0usize..=16 {
             let it = DtcAndStatusIter::new(&data[..len]);
@@ -2146,8 +2103,8 @@ mod iter_tests {
         //
         // The drains are bounded, like the ones in `size_hint_matches_the_number_of_items_
         // yielded`: a 7-byte buffer can yield at most 2 items, so `take(8)` cannot hide a
-        // real result, and a regression that stops advancing `remaining` fails here instead
-        // of hanging `cargo test` forever with the other failures unreported.
+        // real result, and an iterator that stops advancing `remaining` fails here instead
+        // of hanging the test run.
         const CAP: usize = 8;
         let data = [0u8; 7]; // not a whole number of records for either width
 
@@ -2234,7 +2191,7 @@ mod by_dtc_number {
     const EXT_DATA: [u8; 9] = [0x06, 0x12, 0x34, 0x56, 0x24, 0x05, 0x17, 0x10, 0x79];
 
     #[test]
-    fn a_snapshot_response_decodes_to_its_dtc_status_and_raw_records() {
+    fn snapshot_response_decodes() {
         let decoded = ReadDtcInfoResponse::decode_exact(&SNAPSHOT).unwrap();
         assert_eq!(
             decoded,
@@ -2250,7 +2207,7 @@ mod by_dtc_number {
     }
 
     #[test]
-    fn an_ext_data_response_decodes_to_its_dtc_status_and_raw_records() {
+    fn ext_data_response_decodes() {
         let decoded = ReadDtcInfoResponse::decode_exact(&EXT_DATA).unwrap();
         assert_eq!(
             decoded,

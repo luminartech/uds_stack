@@ -1,16 +1,16 @@
-// Fuzz encode→decode roundtrip: decode arbitrary bytes into a Request,
-// re-encode it, and verify the encoding is idempotent at the byte level.
+// Fuzz the encode/decode round trip: decode arbitrary bytes into a Request,
+// re-encode it, and check that the encoding is idempotent at the byte level.
 //
-// `Request` does not implement `PartialEq`, so we compare the canonical wire
-// bytes rather than the decoded values: encoding a decoded message, decoding
-// those bytes again, and re-encoding must yield identical bytes.
+// The comparison is on the canonical wire bytes rather than the decoded values:
+// encoding a decoded message, decoding those bytes again, and re-encoding must
+// yield identical bytes.
 #![no_main]
 use automotive_wire_codec::SliceSink;
 use libfuzzer_sys::fuzz_target;
 use uds_protocol::{Decode, Encode, Request};
 
 fuzz_target!(|data: &[u8]| {
-    // Only proceed if we can decode the input.
+    // Only a decodable input is checked.
     let Ok((request, _rest)) = Request::decode(data) else {
         return;
     };

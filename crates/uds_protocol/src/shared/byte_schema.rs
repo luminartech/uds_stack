@@ -1,19 +1,11 @@
 //! `OpenAPI` schemas for the types that serialize as a single protocol byte or 16-bit
 //! identifier.
 //!
-//! Several public types are one wire integer with a range invariant. Their `serde` impls
-//! go through it (via `serde(try_from = "u8", into = "u8")`, `serde(from = "u16", into =
-//! "u16")` and the like) so that deserializing cannot build a value their constructor
-//! would reject. A
-//! derived `ToSchema` would still describe the Rust shape — an object with nibble
-//! properties, or a `oneOf` over variant names — and so disagree with what `serde` actually
-//! reads and writes. These impls keep the two in step.
-//!
-//! Each schema carries the actual accepted range rather than `u8`'s bare `{"type":
-//! "integer", "minimum": 0}`. Delegating to `<u8 as PartialSchema>` advertised `0..=2^31`,
-//! so a generated client emitted an `i32` and discovered the real bound as a runtime
-//! rejection. The whole reason these types exist is that their bytes have ranges; the
-//! schema is the one place that has to say so.
+//! Each such type's `serde` impl goes through the integer (`serde(try_from = "u8", into =
+//! "u8")` and the like), so a derived `ToSchema`, which describes the Rust shape, would
+//! disagree with what `serde` reads and writes. Each schema here is an integer carrying the
+//! accepted range, so a generated client learns the bound from the document rather than
+//! from a runtime rejection.
 
 /// Implement `PartialSchema`/`ToSchema` for a type whose serialized form is one integer.
 ///

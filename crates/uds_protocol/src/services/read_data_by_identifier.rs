@@ -7,10 +7,10 @@ use automotive_wire_codec::{write_bytes, write_u16_be};
 
 /// Positive response to `ReadDataByIdentifier`: raw `[DID][data record]…` bytes.
 ///
-/// Left opaque **by design**: each data record's length is defined by the ECU's
-/// configuration for that DID and is not present on the wire, so the library cannot
-/// split it into `(DID, value)` pairs. Read the 2-byte big-endian DID, take the
-/// application-defined number of data bytes via [`records`](Self::records), then repeat.
+/// Opaque: each data record's length is defined by the ECU's configuration for that DID
+/// and is not present on the wire, so the library cannot split it into `(DID, value)`
+/// pairs. Read the 2-byte big-endian DID, take the application-defined number of data
+/// bytes via [`records`](Self::records), then repeat.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,15 +73,9 @@ const READ_DID_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 5] = [
 /// Read-DID request: a list of 16-bit Data Identifiers. Built from native `&[u16]`
 /// or borrowed from the wire as big-endian bytes; `dids()` yields `u16` either way.
 ///
-/// # serde / utoipa carve-out
-///
-/// serde derives are omitted: the zero-copy `Native(&[u16])` backing has no borrowed
-/// `Deserialize` impl in serde (zero-copy borrowing via `#[serde(borrow)]` only works
-/// for `&[u8]` and `&str`, not `&[u16]`), so `Dids::Native(&[u16])` cannot be
-/// deserialized without an owned allocation.
-///
-/// utoipa derives are omitted: `utoipa::ToSchema` cannot be derived on
-/// `ReadDataByIdentifierRequest` without also deriving it on the private `Dids` enum.
+/// No `serde` or `utoipa` implementation: `serde` can borrow only `&[u8]` and `&str`, not
+/// the `&[u16]` backing, so deserializing would need an allocation, and `ToSchema` would
+/// have to be derived on the private backing enum as well.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ReadDataByIdentifierRequest<'d> {
@@ -186,7 +180,7 @@ mod test {
     #[test]
     fn derive_contract() {
         assert_impl_eq::<ReadDataByIdentifierRequest<'static>>();
-        // serde: omitted — see struct-level doc comment for rationale
+        // No serde assertion: the type has no serde implementation (see its doc comment).
     }
 
     #[test]
@@ -205,7 +199,7 @@ mod test {
             <ReadDataByIdentifierRequest as Decode>::decode(&[0xF1, 0x90, 0xF1, 0x86])
                 .unwrap();
         assert_eq!(rest, [0u8; 0]);
-        // Iterate without alloc (no_std-friendly): pull items directly.
+        // Pull items directly so the test runs without `alloc`.
         let mut it = req.dids();
         assert_eq!(it.next(), Some(0xF190));
         assert_eq!(it.next(), Some(0xF186));

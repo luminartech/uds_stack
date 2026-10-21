@@ -5,11 +5,8 @@
 //! the defining crate a `#[non_exhaustive]` struct literal compiles fine, so a type that is
 //! impossible for anyone else to build still looks constructible from there.
 
-// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
-// test that indexes a known-length vector reads better than one that does not. The
-// workspace lint standard in the root Cargo.toml reaches this target too -- an
-// integration test is its own crate, so lib.rs cannot speak for it -- which is why
-// the relaxation is stated here rather than left implicit.
+// Test code: `unwrap`, `expect` and `panic` are the failure mechanism. An integration test
+// is its own crate, so lib.rs cannot relax the workspace lints for it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -24,11 +21,10 @@ use uds_protocol::{
 };
 
 #[test]
-fn a_tester_can_still_request_an_unmodeled_read_dtc_information_sub_function() {
-    // Sealing `IsoSaeReserved` keeps bit 7 (SPRMIB) out of the sub-function value, but it
-    // also made `IsoSaeReserved(byte)` unwritable out here — so a tester could no longer
-    // originate a request for a report type the crate has not implemented. `try_reserved`
-    // is the door.
+fn try_reserved_builds_an_unmodeled_sub_function() {
+    // `IsoSaeReserved(byte)` is not writable out here, which keeps bit 7 (SPRMIB) out of
+    // the sub-function value; `try_reserved` is how a tester originates a request for a
+    // report type the crate has not implemented.
     use uds_protocol::{Encode, ReadDtcInfoRequest, ReadDtcInfoSubFunction};
 
     let sub = ReadDtcInfoSubFunction::try_reserved(0x57).expect("0x57 has bit 7 clear");
@@ -44,23 +40,21 @@ fn a_tester_can_still_request_an_unmodeled_read_dtc_information_sub_function() {
     let written = suppressed.encode_to_slice(&mut buf).expect("encodes");
     assert_eq!(&buf[..written], &[0xD7]);
 
-    // Bit 7 is SPRMIB, so it must not be smuggled in as part of the sub-function value:
-    // 0x80 would otherwise encode as a suppressed 0x00.
+    // Bit 7 is SPRMIB, not part of the sub-function value: 0x80 would otherwise encode as
+    // a suppressed 0x00.
     assert!(ReadDtcInfoSubFunction::try_reserved(0x80).is_err());
     assert!(ReadDtcInfoSubFunction::try_reserved(0xD7).is_err());
 }
 
 #[test]
 fn a_session_layer_can_tell_not_suppressed_from_cannot_say() {
-    // The distinction this method exists to make, checked from outside the crate. ISO
-    // 14229-2:2021 clause 10.3 gates tP3_Client_Phys on the SPRMIB, and whether a
-    // response is expected decides whether tP_Client starts at all -- so a caller has to
-    // be able to reach all three answers, not just the two a `bool` could express.
+    // ISO 14229-2:2021 clause 10.3 gates tP3_Client_Phys on the SPRMIB, and whether a
+    // response is expected decides whether tP_Client starts at all, so a caller reaches
+    // all three answers, not just the two a `bool` could express.
     use uds_protocol::{Decode, Request, UdsServiceType};
 
-    // The fact behind all of the above is reachable on its own, for a caller building a
-    // dispatch table rather than inspecting a decoded frame. It is `const`, so it can be
-    // one.
+    // The fact behind the answers is reachable on its own and in a `const`, for a caller
+    // building a dispatch table rather than inspecting a decoded frame.
     const ECU_RESET: Option<bool> = UdsServiceType::EcuReset.has_sub_function();
 
     // Modeled, has a sub-function, bit clear: a definite "expect a response".
@@ -77,7 +71,7 @@ fn a_session_layer_can_tell_not_suppressed_from_cannot_say() {
         Request::decode(&[0x2C, 0x81, 0xF3, 0x00]).expect("DDDI with SPRMIB");
     assert_eq!(unmodeled.is_positive_response_suppressed(), Some(true));
 
-    // Vendor-specific: unknown, and the caller must supply the answer itself.
+    // Vendor-specific: unknown, so the caller supplies the answer itself.
     let (vendor, _) = Request::decode(&[0x40, 0xAA]).expect("unassigned SIDs pass through");
     assert_eq!(vendor.is_positive_response_suppressed(), None);
 
@@ -91,9 +85,8 @@ fn a_session_layer_can_tell_not_suppressed_from_cannot_say() {
 
 #[test]
 fn dtc_fault_detection_counter_record_is_constructible_downstream() {
-    // This is the `Item` type of a public iterator and is re-exported at the crate root so
-    // callers can name it. Without a constructor, `#[non_exhaustive]` made the only way to
-    // obtain one decoding bytes through `DtcFaultDetectionIter` — E0639 out here.
+    // The `Item` type of a public iterator, re-exported at the crate root so callers can
+    // name it and given a constructor so a downstream can build one (E0639 otherwise).
     let record =
         DtcFaultDetectionCounterRecord::new(DtcRecord::new(0x01, 0x02, 0x03), 0x2A);
     assert_eq!(record.dtc_record, DtcRecord::new(0x01, 0x02, 0x03));
@@ -103,13 +96,9 @@ fn dtc_fault_detection_counter_record_is_constructible_downstream() {
 #[test]
 fn the_payload_data_bags_are_buildable_with_a_struct_literal() {
     // These five carry no invariant: every field is `pub`, and their encoders derive the
-    // wire widths from the values, so no combination fails. The crate's rule is to
-    // encapsulate a request/response struct *iff* it bears an invariant, so these are plain
-    // data bags and a struct literal must work from out here. They were briefly
-    // `#[non_exhaustive]` purely for symmetry with the invariant-bearing types, which cost
-    // a downstream the struct literal (E0639) and bought nothing --
-    // `DtcFaultDetectionCounterRecord` became unbuildable entirely and took two follow-up
-    // commits to repair.
+    // wire widths from the values, so no combination fails. A request or response struct is
+    // encapsulated exactly when it bears an invariant, so these are plain data bags and a
+    // struct literal works from out here.
     let _ = SizePayload {
         file_size_uncompressed: 0xC350,
         file_size_compressed: 0x7530,
@@ -141,11 +130,9 @@ fn the_payload_data_bags_are_buildable_with_a_struct_literal() {
 
 #[test]
 fn the_two_length_bounded_payloads_reject_an_unencodable_value() {
-    // These two are the ones that genuinely bear an invariant, so they keep both
-    // `#[non_exhaustive]` and a fallible constructor: the wire field carrying the length is
-    // one byte for `SentDataPayload` and two for `NamePayload`, and `encode` used to be the
-    // first thing to notice an over-long value. A struct literal here is correctly a
-    // compile error.
+    // These two bear an invariant, so they have both `#[non_exhaustive]` and a fallible
+    // constructor: the wire field carrying the length is one byte for `SentDataPayload`
+    // and two for `NamePayload`. A struct literal here is a compile error.
     assert!(SentDataPayload::new(&[0u8; 255]).is_ok());
     assert!(SentDataPayload::new(&[0u8; 256]).is_err());
 
@@ -156,15 +143,13 @@ fn the_two_length_bounded_payloads_reject_an_unencodable_value() {
 #[cfg(feature = "serde")]
 #[test]
 fn serde_cannot_build_a_reserved_variant_that_aliases_a_named_one() {
-    // With a plain derived `Deserialize`, `{"IsoSaeReserved":1}` produced a value whose
-    // `value()` is 0x01 -- the same byte `Iso14229_1DtcFormat` encodes -- yet compared
-    // unequal to it. The variant seal does nothing about serde; routing serde through `u8`
-    // closes it, for every byte.
+    // serde goes through `u8`, so `{"IsoSaeReserved":1}` cannot build a value whose byte is
+    // the one `Iso14229_1DtcFormat` encodes yet compares unequal to it.
     let round: DtcFormatIdentifier = serde_json::from_str("1").expect("a bare byte");
     assert_eq!(round, DtcFormatIdentifier::Iso14229_1DtcFormat);
     assert_eq!(serde_json::to_string(&round).unwrap(), "1");
 
-    // The old escape route no longer parses at all.
+    // The variant form does not parse at all.
     assert!(
         serde_json::from_str::<DtcFormatIdentifier>(r#"{"IsoSaeReserved":1}"#).is_err()
     );
@@ -180,8 +165,8 @@ fn serde_cannot_build_a_reserved_variant_that_aliases_a_named_one() {
 }
 
 /// A sub-function byte goes through serde as the byte, so the reserved variants' range
-/// checks hold: `{"IsoSaeReserved":129}` built a `ResetType` that encoded `11 81`, which
-/// reads back as suppressed while the request said it was not.
+/// checks hold: `{"IsoSaeReserved":129}` cannot build a `ResetType` that encodes `11 81`,
+/// which would read back as suppressed while the request said it was not.
 #[cfg(feature = "serde")]
 #[test]
 fn serde_cannot_build_a_sub_function_that_sets_the_suppress_bit() {
@@ -217,8 +202,8 @@ fn serde_cannot_build_a_sub_function_that_sets_the_suppress_bit() {
 
 /// A value that carries a wire integer is built only from that integer, so it never holds
 /// one a named variant has, and `==` agrees with the wire. Through `serde` too: a
-/// `{"IsoSaeReserved":49}` would have been a `NegativeResponseCode` unequal to
-/// `RequestOutOfRange` that encoded as `0x31`.
+/// `{"IsoSaeReserved":49}` would be a `NegativeResponseCode` unequal to
+/// `RequestOutOfRange` that encodes as `0x31`.
 #[cfg(feature = "serde")]
 #[test]
 fn serde_builds_a_wire_valued_type_only_from_its_integer() {
@@ -261,16 +246,12 @@ fn a_reserved_variant_is_matched_by_shape_and_read_by_value() {
 
 #[test]
 fn a_reserved_variant_cannot_alias_a_named_one() {
-    // `PartialEq` on these enums is variant equality, not wire equality, so being able to
-    // name a reserved variant with a byte that a named variant also encodes creates a trap:
-    // `DtcFormatIdentifier::IsoSaeReserved(0x01) != Iso14229_1DtcFormat` even though both
-    // encode 0x01. `#[non_exhaustive]` on the byte-carrying variants makes that
-    // unconstructible from out here, so a value can only be obtained through the
-    // classifier, which never aliases.
-    //
-    // Constructing one is a compile error, checked by `tests/ui` conventions in spirit;
-    // what this test pins is the positive half — the classifier and the byte accessor
-    // agree, and equality matches the wire for every byte.
+    // `PartialEq` on these enums is variant equality, so a reserved variant carrying a byte
+    // a named variant also encodes would compare unequal to it. `#[non_exhaustive]` on the
+    // byte-carrying variants makes that unconstructible from out here, so a value is only
+    // obtained through the classifier, which never aliases. Constructing one is a compile
+    // error; this pins the positive half: the classifier and the byte accessor agree, and
+    // equality matches the wire for every byte.
     for byte in 0x00..=0xFFu8 {
         let format = DtcFormatIdentifier::from(byte);
         assert_eq!(format.value(), byte, "classifier lost the byte {byte:#04X}");
@@ -291,10 +272,9 @@ mod serde_cannot_bypass_validation {
     fn a_length_bounded_borrowed_str_cannot_be_deserialized_out_of_bounds() {
         use uds_protocol::NamePayload;
 
-        // Making a constructor fallible does nothing on its own: `derive(Deserialize)`
-        // writes the fields directly, so it is a second constructor that skips the check.
-        // `filePathAndName` is declared by a two-byte length prefix, so a longer name
-        // cannot be encoded.
+        // `derive(Deserialize)` writes the fields directly, so it is a second constructor
+        // that would skip the check. `filePathAndName` is declared by a two-byte length
+        // prefix, so a longer name cannot be encoded.
         let too_long = "a".repeat(usize::from(u16::MAX) + 1);
         let json =
             serde_json::to_string(&serde_json::json!({ "file_path_and_name": too_long }))
@@ -316,19 +296,15 @@ mod serde_cannot_bypass_validation {
     }
 
     #[test]
-    fn a_borrowed_byte_slice_field_is_not_reachable_through_json_at_all() {
+    fn json_cannot_borrow_a_byte_slice_field() {
         use uds_protocol::WriteDataByIdentifierRequest;
 
-        // Worth pinning because it is easy to mistake for validation working. `&'de [u8]`
-        // needs a format with a native byte-string type; JSON has none, so serde_json
-        // refuses a sequence before any length check runs -- "invalid type: sequence,
-        // expected a borrowed byte array". Both of these fail, and the empty one fails for
-        // that reason rather than because the data record is empty.
-        //
-        // So the `deserialize_with` guard on these fields is only exercised by a format
-        // that can borrow bytes (CBOR, MessagePack, bincode). It is still the right place
-        // for the check -- this crate does not get to choose the caller's format -- but do
-        // not read a passing serde_json test as evidence that it works.
+        // `&'de [u8]` needs a format with a native byte-string type; JSON has none, so
+        // serde_json refuses a sequence before any length check runs ("invalid type:
+        // sequence, expected a borrowed byte array"). Both of these fail, the empty one for
+        // that reason rather than because the data record is empty, so the
+        // `deserialize_with` guard on these fields is exercised only by a format that can
+        // borrow bytes (CBOR, MessagePack, bincode).
         assert!(
             serde_json::from_str::<WriteDataByIdentifierRequest>(
                 r#"{"identifier":61840,"data":[]}"#
@@ -340,8 +316,7 @@ mod serde_cannot_bypass_validation {
                 r#"{"identifier":61840,"data":[1,2,3]}"#
             )
             .is_err(),
-            "if this starts passing, JSON gained a byte type and the empty-record assertion \
-             above needs to become a real length check"
+            "JSON has no byte type, so a byte-slice field is unreachable through it"
         );
     }
 
@@ -350,10 +325,8 @@ mod serde_cannot_bypass_validation {
         use uds_protocol::{TesterPresentRequest, TesterPresentResponse};
 
         // Bit 7 of the sub-function byte is the SPRMIB and is carried in its own field, so
-        // the sub-function itself is a 7-bit value. This used to be enforced by a mirror
-        // struct whose `TryFrom` called the classifier; it is now enforced by the
-        // classifier being serde's entry point for the field. Same guarantee, so the same
-        // bytes must be refused.
+        // the sub-function itself is a 7-bit value, enforced by the classifier being
+        // serde's entry point for the field.
         for byte in 0x80..=0xFFu8 {
             let json =
                 format!(r#"{{"suppress_positive_response":false,"sub_function":{byte}}}"#);
@@ -369,7 +342,7 @@ mod serde_cannot_bypass_validation {
         }
 
         // And every legal byte round-trips, reserved values included, so the range check
-        // did not become a blanket rejection.
+        // is a bound and not a blanket rejection.
         for byte in 0x00..=0x7Fu8 {
             let json =
                 format!(r#"{{"suppress_positive_response":true,"sub_function":{byte}}}"#);
@@ -401,8 +374,7 @@ mod serde_cannot_bypass_validation {
 
     #[test]
     fn data_format_identifier_rejects_an_over_wide_nibble() {
-        // `new` returns Err when either method exceeds 0x0F; JSON must not be a way around
-        // it.
+        // `new` returns Err when either method exceeds 0x0F; JSON is not a way around it.
         assert!(
             serde_json::from_str::<DataFormatIdentifier>(
                 r#"{"encryption_method":255,"compression_method":255}"#
@@ -416,8 +388,8 @@ mod serde_cannot_bypass_validation {
 
     #[test]
     fn range_checked_enums_reject_out_of_range_bytes() {
-        // Each of these has a `try_from` that range-checks the byte; the derived impl let a
-        // caller name the reserved variant directly and skip it.
+        // Each of these has a `try_from` that range-checks the byte, and serde goes through
+        // it.
         assert!(serde_json::from_str::<SubnetNumber>("16").is_err());
         assert!(serde_json::from_str::<DtcSettingType>("128").is_err());
         assert!(serde_json::from_str::<CommunicationType>("16").is_err());
@@ -429,12 +401,11 @@ mod serde_cannot_bypass_validation {
     }
 
     #[test]
-    fn tester_present_cannot_be_given_a_sub_function_that_collides_with_sprmib() {
+    fn tester_present_serde_rejects_bit_7() {
         use uds_protocol::TesterPresentRequest;
 
-        // The sub-function field is private precisely so a caller cannot mint a value with
-        // bit 7 set, which is SPRMIB. The derived impl exposed the private field by name
-        // and accepted any variant payload.
+        // The sub-function field is private so a caller cannot mint a value with bit 7
+        // set, which is SPRMIB; serde does not offer a way around that.
         assert!(
             serde_json::from_str::<TesterPresentRequest>(
                 r#"{"suppress_positive_response":false,"sub_function":128}"#
@@ -454,9 +425,8 @@ mod serde_cannot_bypass_validation {
         use uds_protocol::CommunicationControlRequest;
 
         // `node_id` must be present exactly when `control_type` is an enhanced-address
-        // variant. That rule is the entire reason both fields are private, and
-        // deserializing ignored it: an enhanced type with a null node_id produced a request
-        // that encoded to two bytes, which this crate's own decoder then rejected.
+        // variant, which is why both fields are private; deserializing enforces the same
+        // rule, so no request encodes to a frame this crate's own decoder rejects.
         assert!(
             serde_json::from_str::<CommunicationControlRequest>(
                 r#"{"suppress_positive_response":false,"control_type":5,"communication_type":1,"subnet":0,"node_id":null}"#
@@ -482,9 +452,8 @@ mod serde_cannot_bypass_validation {
     fn transfer_requests_cannot_be_given_a_width_that_truncates_the_value() {
         use uds_protocol::RequestDownloadRequest;
 
-        // The width nibbles are private so they cannot fall out of step with the values. A
-        // deserialized 8-byte address with a 1-byte declared width silently truncated to
-        // one byte on the wire.
+        // The width nibbles are private so they cannot fall out of step with the values;
+        // an 8-byte address with a 1-byte declared width would truncate on the wire.
         assert!(
             serde_json::from_str::<RequestDownloadRequest>(
                 r#"{"data_format_identifier":0,"memory_address":18446744073709551615,"memory_address_length":1,"memory_size":16,"memory_size_length":1}"#
@@ -501,9 +470,8 @@ mod serde_cannot_bypass_validation {
             .is_err()
         );
 
-        // A wider-than-minimal declaration survives the round trip, so the ALFID a server
-        // was sent is the one it gets back. 0x33 is three bytes each, for values needing
-        // two.
+        // A wider-than-minimal declaration survives the round trip. 0x33 is three bytes
+        // each, for values needing two.
         let json = r#"{"data_format_identifier":17,"address_and_length_format_identifier":51,"memory_address":6299648,"memory_size":65535}"#;
         let req: RequestDownloadRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.memory_address(), 0x0060_2000);
@@ -519,9 +487,8 @@ mod serde_cannot_bypass_validation {
     fn no_crate_private_type_appears_in_the_serialized_form() {
         use uds_protocol::{RequestDownloadRequest, TesterPresentRequest};
 
-        // `ZeroSubFunction` is module-private, yet it used to be a named component of the
-        // serialized shape — and of the generated OpenAPI schema, giving client generators
-        // a type downstream Rust cannot reference.
+        // `ZeroSubFunction` is module-private, so it names nothing in the serialized shape
+        // or the generated OpenAPI schema.
         let tester = serde_json::to_string(&TesterPresentRequest::new(false)).unwrap();
         assert!(
             !tester.contains("zero_sub_function"),
@@ -529,10 +496,8 @@ mod serde_cannot_bypass_validation {
         );
         assert!(tester.contains("sub_function"), "got {tester}");
 
-        // The transfer requests' widths were the other half of this: they were reached
-        // through a `pub(crate)` type, so the repr flattened them into two derived scalars.
-        // The type is now public and serializes as the single ISO-named byte it is on the
-        // wire, so the shape matches Table 441 instead of paraphrasing it.
+        // The transfer requests' widths serialize as the single ISO-named byte they are on
+        // the wire, so the shape matches Table 441 instead of paraphrasing it.
         let download =
             RequestDownloadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10);
         let json = serde_json::to_string(&download).unwrap();
@@ -548,9 +513,8 @@ mod serde_cannot_bypass_validation {
 
     #[test]
     fn the_serialized_form_is_the_wire_byte() {
-        // Round-tripping through serde must agree with the protocol's own representation,
-        // otherwise `serde(try_from)` on the way in and a struct shape on the way out would
-        // disagree with each other.
+        // Round-tripping through serde agrees with the protocol's own representation, so
+        // `serde(try_from)` on the way in and the shape on the way out match.
         assert_eq!(
             serde_json::to_string(&SubnetNumber::ReceivedOn).unwrap(),
             "15"

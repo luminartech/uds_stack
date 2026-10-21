@@ -25,19 +25,22 @@ other crate in the stack.
   (ISO 14229-2) sits beside it in the stack but does not depend on it — the
   session layer never reads a message's content.
 - [`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)
-  (ISO 14229-1's behaviour, to this crate's format) and
+  (ISO 14229-1's behavior, to this crate's format) and
   [`uds_on_ip`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_on_ip)
   (ISO 14229-5) both depend on this crate directly: they dispatch and transport
   the message types this crate encodes and decodes.
 
-## What this crate does not do
+## Scope
 
-It is a synchronous, allocation-free codec, and nothing more. It owns no
-sockets, buffers, or async runtime; it does not dispatch a request to a
-handler, choose a negative response code, or hold any session state. Driving
-the I/O loop, over `DoIP`, `UDSonIP`, ISO-TP, or anything else, is a caller's
-job — see [`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)
-for the layer that owns dispatch.
+It is a synchronous, allocation-free codec. The sockets, buffers and async
+runtime are the caller's, as is driving the I/O loop over `DoIP`, `UDSonIP`,
+ISO-TP or anything else. Dispatching a request to a handler and choosing a
+negative response code are
+[`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)'s,
+and session state is
+[`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)'s.
+
+The services it encodes and decodes:
 
 | Service Name                       | Request SID | Response SID | Support |
 | ----------------------------------- | ----------- | ------------ | ------- |
@@ -149,14 +152,14 @@ A checkmark in the table above means the service decodes into a typed
 [`Request`]/[`Response`] variant; [`NegativeResponse`] is typed as well. Every
 other service [`UdsServiceType`] enumerates decodes into [`Request::Other`] /
 [`Response::Other`], carrying the service type and the raw payload bytes for
-pass-through — an unmodelled service is handed to you intact rather than
+pass-through — an unmodeled service is handed to you intact rather than
 rejected.
 
 ## Wire codec dependency
 
 `uds_protocol` builds its byte-level decoding on top of the [`automotive-wire-codec`](https://crates.io/crates/automotive-wire-codec)
 crate, and re-exports its `Incomplete`, `TrailingBytes` and `InvalidWidth` types and its codec
-traits (`Encode`, `Decode`, `DecodeIter`) at the crate root. These types are intentionally part of `uds_protocol`'s public API:
+traits (`Encode`, `Decode`, `DecodeIter`) at the crate root. These types are part of `uds_protocol`'s public API:
 they are shared across the Luminar automotive protocol crates so that callers handling multiple
 protocols see one consistent short-read/trailing-data error shape. Because of this, a semver-major
 release of `automotive-wire-codec` is a breaking change for `uds_protocol` as well.
@@ -177,12 +180,12 @@ Pull requests, bug reports and questions are welcome — see
 Security reports go through GitHub's private vulnerability reporting; see
 [`SECURITY.md`](https://github.com/luminartech/uds_stack/blob/main/SECURITY.md).
 
-## Licence
+## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
 at your option. Both files are the workspace's, shared by every crate here.
 
-Neither licence grants any right in ISO 14229-1 itself, which remains ISO's —
+Neither license grants any right in ISO 14229-1 itself, which remains ISO's —
 see
 [Relationship to the standards](https://github.com/luminartech/uds_stack#relationship-to-the-standards)
 in the workspace README.

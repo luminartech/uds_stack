@@ -1,8 +1,7 @@
 use crate::{Decode, Encode, Error, Incomplete};
 use automotive_wire_codec::write_u8;
 
-/// The `DtcExtDataRecordNumber` is used in the request message to get a stored
-/// `DTCExtDataRecord` It's used to specify the type of `DTCExtDataRecord` to be reported.
+/// Which stored `DTCExtDataRecord` a `ReadDTCInformation` request asks for.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,25 +16,22 @@ pub enum DtcExtDataRecordNumber {
     #[non_exhaustive]
     VehicleManufacturerSpecific(u8),
 
-    /// Requests the server to report regulated emissions OBD stored
-    /// `DTCExtendedDataRecords`. The values are specified in SAE J1979-DA.
+    /// A regulated-emissions OBD extended data record, numbered as SAE J1979-DA defines.
     ///
     /// 0x90-0x9F
     #[non_exhaustive]
     RegulatedEmissionsObdDtcExtDataRecords(u8),
 
-    /// The `DtcExtDataRecordNumber` parameter is used to specify the DTC number of the
-    /// `DTCExtendedData` record to be reported.
+    /// Regulated stored `DTCExtendedDataRecord`s.
     ///
     /// 0xA0-0xEF
     #[non_exhaustive]
     RegulatedDtcExtDataRecords(u8),
 
-    /// Requests the server to report all regulated emissions OBD stored
-    /// `DTCExtendedDataRecords`.
+    /// Every regulated-emissions OBD extended data record the server stores.
     AllRegulatedEmissionsObdDtcExtDataRecords,
 
-    /// Requests the server to report all stored `DTCExtendedDataRecords`
+    /// Every extended data record the server stores.
     AllDtcExtDataRecords,
 }
 
@@ -112,7 +108,6 @@ impl<'a> Decode<'a> for DtcExtDataRecordNumber {
     }
 }
 
-// tests
 #[cfg(test)]
 mod tests {
     use super::*;

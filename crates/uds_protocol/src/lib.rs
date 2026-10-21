@@ -1,20 +1,15 @@
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
-// Derogations from the workspace lint standard in the root Cargo.toml. Each is a
-// gap to close, not a decision that the lint is wrong here.
+// Derogations from the workspace lint standard in the root Cargo.toml.
 //
-// The defensive three: a zero-copy decoder indexes borrowed slices and computes
-// offsets on every path, and this crate predates the standard. 162 sites in
-// production code as of this writing; closing it means `get()?` and checked
-// arithmetic throughout the decode paths, which is its own change.
+// A zero-copy decoder indexes borrowed slices and computes offsets on every decode
+// path, so these three are allowed crate-wide rather than at each site.
 #![allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     clippy::as_conversions
 )]
-// Panic freedom holds in this crate's production code and is enforced there. Its
-// test modules are older than the standard and use `unwrap` the way test code
-// ordinarily does -- 281 sites, where a panic *is* the failure mechanism. Scoped to
-// `test` so the production build stays strict.
+// Test modules use `unwrap`, `expect` and `panic` as their failure mechanism. Scoped
+// to `test` so the production build stays panic-free.
 #![cfg_attr(
     test,
     allow(
@@ -143,19 +138,14 @@ mod no_std_api_tests {
     fn dtc_and_status_iter_roundtrip() {
         // 2 DTC records: (0x01,0x02,0x03, status=0x0A), (0x04,0x05,0x06, status=0x0B)
         //
-        // Deliberately not gated on `alloc`, and written with `next()` rather than
-        // `collect()` for that reason. While this was gated, mutating the status byte to a
-        // constant left `--no-default-features` fully green — so the assertion below
-        // existed but did not protect the config the crate targets first.
+        // Written with `next()` rather than `collect()` so it runs without `alloc`, the
+        // configuration the crate targets first.
         let data = [0x01, 0x02, 0x03, 0x0A, 0x04, 0x05, 0x06, 0x0B];
         let mut iter = DtcAndStatusIter::new(&data);
         assert_eq!(iter.len(), 2);
 
         let (dtc, status) = iter.next().unwrap().unwrap();
         assert_eq!(u32::from(dtc), 0x01_0203);
-        // The status byte matters as much as the DTC: 0x02 and 0x0A-0x0E are the most-used
-        // sub-functions, and nothing asserted it, so "every DTC reports status 0x00"
-        // passed.
         assert_eq!(status.bits(), 0x0A);
 
         let (dtc, status) = iter.next().unwrap().unwrap();
@@ -167,9 +157,9 @@ mod no_std_api_tests {
 
     #[test]
     fn fault_detection_counter_record_is_nameable_from_crate_root() {
-        // `DtcFaultDetectionCounterRecord` is the `Item` of `DtcFaultDetectionIter`.
-        // Without a crate-root path, callers can iterate but cannot name the type — no
-        // `Vec<T>`, no struct field, no helper signature. This pins the re-export.
+        // `DtcFaultDetectionCounterRecord` is the `Item` of `DtcFaultDetectionIter`, so a
+        // caller needs a crate-root path to it for a `Vec<T>`, a struct field or a helper
+        // signature.
         let data = [0x01, 0x02, 0x03, 0x2A];
         let record: DtcFaultDetectionCounterRecord =
             DtcFaultDetectionIter::new(&data).next().unwrap().unwrap();
@@ -340,9 +330,8 @@ mod no_std_api_tests {
             Err(_) => panic!("both nibbles are in range"),
         };
 
-        // Getting the byte back out must be const too, or a `const` dispatch table can be
-        // built but not read. These four had only a non-const `From`, so each of these
-        // lines was previously an E0015.
+        // Getting the byte back out is const too, or a `const` dispatch table could be
+        // built but not read.
         const DTC_U32: u32 = DTC.to_u32();
         const DFI_BYTE: u8 = DFI.value();
         const NRC_BYTE: u8 = NegativeResponseCode::ConditionsNotCorrect.value();
@@ -363,9 +352,8 @@ mod no_std_api_tests {
 
     #[test]
     fn communication_control_requests_are_const_constructible() {
-        // Both constructors were the crate's only non-`const` `new`s. The blocker was
-        // `u8::from(control_type)` in their error payload, which an inherent `const fn
-        // value()` on the enum removes.
+        // Both constructors build their error payload with the enum's `const fn value()`,
+        // so each is usable in a `const`.
         const REQ: CommunicationControlRequest = match CommunicationControlRequest::new(
             false,
             CommunicationControlType::DisableRxAndTx,

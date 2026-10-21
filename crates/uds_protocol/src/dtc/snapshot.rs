@@ -22,8 +22,8 @@ pub enum DtcSnapshotRecordNumber {
 
 impl DtcSnapshotRecordNumber {
     /// Create a `DtcSnapshotRecordNumber`, classifying the raw byte into `Reserved`
-    /// (`0x00`/`0xF0`), `All` (`0xFF`), or `Number`. Every byte is accepted (decoding is
-    /// deliberately liberal); no value is rejected.
+    /// (`0x00`/`0xF0`), `All` (`0xFF`), or `Number`. Every byte is accepted, as it is on
+    /// decode.
     #[must_use]
     pub const fn new(record_number: u8) -> Self {
         match record_number {

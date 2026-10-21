@@ -12,36 +12,20 @@ const TRANSFER_DATA_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 6] = [
     NegativeResponseCode::WrongBlockSequenceCounter,
 ];
 
-/// A request to the server to transfer data (either upload or download)
+/// One block of a transfer in either direction. Borrows its data from the caller.
 ///
-/// Step 1: The client sends a `RequestDownload` or `RequestUpload` message to the server
-///     34 .. 11  .. 33   .. 60 20 00 .. 00 FF FF << -- Bytes sent by the client
-///    RID .. DFI .. ALFID .. `MA_B`#   .. `UCMS_B`#
-///
-/// Step 1 Response: The server sends a
-/// [`RequestDownloadResponse`](crate::RequestDownloadResponse) or `RequestUploadResponse`
-/// message to the client
-///
-/// Step 2: The client shall send many [`TransferDataRequest`] messages written in blocks to
-/// the server with a max number of bytes equal to `MNROB_B`# from the
-/// `RequestDownloadResponse` message 74 .. 20 .. 00 81 RSID .. LFID .. `MNROB_B`#
-///
-/// Step 2 Response: The server sends a [`TransferDataResponse`] message confirming the
-/// block sequence
-///
-/// Step 3: The client sends a [`crate::UdsServiceType::RequestTransferExit`] message to the
-/// server (SID 0x37)
-///
-/// Step 3 Response: The server sends a [`crate::UdsServiceType::RequestTransferExit`]
-/// response message to the client (RID 0x77)
-///
-/// Zero-alloc request to transfer data. Borrows from the caller.
+/// A transfer is three services in sequence: a `RequestDownload` or `RequestUpload`, whose
+/// positive response ([`RequestDownloadResponse`](crate::RequestDownloadResponse),
+/// [`RequestUploadResponse`](crate::RequestUploadResponse)) states the
+/// `maxNumberOfBlockLength`; then one [`TransferDataRequest`] per block, each answered by
+/// a [`TransferDataResponse`] echoing its counter; then a
+/// [`RequestTransferExitRequest`](crate::RequestTransferExitRequest).
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct TransferDataRequest<'d> {
-    /// Block sequence counter (wraps 0xFF → 0x00).
+    /// Block sequence counter, which wraps from 0xFF to 0x00.
     pub block_sequence_counter: u8,
     /// The data to be transferred.
     #[cfg_attr(feature = "serde", serde(borrow))]

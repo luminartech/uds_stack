@@ -63,15 +63,11 @@ impl From<SecurityAccessLevel> for u8 {
     }
 }
 
-/// Security Access Type allows for multiple different security challenges within an ECU.
+/// The `securityAccessType` sub-function: whether a seed is requested or a key sent, and
+/// for which security level (ISO 14229-1:2020 Table 42).
 ///
-/// The Security Access Type is used to determine both the sub function,
-/// as well as ECU specific access type being requested
-///
-/// *Note*:
-///
-/// Conversions from `u8` to `SecurityAccessType` are fallible and will return an [`Error`]
-/// if the Suppress Positive Response bit is set.
+/// Conversion from `u8` is fallible and returns an [`Error`] if bit 7, the suppress
+/// positive response bit, is set.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,12 +84,12 @@ pub enum SecurityAccessType {
     /// `sendKey` for a vehicle-manufacturer security level; encodes
     /// [`SecurityAccessLevel::send_key`].
     SendKey(SecurityAccessLevel),
-    /// `RequestSeed` with different levels of security defined for end of life
-    /// activation of on-board pyrotechnic devices
+    /// `requestSeed` for the ISO 26021-2 security levels, which guard the end-of-life
+    /// deployment of on-board pyrotechnic devices (`0x5F`, Table 42).
     Iso26021_2Values,
-    /// `SendKey` with different levels of security defined for end of life activation
+    /// `sendKey` for the ISO 26021-2 security levels (`0x60`, Table 42).
     Iso26021_2SendKeyValues,
-    /// This range of values is reserved for system supplier specific use
+    /// A byte Table 42 sets aside for system suppliers.
     ///
     /// Construct through [`SecurityAccessType::try_from`] so the raw byte is range-checked
     /// and can never collide with the SPRMIB bit.
@@ -153,7 +149,7 @@ mod security_access_type_tests {
         0x1E, 0x20, 0x22, 0x24, 0x26, 0x28, 0x2A, 0x2C, 0x2E, 0x30, 0x32, 0x34, 0x36, 0x38,
         0x3A, 0x3C, 0x3E, 0x40, 0x42,
     ];
-    /// Check that we properly decode and encode hex bytes
+    /// Every byte classifies as Table 42 assigns it, or fails for bit 7.
     #[test]
     fn security_access_type_from_all_u8_values() {
         assert_eq!(
@@ -229,7 +225,7 @@ mod security_access_type_tests {
     }
 
     /// A send-key built from a level encodes that level's even byte, so it cannot be
-    /// mistaken for the seed request; the review's probe sent `27 01` for "send key 1".
+    /// mistaken for the seed request.
     #[test]
     fn seed_and_key_for_one_level_encode_the_pair() {
         let level = SecurityAccessLevel::from_request_seed(0x01).unwrap();
@@ -266,26 +262,11 @@ const SECURITY_ACCESS_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 8] = [
     NegativeResponseCode::RequiredTimeDelayNotExpired,
 ];
 
-/// Client request to access a security level
+/// Client request to unlock a security level. Borrows its data from the caller.
 ///
-/// This service supports two primary types of request:
-///
-/// ## Request Seed
-///
-/// When requesting a seed, the request data represents implementation defined
-/// `SecurityAccessDataRecord` values.
-/// This data is optional, and its use is implementation defined.
-/// Suppressing a positive response to this request is not supported.
-///
-/// ## Send Key
-///
-/// When sending a key, the request data represents the key to be sent. After receiving a
-/// seed, the client must calculate the corresponding key and send it to the server. The
-/// server will then validate the key and respond with a positive or negative response.
-/// Successful verification of the key will result in the server unlocking the requested
-/// security level. Suppressing a positive response to this request is allowed.
-///
-/// Zero-alloc request for security access. Borrows from the caller.
+/// A `requestSeed` carries an optional, implementation-defined `securityAccessDataRecord`;
+/// the server answers with a seed. A `sendKey` carries the key the client computed from
+/// that seed; a positive response means the level is unlocked.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -481,8 +462,7 @@ mod request {
         let written =
             Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
                 .unwrap();
-        // The bytes, not just the count: the two halves of this test were otherwise
-        // disconnected, so swapping what `encode` writes went unnoticed.
+        // The bytes, not just the count, so a swap of what `encode` writes fails.
         assert_eq!(&buf[..written], &bytes);
         assert_eq!(written, req.encoded_size().unwrap());
         assert_encode_size_agrees(&req);
