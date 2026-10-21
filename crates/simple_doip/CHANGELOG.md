@@ -11,6 +11,18 @@ This file was reconstructed from the commit and pull-request history when the
 crate was prepared for publication, so entries before that point describe what
 changed rather than what was announced at the time.
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking.** Every duration the tester takes or exports is a `core::time::Duration`:
+  `tester::RECONNECT_BACKOFF`, `Tester::with_reconnect_backoff`,
+  `Tester::with_ack_timeout` and `ConnectOptions::timeout`, like the crate-root timer
+  constants already were. The conversion to the clock the timers run on happens inside.
+  A hosted caller no longer names `embassy_time` to configure a tester.
+- **Breaking.** `tester::ACK_TIMEOUT` is gone: it was `TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`
+  rebuilt in the other type, and that constant is the default it named.
+
 ## [0.7.0] — 2026-10-16
 
 0.7.0 replaces the async client, the async server and the bare-metal entity with a
