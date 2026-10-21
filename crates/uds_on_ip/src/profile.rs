@@ -1,46 +1,23 @@
 //! Application layer: the `UDSonIP` profile.
 //!
-//! ISO 14229-5:2022 clause 8, REQ 7.1–7.20. This is the clause 8 profile the
-//! transport applies, and it is where the genuinely IP-specific behaviour
-//! lives: how a UDS message is framed into a `DoIP` diagnostic message, and
-//! what the transport must do around particular services.
+//! ISO 14229-5:2022 clause 8, REQ 7.1–7.20: how a UDS message is framed into a `DoIP`
+//! diagnostic message, and what the transport does around particular services.
 //!
-//! The `tP_Client` reload pair is [`uds_session::Reloads`] and is deliberately
-//! not redeclared here. This crate's contribution is not the type but the
-//! *choice of parameter*: `DoIP` offers no `T_DataSOM.ind`, so ISO 14229-2:2021
-//! REQ 5.11 gives it the `tP6` pair rather than the `tP2` pair. The session
-//! layer does not distinguish the two cases — which is why its field names do
-//! not say `p6` — and the distinction survives in the values this transport
-//! supplies, not in a second type.
+//! The `tP_Client` reload pair is [`uds_session::Reloads`], not a type of this crate's.
+//! What this crate contributes is the choice of parameter: `DoIP` offers no
+//! `T_DataSOM.ind`, so ISO 14229-2:2021 REQ 5.11 gives it the `tP6` pair rather than
+//! the `tP2` pair, and the session layer's field names say neither.
 
 use uds_services::AfterSend;
 
-/// Conventional bench reload values, for a desk setup and for tests.
+/// Conventional bench reload values, for a desk setup and for tests: `tP6_Client_Max`
+/// 2000 ms and `tP6*_Client_Max` 5000 ms, in `uds_session::Timestamp`'s unit.
 ///
-/// `tP6_Client_Max` 2000 ms and `tP6*_Client_Max` 5000 ms. These are a starting
-/// point on a bench and are **not** a configuration for a vehicle:
-/// ISO 14229-2:2021 clause 9.2 Table 4 specifies the reloads as minima derived
-/// from the server's timing and the vehicle network's delays, which this crate
-/// cannot know. Shipping these is how a live bus produces spurious `tP6`
-/// timeouts that get blamed on the ECU.
-///
-/// A named function rather than a `Default`, so bench values cannot be reached
-/// without asking for them by name — `Reloads` itself has no `Default`, and
-/// this crate does not add the strongest invitation Rust has to the one value
-/// nobody should accept.
-///
-/// # There is deliberately no `Spacing` here
-///
-/// `tP3_Client_Phys` and `tP3_Client_Func` were a `Spacing` struct on a `Timing`
-/// type this module owned. Nothing read either field: `channel_timing` returns
-/// the reloads alone, and `uds_services::UdsTransport::channel_timing` says why
-/// that is right — a transport dictates the reload pair, because the pair
-/// follows from having no `T_DataSOM.ind`, but has no view on spacing, which is
-/// ISO 14229-2:2021 clause 9.7 client policy. Carrying a field this crate
-/// stores and never applies taught a caller that configuring it did something.
-///
-/// Values are milliseconds, matching `uds_session::Timestamp`'s unit. Carrying a
-/// `Duration` would mean converting at the seam on every call.
+/// These are **not** a configuration for a vehicle. ISO 14229-2:2021 clause 9.2 Table 4
+/// specifies the reloads as minima derived from the server's timing and the vehicle
+/// network's delays, which this crate cannot know; on a live bus these values produce
+/// spurious `tP6` timeouts. A named function rather than a `Default`, so bench values
+/// are reached only by asking for them by name.
 #[must_use]
 pub const fn bench_reloads() -> uds_session::Reloads {
     uds_session::Reloads {
@@ -51,9 +28,9 @@ pub const fn bench_reloads() -> uds_session::Reloads {
 
 /// The service identifiers ISO 14229-5 clause 8 keys connection handling on.
 ///
-/// `ARCHITECTURE.md` §10, invariant 1, states that `uds_on_ip` never learns what a
-/// service is. This module, with [`crate::mapping`]'s `awaits_response` and
-/// `response_pending`, is the exhaustive list of what it does read of a message:
+/// `ARCHITECTURE.md` §10, invariant 1: `uds_on_ip` never learns what a service is. This
+/// module, with [`crate::mapping`]'s `awaits_response` and `response_pending`, is the
+/// exhaustive list of what it reads of a message:
 ///
 /// - the positive `DiagnosticSessionControl` and `ECUReset` response identifiers,
 ///   after which REQ 7.9 and REQ 7.11 have the server close the connection;
@@ -61,17 +38,11 @@ pub const fn bench_reloads() -> uds_session::Reloads {
 /// - the response-pending negative response, after which the final one is still owed.
 ///
 /// No data identifier, routine identifier or NRC policy. The identifiers are taken
-/// from `uds_protocol`'s [`UdsServiceType`](uds_protocol::UdsServiceType).
-///
-/// # The read is of a `T_PDU`, and that is confirmed rather than assumed
-///
-/// Clause 8 keys this handling on a service identifier, and the driver sits above the
-/// session layer, so what reaches this crate is a `T_PDU`, not an `A_PDU`. On `DoIP`
-/// the two are the same octets: ISO 14229-5:2022 REQ 4.4 Table 5 maps `T_Data` onto
-/// the `DoIP` diagnostic message's user data unchanged, and `DoIP` performs no
-/// segmentation. The first octet is therefore the service identifier. On a segmented
-/// transport this would not hold, so a binding for one must re-derive it rather than
-/// copy this module.
+/// from `uds_protocol`'s [`UdsServiceType`](uds_protocol::UdsServiceType). What
+/// reaches this crate is a `T_PDU`, whose first octet is the service identifier only
+/// because REQ 4.4 Table 5 maps `T_Data` onto the `DoIP` diagnostic message's user data
+/// unchanged and `DoIP` performs no segmentation; a binding for a segmented transport
+/// re-derives it rather than copying this module.
 pub(crate) mod service_ids {
     use uds_protocol::UdsServiceType;
 
@@ -89,10 +60,10 @@ pub(crate) mod service_ids {
 pub(crate) enum ConnectionAction {
     /// Nothing follows. The connection continues to serve the session.
     Continue,
-    /// REQ 7.11 — the server sent a positive `ECUReset` response — or REQ 7.9 — it
-    /// sent the positive `DiagnosticSessionControl` response to a session change that
-    /// leaves its running software — and **must itself initiate** the close, after the
-    /// response and before executing the service.
+    /// The server sent a positive `ECUReset` response (REQ 7.11), or the positive
+    /// `DiagnosticSessionControl` response to a session change that leaves its running
+    /// software (REQ 7.9), and **must itself initiate** the close, after the response
+    /// and before executing the service.
     InitiateClose,
 }
 
@@ -105,17 +76,15 @@ impl ConnectionAction {
 }
 
 /// Classify a message a server is about to send, by its first octet and by what the
-/// server says follows it.
-///
-/// REQ 7.11's close follows every positive `ECUReset` response, so the octet decides
-/// it. REQ 7.9's close follows a session change only if it leaves the software the
-/// server is running, which no octet carries: the server states it as
-/// [`AfterSend::ServerLeaves`] on the message the close follows.
+/// server says follows it. REQ 7.11's close follows every positive `ECUReset` response,
+/// so the octet decides it; REQ 7.9's close follows a session change only if it leaves
+/// the software the server is running, which no octet carries, so the server states it
+/// as [`AfterSend::ServerLeaves`] on the message the close follows.
 ///
 /// A negative response, response-pending included, has first octet `0x7F` and is
-/// [`Continue`](ConnectionAction::Continue); the final positive response is what
-/// triggers the close. A suppressed `11 81` or `10 82` sends nothing, so nothing is
-/// classified: a server that resets or leaves on one drops the connection unannounced
+/// [`Continue`](ConnectionAction::Continue); the final positive response triggers the
+/// close. A suppressed `11 81` or `10 82` sends nothing, so nothing is classified: a
+/// server that resets or leaves on one drops the connection unannounced
 /// (`ARCHITECTURE.md` §6.2).
 #[must_use]
 pub(crate) const fn after_sending(first_octet: u8, after: AfterSend) -> ConnectionAction {
@@ -226,7 +195,7 @@ mod tests {
     }
 
     /// The bench values are the `tP6` pair, and they are the ones a reader of
-    /// ISO 14229-2:2021 clause 9.2 Table 4 would recognise as conventional.
+    /// ISO 14229-2:2021 clause 9.2 Table 4 would recognize as conventional.
     #[test]
     fn the_bench_reloads_are_the_conventional_pair() {
         let reloads = bench_reloads();

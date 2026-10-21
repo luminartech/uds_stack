@@ -123,6 +123,7 @@ jobs:
       - run: python3 -m unittest tools/test_prose_lint.py
       - run: >-
           python3 tools/prose_lint.py . --show 10 --summary "$GITHUB_STEP_SUMMARY"
+          --strict crates/uds_on_ip
 
   # ===================================================================================
   # Fuzz Tests (hand-rolled: the reusable workflow's fuzz-tests job cannot reach these)

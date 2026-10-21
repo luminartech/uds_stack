@@ -916,10 +916,10 @@ fn reconnects(t: &Transport) -> usize {
         .count()
 }
 
-/// The open question "Should a reset discard a message already arriving?": a response
-/// that arrives after its window closed would be taken for the next request's. A request
-/// to a server whose last request was confirmed and never answered goes on a new
-/// connection, which the late response cannot reach, and the old one's end is reported.
+/// A response that arrives after its window closed would be taken for the next
+/// request's. A request to a server whose last request was confirmed and never answered
+/// goes on a new connection, which the late response cannot reach, and the old one's end
+/// is reported.
 #[test]
 fn a_request_after_an_unanswered_one_goes_on_a_new_connection() {
     let mut t = transport([Entity::Acks(DoIpResult::Ok), Entity::Acks(DoIpResult::Ok)]);
@@ -994,7 +994,7 @@ fn a_suppressed_request_neither_arms_nor_triggers_the_guard() {
     assert_eq!(reconnects(&t), 0);
 }
 
-/// A request the server never saw, its acknowledgement negative, has no reply to come.
+/// A request the server never saw, its acknowledgment negative, has no reply to come.
 #[test]
 fn a_request_after_a_refused_one_keeps_the_connection() {
     let mut t = transport([Entity::Acks(DoIpResult::UnknownTa)]);
@@ -1063,7 +1063,7 @@ fn outbound_max_is_the_max_data_size_less_the_addresses() {
     assert_eq!(t(Some(2)), Some(0));
 }
 
-// --- what the review found ---------------------------------------------------------------
+// --- a dropped reconnect, and whose close is prescribed ---------------------------------
 
 /// A request is accepted on its first poll even where a reconnect must come first, and a
 /// reconnect dropped part-way leaves it owed its confirm: the next event reconnects and
@@ -1206,7 +1206,7 @@ fn a_close_dropped_part_way_reports_no_close() {
     );
 }
 
-/// A reconnect for a waiting request honours the call's deadline: where it passes first,
+/// A reconnect for a waiting request honors the call's deadline: where it passes first,
 /// the call reports `Deadline`, the request still waiting, and a later call reconnects
 /// and sends it. `idle_until` returns at its time even when a keep-alive needs a new
 /// connection.

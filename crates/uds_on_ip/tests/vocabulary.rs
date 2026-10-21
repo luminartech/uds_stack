@@ -1,16 +1,15 @@
 //! The ISO 14229-2 vocabulary is `uds_session`'s, and this crate does not
 //! redefine it.
 //!
-//! These functions are never called. Type-checking them is the test.
+//! A compile-time test: it passes by compiling, and these functions are never called.
 
-#![allow(dead_code, reason = "type-checked, never run")]
-#![allow(
+/// All four `Mtype` variants exist, including the two `DoIP` cannot carry for want
+/// of an address extension, which this crate rejects in `mapping` rather than removes.
+#[expect(dead_code, reason = "compile-time test: compiled, never called")]
+#[expect(
     clippy::no_effect_underscore_binding,
-    reason = "these bindings exist only to type-check, not to run"
+    reason = "compile-time test: the bindings are type-checked, never used"
 )]
-
-/// All four `Mtype` variants exist, including the two this crate's old
-/// `addressing.rs` dropped because `DoIP` has no address extension.
 fn all_four_message_types_are_expressible() {
     let _local = uds_session::Mtype::Diag;
     let _local_secure = uds_session::Mtype::SecureDiag;
@@ -23,11 +22,12 @@ fn all_four_message_types_are_expressible() {
 }
 
 /// The addressing triple is taken whole, not re-declared here.
+#[expect(dead_code, reason = "compile-time test: compiled, never called")]
 fn the_addressing_triple_is_uds_sessions(ai: uds_session::Ai) -> uds_session::Address {
     ai.sa
 }
 
 #[test]
 fn the_vocabulary_compiles() {
-    // The assertion is the build itself.
+    // Empty: the test is that this file compiles.
 }

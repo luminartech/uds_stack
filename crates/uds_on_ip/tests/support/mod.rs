@@ -1,10 +1,10 @@
 //! A `DoIP` entity with no sockets, implementing [`DiagnosticEntity`] over a scripted
 //! sequence of tester actions.
 //!
-//! Copied from `simple_doip/tests/entity_mock.rs` and extended with what a transport
-//! test needs: a write that fails, a close that is cancelled once or fails, an unmodelled
-//! payload, and a clock. An idle entity runs its clock to the caller's deadline, and
-//! with no deadline has nothing left to do and says so.
+//! `simple_doip`'s test entity, with what a transport test needs besides: a write that
+//! fails, a close that is canceled once or fails, an unmodeled payload, and a clock. An
+//! idle entity runs its clock to the caller's deadline, and with no deadline has nothing
+//! left to do and says so.
 
 use std::collections::VecDeque;
 
