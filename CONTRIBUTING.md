@@ -24,7 +24,7 @@ documentation set. It is a Java program invoked as a subprocess, so it cannot
 be pinned in `uv.lock` like everything else — `brew install plantuml`, or the
 apt package of the same name.
 
-`--frozen` is deliberate and appears in every recipe. `needs.json` is consumed
+`--frozen` appears in every recipe. `needs.json` is consumed
 as evidence against a committed snapshot, so the toolchain that produced a
 given snapshot has to be recoverable; a recipe that silently re-resolved its
 dependencies would break that.
@@ -74,7 +74,7 @@ $ pre-commit install
 
 **Commits are [Conventional Commits](https://www.conventionalcommits.org/).**
 A hook enforces the format, and `release-plz` derives the version bump from it,
-so `fix:` and `feat:` are load-bearing rather than decorative.
+so the type decides the next version.
 
 **The crates release in lockstep.** There is one version, `[workspace.package]`
 in the root `Cargo.toml`, which every crate inherits; every release publishes all
@@ -83,7 +83,7 @@ changed in that crate; it is written by hand, under `## [Unreleased]`, in the ch
 that makes the change. The `<crate>/v<version>` tags in the history are from before
 the consolidation.
 
-**A crate's scope is decided by which standard specifies the behaviour**, not
+**A crate's scope is decided by which standard specifies the behavior**, not
 by convenience. If a change would make a crate read a standard it does not own,
 the boundary is wrong and the change belongs elsewhere. Each seam is declared
 by the crate that calls through it, so every Cargo edge runs from implementor
@@ -113,10 +113,54 @@ recorded there:
 A local `allow` or `expect` carrying a reviewed justification is a legitimate
 outcome anywhere; reaching for `unwrap` silently is not.
 
-**Comments carry the reasoning.** Much of this codebase explains *why* a thing
-is the way it is, including the rejected alternative. That is deliberate — the
-reasoning behind a design decision cannot be reconstructed afterwards. Please
-keep it up rather than trimming it away.
+## Writing for the reader
+
+Every crate here is published to crates.io, so its rustdoc, comments, README,
+`ARCHITECTURE.md`, `MIGRATING.md` and changelog are read by an integrator who
+never saw the previous version and cannot ask. Write all of it for that reader.
+The test for any sentence: would it still be true and useful to someone reading
+the code for the first time in two years?
+
+1. **Documentation states the contract.** What the item does, its inputs,
+   errors, panics and the clause of the standard it implements, in the present
+   tense. No history, no alternatives considered, no account of how the code
+   got here. A crate's boundary is stated as what its neighbors own, not as a
+   section headed "What this crate does not do".
+1. **Rationale gets one sentence at the smallest scope where it is true.**
+   "Bounded so a stalled entity cannot grow the queue." If the reason needs its
+   own heading, it needs its own page.
+1. **Six lines is the ceiling for an explanation in code.** Past that, the
+   reasoning is a `Rationale:` paragraph on the need it derives from, or an
+   architecture page under `docs/`, and the comment becomes one sentence and a
+   reference to it.
+1. **Invariants are asserted, not described.** A `debug_assert!`, a `const _`
+   assertion or a test says it better than prose and cannot drift. The word
+   "load-bearing" does not appear.
+1. **No voice.** No "we" or "our". No "deliberately" or "intentionally": state
+   what the code does, and the reader will assume it was on purpose. No
+   review-tool names, pull-request or issue numbers. A need ID is a reference
+   to the specification, not a ticket, and belongs wherever it helps.
+1. **Tests have plain names.** A short behavior name, with a one-line doc
+   comment naming the need it verifies if one helps. A test guards a behavior,
+   not an incident.
+1. **The changelog carries history.** User-visible behavior and how to
+   migrate. It is the only place "previously" belongs.
+1. **Nothing is written for the next editor.** Decision history, incident
+   write-ups and release ordering are not kept in the code. When a change
+   removes a comment that held real reasoning, the reasoning either derives
+   from a need and becomes that need's `Rationale:` paragraph, or describes a
+   crate's shape and goes on an architecture page under `docs/`; what fits
+   neither is history, and the pull request that made the change is its record.
+1. **Spelling is American.** Behavior, neighbor, acknowledgment, canceled,
+   initialize and license, in prose and in test names. Renaming a public
+   identifier to match is a breaking change and gets a changelog entry.
+
+`just prose` runs `tools/prose_lint.py`, which counts the phrases rule 5
+excludes, the scope heading rule 1 excludes, the comment blocks past rule 3's
+ceiling and rule 9's British spellings, over every comment and Markdown heading
+in the tree and, for spelling, every Markdown file but a changelog. CI fails on
+a hard-fail phrase under a path that has had its writing pass (the `--strict`
+list in `ci.yml`) and reports the rest.
 
 ## Requirements and architecture
 
@@ -150,7 +194,7 @@ symlink to them, so there is one text to keep current and no way for a crate to
 drift from it.
 
 Unless you state otherwise, any contribution you intentionally submit for
-inclusion in this work, as defined in the Apache-2.0 licence, is dual licensed
+inclusion in this work, as defined in the Apache-2.0 license, is dual licensed
 on those same terms, with no additional conditions.
 
 That covers the requirement and architecture set under `docs/` as well as the
