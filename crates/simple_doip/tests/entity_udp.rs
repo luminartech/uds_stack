@@ -144,11 +144,14 @@ where
 
 /// Advances the clock a millisecond at a time for `millis`, settling at each, and returns
 /// what was sent with the milliseconds since the start it was sent at.
-fn run_for<I: VehicleIdentity>(
-    entity: &mut Sensor<'_, I>,
+fn run_for<E: DiagnosticEntity>(
+    entity: &mut E,
     udp: &MockUdp,
     millis: u64,
-) -> Vec<(u64, SocketAddr, Vec<u8>)> {
+) -> Vec<(u64, SocketAddr, Vec<u8>)>
+where
+    E::Error: std::fmt::Debug,
+{
     let mut sent = Vec::new();
     for at in 0..=millis {
         if at > 0 {
@@ -259,6 +262,34 @@ fn three_announcements_follow_the_announce_wait() {
     for (_, to, frame) in &sent {
         assert_eq!(*to, broadcast());
         assert_eq!(decode(frame).protocol_version, ProtocolVersion::V2019);
+        assert_eq!(identification(frame).logical_address, ENTITY);
+    }
+}
+
+/// An entity built by `new_discovery_later`, as a `static`'s initializer builds one, is
+/// silent on `UDP_DISCOVERY` until `start_discovery`, then announces as one built with
+/// discovery does.
+#[test]
+fn discovery_started_later_announces_from_its_start() {
+    let _clock = clock();
+    let (stack, udp) = (MockStack::new(4096), MockUdp::new());
+    let address = EntityAddress::new(ENTITY, LogicalAddress(0xE400)).unwrap();
+    let mut entity: Entity<'_, _, 1, 4096, 1, Option<Discovery<MockUdpSocket, _>>> =
+        Entity::new_discovery_later(&stack, address, the_tester());
+
+    assert_eq!(run_for(&mut entity, &udp, 2000), []);
+    entity.start_discovery(udp.socket(), identity(), SEED);
+    let sent = run_for(&mut entity, &udp, 2000);
+
+    let times: Vec<u64> = sent.iter().map(|(at, ..)| *at).collect();
+    let &[first, second, third] = times.as_slice() else {
+        panic!("expected three announcements, got {times:?}");
+    };
+    assert!(first <= 500, "{times:?}");
+    assert_eq!(Some(second), first.checked_add(500));
+    assert_eq!(Some(third), second.checked_add(500));
+    for (_, to, frame) in &sent {
+        assert_eq!(*to, broadcast());
         assert_eq!(identification(frame).logical_address, ENTITY);
     }
 }
