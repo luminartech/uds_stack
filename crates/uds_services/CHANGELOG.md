@@ -11,6 +11,9 @@ pre-1.0 crates).
 
 ### Added
 
+- `Server::transport_mut`, the transport by mutable reference between events: to
+  configure it before the first step with what is known only at run time, such as the
+  identity a `DoIP` entity announces.
 - `ClientTiming::transmission_repeats`: the ceiling on a request's repeats after a
   failed transmission, physical or functional, with its builder. `Repeats::Twice`, the
   default, is ISO 14229-2 Table 9's cell for the link, as before; `Repeats::Never` is

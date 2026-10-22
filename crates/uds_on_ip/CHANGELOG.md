@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/) (treating
 `0.x` breaking changes as minor bumps, per the Cargo/SemVer convention for
 pre-1.0 crates).
 
+## [Unreleased]
+
+### Added
+
+- `DoIpTransport::entity_mut`, the entity by mutable reference between events: to
+  start the discovery of an entity built without it, once the interface has an address.
+  With `simple_doip`'s `Entity::new_discovery_later`, a server over a `DoIpTransport` is
+  built in place as a `static`'s initializer.
+
 ## [0.7.0] — 2026-10-16
 
 First release. `uds_on_ip` implements ISO 14229-5:2022 (`UDSonIP`), which binds UDS to
