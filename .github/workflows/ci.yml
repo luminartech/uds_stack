@@ -238,11 +238,25 @@ jobs:
   # sockets (entity_std, entity_interop, tester_late_ack) cannot be.
   # Tree borrows, because stacked borrows rejects embassy-futures' select_array, which
   # tree borrows accepts. See `just miri`.
-  miri-connection:
-    name: Miri (simple_doip connection)
+  # Miri interprets on one thread, so each test target runs on its own runner. The
+  # cancellation sweeps in entity_cancel and tester take minutes each under Miri.
+  miri-connection-target:
+    name: Miri (simple_doip connection, ${{ matrix.name }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: lib and mock_stack
+            targets: --lib --test mock_stack
+          - name: entity
+            targets: --test entity
+          - name: entity_cancel
+            targets: --test entity_cancel
+          - name: tester
+            targets: --test tester
     steps:
       - uses: actions/checkout@v7
         with:
@@ -252,12 +266,27 @@ jobs:
           toolchain: nightly
           components: miri
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
       - name: Run the connection tests under Miri
         env:
           MIRIFLAGS: -Zmiri-tree-borrows
-        run: >-
-          cargo miri test -p simple_doip --features connection
-          --lib --test tester --test entity --test entity_cancel --test mock_stack
+          TARGETS: ${{ matrix.targets }}
+        # Unquoted: TARGETS holds several cargo arguments.
+        run: cargo miri test -p simple_doip --features connection $TARGETS
+
+  # The check main's ruleset requires: green only when every target above passed.
+  miri-connection:
+    name: Miri (simple_doip connection)
+    if: always()
+    needs: miri-connection-target
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Every target passed
+        env:
+          RESULT: ${{ needs.miri-connection-target.result }}
+        run: test "$RESULT" = success
 
   # ===================================================================================
   # Loopback (hand-rolled: the reusable workflow tests default members only)
