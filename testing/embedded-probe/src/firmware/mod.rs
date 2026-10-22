@@ -1,5 +1,6 @@
-//! The firmware: the server assembled in a `static`, run from reset; and the client
-//! transport's size, kept in the image for the size gate to read.
+//! The firmware: the server built in place as a `static`'s initializer, its discovery
+//! started from reset, then run; and the client transport's size, kept in the image for
+//! the size gate to read.
 
 mod clock;
 mod stub;
@@ -10,7 +11,7 @@ use simple_doip::messages::DiagnosticPowerModeCode;
 use simple_doip::service::{EntityConfig, TesterAddress};
 use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Tester};
 use simple_doip::{EntityId, GroupId, LogicalAddress, Vin};
-use static_cell::StaticCell;
+use static_cell::ConstStaticCell;
 use uds_on_ip::profile::bench_reloads;
 use uds_on_ip::{DoIpClientTransport, DoIpTransport};
 use uds_services::{Address, ServerParams, uds_server};
@@ -29,7 +30,7 @@ type SensorEntity = Entity<
     1,
     MAX_MESSAGE,
     1,
-    Discovery<stub::Datagrams, FixedIdentity>,
+    Option<Discovery<stub::Datagrams, FixedIdentity>>,
 >;
 type Transport = DoIpTransport<SensorEntity, 2>;
 
@@ -61,8 +62,34 @@ uds_server! {
 
 const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
+/// The entity's addresses, which fail the build rather than the firmware where invalid.
+const ADDRESS: EntityAddress = match EntityAddress::new(ENTITY, FUNCTIONAL) {
+    Ok(address) => address,
+    Err(_) => panic!("the entity's addresses are invalid"),
+};
+
+/// The one tester, which fails the build rather than the firmware where invalid.
+const TESTER_ADDRESS: TesterAddress = match TesterAddress::new(TESTER) {
+    Ok(tester) => tester,
+    Err(_) => panic!("the tester's address is invalid"),
+};
+
 static ACCEPTOR: stub::Acceptor = stub::Acceptor;
-static SERVER: StaticCell<EcuServer> = StaticCell::new();
+
+/// The server, built in place: its discovery waits for the identity `main` learns.
+static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
+    Ecu::new(),
+    DoIpTransport::new(
+        Entity::new_discovery_later(
+            &ACCEPTOR,
+            ADDRESS,
+            EntityConfig::new([TESTER_ADDRESS]),
+        ),
+        bench_reloads(),
+    ),
+    Address(ENTITY.0),
+    PARAMS,
+));
 
 fn halt() -> ! {
     loop {
@@ -77,10 +104,8 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 
 #[entry]
 fn main() -> ! {
-    let (Some(()), Ok(address), Ok(tester), Ok(eid), Ok(vin), Ok(gid)) = (
+    let (Some(()), Ok(eid), Ok(vin), Ok(gid)) = (
         clock::start(),
-        EntityAddress::new(ENTITY, FUNCTIONAL),
-        TesterAddress::new(TESTER),
         EntityId::new(EID),
         Vin::new(VIN),
         GroupId::new(GID),
@@ -90,16 +115,12 @@ fn main() -> ! {
     let identity = FixedIdentity::new(eid, DiagnosticPowerModeCode::Ready)
         .with_vin(vin)
         .with_gid(gid);
-    let server = SERVER.init_with(|| {
-        let entity = Entity::new(&ACCEPTOR, address, EntityConfig::new([tester]))
-            .with_discovery(stub::Datagrams, identity, core::hint::black_box(0));
-        EcuServer::new(
-            Ecu::new(),
-            DoIpTransport::new(entity, bench_reloads()),
-            Address(ENTITY.0),
-            PARAMS,
-        )
-    });
+    let server = SERVER.take();
+    server.transport_mut().entity_mut().start_discovery(
+        stub::Datagrams,
+        identity,
+        core::hint::black_box(0),
+    );
     core::hint::black_box(&CLIENT_TRANSPORT_SIZE);
     let _ = embassy_futures::block_on(server.run());
     halt()

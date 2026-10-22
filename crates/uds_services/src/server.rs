@@ -56,10 +56,11 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// `static` initializer rather than as a stack temporary. [`Self::step`] takes
     /// `&mut self`, so the `static` is a `static_cell::ConstStaticCell` whose `take()`
     /// yields the one `&'static mut`, as [`crate::uds_server`]'s example shows; a plain
-    /// `static` is read-only and cannot be stepped. A transport built at run time, such
-    /// as `uds_on_ip`'s `DoIpTransport`, cannot be in a `const` initializer: its server
-    /// goes in a `StaticCell` through `init_with(|| EcuServer::new(..))`, built on the
-    /// caller's stack and copied in.
+    /// `static` is read-only and cannot be stepped. What the transport learns only at run
+    /// time, such as the identity `uds_on_ip`'s `DoIpTransport` announces, is set through
+    /// [`Self::transport_mut`] before the first step. A transport with no `const`
+    /// constructor puts its server in a `StaticCell` through
+    /// `init_with(|| EcuServer::new(..))`, built on the caller's stack and copied in.
     ///
     /// The driver builds its own session, so an application never names `uds_session`.
     ///
@@ -110,6 +111,17 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     #[must_use]
     pub fn transport(&self) -> &T {
         &self.transport
+    }
+
+    /// The transport, to configure it between events: before the first step, say, once
+    /// the target knows what it could not know when it built the server.
+    ///
+    /// A response's confirmation can arrive in a later step than the response, and a
+    /// session change or a reset takes effect only on it. While a response awaits its
+    /// confirmation, do not replace the transport or close its connections, or the
+    /// server's record of what it awaits no longer matches the transport's.
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
     }
 
     /// Run [`ServiceSet::start_up`] on the first step, and again on the first step after a
