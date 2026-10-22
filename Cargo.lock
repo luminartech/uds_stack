@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "simple_doip"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "automotive-wire-codec",
@@ -1164,7 +1164,7 @@ checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 
 [[package]]
 name = "uds_on_ip"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "simple_doip",
  "thiserror",
@@ -1175,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "uds_protocol"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "automotive-wire-codec",
  "bitmask-enum",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "uds_services"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "automotive-wire-codec",
  "static_cell",
@@ -1199,7 +1199,7 @@ dependencies = [
 
 [[package]]
 name = "uds_session"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "unarray"

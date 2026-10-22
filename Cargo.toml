@@ -14,7 +14,7 @@ default-members = ["crates/*"]
 # and every crate inherits it with `version.workspace = true`; release-plz bumps this line
 # and all five move together. See release-plz.toml.
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 # One MSRV for the whole stack, so CI runs one MSRV check. It is the highest MSRV of any
 # dependency the workspace builds: smoltcp 0.13's 1.91, which embassy-net 0.9 brings in for
 # the embassy-net entity adapter.
@@ -32,10 +32,10 @@ homepage = "https://luminartech.github.io/uds_stack/"
 # `version` would publish a dependency with no version requirement, which the registry
 # rejects. Their `version` is always the workspace version above; release-plz updates both.
 [workspace.dependencies]
-uds_protocol = { path = "crates/uds_protocol", version = "0.7.0", default-features = false }
-uds_session = { path = "crates/uds_session", version = "0.7.0", default-features = false }
-uds_services = { path = "crates/uds_services", version = "0.7.0", default-features = false }
-simple_doip = { path = "crates/simple_doip", version = "0.7.0", default-features = false }
+uds_protocol = { path = "crates/uds_protocol", version = "0.8.0", default-features = false }
+uds_session = { path = "crates/uds_session", version = "0.8.0", default-features = false }
+uds_services = { path = "crates/uds_services", version = "0.8.0", default-features = false }
+simple_doip = { path = "crates/simple_doip", version = "0.8.0", default-features = false }
 
 # External. `automotive-wire-codec` is deliberately NOT a workspace member: it serves
 # simple_someip as well and is released on its own cadence.
