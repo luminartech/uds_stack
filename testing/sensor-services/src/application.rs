@@ -86,6 +86,7 @@ fn by_level_3(access: Access) -> Access {
 }
 
 impl DiagnosticSessionControl for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
     const MAX_RESPONSE_LEN: usize = 0;
     fn supports(&self, s: S) -> bool {
         matches!(
@@ -105,6 +106,9 @@ impl DiagnosticSessionControl for Ecu {
             p2_server_max_ms: 50,
             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
+    }
+    fn prepare(&mut self, _s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        core::future::ready(Ok(()))
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, relocked: bool) {
         if relocked {

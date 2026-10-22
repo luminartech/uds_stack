@@ -28,6 +28,28 @@ pre-1.0 crates).
   The failed request's channel is reset, as after a timeout. Functionally addressed
   requests are not under it.
 
+### Changed
+
+- **Breaking.** `DiagnosticSessionControl` has a required `prepare` and a required
+  `MAY_RESPOND_PENDING`. `prepare` is awaited once a session change is admitted and
+  before its positive response: `Ok` lets the response follow, and a code refuses the
+  change, such as `conditionsNotCorrect` (0x22). The session is still entered, and
+  `on_transition` called, only on the positive response's confirmation.
+  `MAY_RESPOND_PENDING` says whether the server answers response-pending while `prepare`
+  runs. Migrate: add both to each implementation, where the server needs no preparation
+  as
+
+  ```rust
+  const MAY_RESPOND_PENDING: bool = false;
+
+  fn prepare(
+      &mut self,
+      _session: DiagnosticSessionType,
+  ) -> impl Future<Output = Result<(), NegativeResponseCode>> {
+      core::future::ready(Ok(()))
+  }
+  ```
+
 ## [0.7.0] — 2026-10-16
 
 First release. `uds_services` implements the behaviour of ISO 14229-1:2020, meaning
