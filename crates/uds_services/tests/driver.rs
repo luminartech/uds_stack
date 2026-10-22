@@ -54,6 +54,7 @@ impl uds_services::ReadDataByIdentifier for Ecu {
 }
 
 impl uds_services::DiagnosticSessionControl for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
     const MAX_RESPONSE_LEN: usize = 0;
     fn supports(&self, s: S) -> bool {
         matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
@@ -69,6 +70,9 @@ impl uds_services::DiagnosticSessionControl for Ecu {
             p2_server_max_ms: 50,
             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
+    }
+    fn prepare(&mut self, _s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        core::future::ready(Ok(()))
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
 }
@@ -623,6 +627,7 @@ impl uds_services::ReadDataByIdentifier for Timed {
 }
 
 impl uds_services::DiagnosticSessionControl for Timed {
+    const MAY_RESPOND_PENDING: bool = false;
     const MAX_RESPONSE_LEN: usize = 0;
     fn supports(&self, s: S) -> bool {
         matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
@@ -645,6 +650,9 @@ impl uds_services::DiagnosticSessionControl for Timed {
                 p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
             },
         }
+    }
+    fn prepare(&mut self, _s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        core::future::ready(Ok(()))
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
 }
@@ -926,4 +934,281 @@ fn a_keep_alive_mid_service_leaves_the_response_window_where_it_was() {
         ((Some(response_to(TESTER)), PENDING), 50)
     );
     assert_eq!(t.addressed(1), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// An application that must first reach a state before entering a session, and that
+/// records what it was told.
+#[derive(Debug, Default)]
+struct Preparing {
+    /// How many times the next `prepare` pends before it completes.
+    pends: u8,
+    /// How many of the next `prepare`s refuse the change `conditionsNotCorrect`.
+    refusals: u8,
+    /// How many `prepare`s completed `Ok`.
+    prepared: u8,
+    /// Every `on_transition`, oldest first.
+    transitions: [Option<(SessionTransition, S)>; 2],
+}
+
+impl uds_services::DiagnosticSessionControl for Preparing {
+    const MAY_RESPOND_PENDING: bool = true;
+    const MAX_RESPONSE_LEN: usize = 0;
+    fn supports(&self, s: S) -> bool {
+        matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
+    }
+    /// The extended session is entered from the default one only, so a second `10 03`
+    /// tells which session the server is in.
+    fn supported_from(&self, s: S, active: S) -> bool {
+        !(s == S::ExtendedDiagnosticSession && active == S::ExtendedDiagnosticSession)
+    }
+    fn leaves_running_software(&self, _s: S) -> bool {
+        false
+    }
+    fn timing(&self, _s: S) -> SessionTiming {
+        SessionTiming {
+            p2_server_max_ms: 50,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
+        }
+    }
+    async fn prepare(&mut self, _s: S) -> Result<(), Nrc> {
+        PendN(core::mem::take(&mut self.pends)).await;
+        if self.refusals > 0 {
+            self.refusals = self.refusals.saturating_sub(1);
+            return Err(Nrc::ConditionsNotCorrect);
+        }
+        self.prepared = self.prepared.saturating_add(1);
+        Ok(())
+    }
+    fn on_transition(&mut self, t: SessionTransition, entered: S, _r: bool) {
+        if let Some(slot) = self.transitions.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some((t, entered));
+        }
+    }
+}
+
+uds_server! {
+    Preparing: DiagnosticSessionControl;
+    transport = Script,
+    peers = 1,
+    services = PreparingServices,
+    server = PreparingSrv,
+}
+
+/// [`Preparing`], declaring `MAY_RESPOND_PENDING = false`.
+#[derive(Debug, Default)]
+struct Unannounced(Preparing);
+
+impl uds_services::DiagnosticSessionControl for Unannounced {
+    const MAY_RESPOND_PENDING: bool = false;
+    const MAX_RESPONSE_LEN: usize = 0;
+    fn supports(&self, s: S) -> bool {
+        self.0.supports(s)
+    }
+    fn supported_from(&self, s: S, active: S) -> bool {
+        self.0.supported_from(s, active)
+    }
+    fn leaves_running_software(&self, s: S) -> bool {
+        self.0.leaves_running_software(s)
+    }
+    fn timing(&self, s: S) -> SessionTiming {
+        self.0.timing(s)
+    }
+    fn prepare(&mut self, s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        self.0.prepare(s)
+    }
+    fn on_transition(&mut self, t: SessionTransition, entered: S, r: bool) {
+        self.0.on_transition(t, entered, r);
+    }
+}
+
+uds_server! {
+    Unannounced: DiagnosticSessionControl;
+    transport = Script,
+    peers = 1,
+    services = UnannouncedServices,
+    server = UnannouncedSrv,
+}
+
+/// `10 03`, the extended session.
+const EXTENDED: &[u8] = &[0x10, 0x03];
+/// `10 83`, the extended session with its positive response suppressed.
+const EXTENDED_SUPPRESSED: &[u8] = &[0x10, 0x83];
+/// The positive response entering the extended session, with [`Preparing`]'s timing.
+const ENTERED: &[u8] = &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4];
+/// The extended session, entered from the default one.
+const INTO_EXTENDED: Option<(SessionTransition, S)> = Some((
+    SessionTransition::DefaultToNonDefault,
+    S::ExtendedDiagnosticSession,
+));
+
+/// ``UDSSVC_ARCH_0046``: a session change whose `prepare` is still running when
+/// `tP2_Server` runs out is answered response-pending, then positively once `prepare`
+/// completes, and the session is entered on that response's confirmation.
+#[test]
+fn a_session_change_still_preparing_is_answered_response_pending() {
+    let mut server = PreparingSrv::new(
+        Preparing {
+            pends: 2,
+            ..Preparing::default()
+        },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::At(50), // tP2_Server ends mid-prepare
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 6, "the script was not consumed");
+    assert_eq!(t.sent_count, 3);
+    assert_eq!(
+        (t.addressed(0).1, t.sent(0).map_or(0, |s| s.at)),
+        (&[0x7F, 0x10, 0x78][..], 50)
+    );
+    assert_eq!(t.addressed(1).1, ENTERED);
+    // In the extended session, which is entered from the default one only.
+    assert_eq!(t.addressed(2).1, &[0x7F, 0x10, 0x7E]);
+    assert_eq!(server.services().transitions, [INTO_EXTENDED, None]);
+}
+
+/// ``UDSSVC_ARCH_0046``: a `prepare` refusing the change answers `7F 10 22`, and the
+/// server stays in the default session: the next `10 03` enters the extended one.
+#[test]
+fn a_session_change_prepare_refuses_is_answered_conditions_not_correct() {
+    let mut server = PreparingSrv::new(
+        Preparing {
+            refusals: 1,
+            ..Preparing::default()
+        },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.addressed(0).1, &[0x7F, 0x10, 0x22]);
+    assert_eq!(t.addressed(1).1, ENTERED);
+    assert_eq!(server.services().transitions, [INTO_EXTENDED, None]);
+}
+
+/// The requesting client's link closing while `prepare` runs drops it unfinished: nothing
+/// is sent, no session is entered, and the next `10 03` is still from the default
+/// session.
+#[test]
+fn a_close_while_preparing_sends_nothing_and_enters_no_session() {
+    let mut server = PreparingSrv::new(
+        Preparing {
+            pends: 1,
+            ..Preparing::default()
+        },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Close(TESTER), // mid-prepare
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(t.addressed(0).1, ENTERED);
+    let app = server.services();
+    assert_eq!(app.prepared, 1, "the dropped prepare completed");
+    assert_eq!(app.transitions, [INTO_EXTENDED, None]);
+}
+
+/// ISO 14229-1:2020 8.7.6: a request arriving while `prepare` runs finds the protocol
+/// instance occupied and is answered `busyRepeatRequest`; the session change goes on.
+#[test]
+fn a_request_while_preparing_is_answered_busy() {
+    let mut server = PreparingSrv::new(
+        Preparing {
+            pends: 1,
+            ..Preparing::default()
+        },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Ind(request_from(TESTER), &[0x10, 0x01]), // mid-prepare
+            Step::Conf(response_to(TESTER), SResult::Ok),   // the refusal's
+            Step::Conf(response_to(TESTER), SResult::Ok),   // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.addressed(0).1, &[0x7F, 0x10, 0x21]);
+    assert_eq!(t.addressed(1).1, ENTERED);
+    assert_eq!(server.services().transitions, [INTO_EXTENDED, None]);
+}
+
+/// ``UDSSVC_ARCH_0009`` rule 3: a suppressed session change answered response-pending
+/// while `prepare` ran owes its positive response after all.
+#[test]
+fn a_suppressed_session_change_answered_pending_is_answered_positively() {
+    let mut server = PreparingSrv::new(
+        Preparing {
+            pends: 2,
+            ..Preparing::default()
+        },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED_SUPPRESSED),
+            Step::At(50), // tP2_Server ends mid-prepare
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.addressed(0).1, &[0x7F, 0x10, 0x78]);
+    assert_eq!(t.addressed(1).1, ENTERED);
+    assert_eq!(server.services().transitions, [INTO_EXTENDED, None]);
+}
+
+/// ``UDSSVC_ARCH_0032``: a `prepare` outlasting `tP2_Server` under
+/// `MAY_RESPOND_PENDING = false` gets no response-pending, only its final response, and
+/// the session is entered on that response's confirmation.
+#[test]
+fn a_slow_prepare_that_may_not_pend_gets_no_response_pending() {
+    let mut server = UnannouncedSrv::new(
+        Unannounced(Preparing {
+            pends: 1,
+            ..Preparing::default()
+        }),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::At(50), // tP2_Server reached, mid-prepare
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 3, "the script was not consumed");
+    assert_eq!(t.deadlines, 1);
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(t.addressed(0).1, ENTERED);
+    assert_eq!(server.services().0.transitions, [INTO_EXTENDED, None]);
 }

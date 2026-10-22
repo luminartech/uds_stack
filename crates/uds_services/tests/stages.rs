@@ -172,6 +172,7 @@ struct Ecu {
 }
 
 impl uds_services::DiagnosticSessionControl for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
     const MAX_RESPONSE_LEN: usize = 0;
     fn supports(&self, s: S) -> bool {
         matches!(
@@ -190,6 +191,9 @@ impl uds_services::DiagnosticSessionControl for Ecu {
             p2_server_max_ms: 50,
             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
+    }
+    fn prepare(&mut self, _s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        core::future::ready(Ok(()))
     }
     fn on_transition(&mut self, _t: SessionTransition, entered: S, relocked: bool) {
         self.relocked = Some(relocked);

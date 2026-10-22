@@ -17,7 +17,8 @@ the driver, which settles who declares what by settling who calls whom:
    * - Service traits and callbacks
      - this crate
      - the consuming application
-     - ``UDSSVC_ARCH_0012``, ``UDSSVC_ARCH_0033``, ``UDSSVC_ARCH_0038``
+     - ``UDSSVC_ARCH_0012``, ``UDSSVC_ARCH_0033``, ``UDSSVC_ARCH_0038``,
+       ``UDSSVC_ARCH_0046``
    * - ``UdsTransport``
      - this crate
      - a binding (``uds_on_ip``, ``uds_on_can``)

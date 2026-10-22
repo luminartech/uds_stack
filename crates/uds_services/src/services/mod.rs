@@ -6,9 +6,9 @@
 //! into a [`ResponseSink`].
 //!
 //! A service trait whose handler can be in progress declares `MAY_RESPOND_PENDING` with
-//! no default, so omitting it fails to compile. [`DiagnosticSessionControl`] and
-//! [`TesterPresent`] do not declare it: neither is ever awaited, so no response-pending
-//! can come due.
+//! no default, so omitting it fails to compile. [`DiagnosticSessionControl`] declares it
+//! for its `prepare`. [`TesterPresent`] does not: it is never awaited, so no
+//! response-pending can come due.
 
 use crate::pipeline::Settling;
 use crate::state::ProtocolState;
