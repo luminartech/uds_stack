@@ -216,6 +216,16 @@ impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
         &self.entity
     }
 
+    /// The entity, to configure it between events: to start its discovery once the
+    /// interface has an address, say.
+    ///
+    /// The transport records which tester is on which connection and which responses
+    /// await their confirmation. While a response awaits one, do not replace the entity,
+    /// or close or send on its connections, or that record no longer matches the entity.
+    pub fn entity_mut(&mut self) -> &mut E {
+        &mut self.entity
+    }
+
     fn tester_mut(&mut self, address: LogicalAddress) -> Option<&mut Tester> {
         self.testers
             .iter_mut()

@@ -133,16 +133,30 @@ one task owns it, a `static_cell` cell yields the `&'static mut` once. Where
 anything else must reach it too, an interrupt handler or a second task, it
 lives in a `critical_section::Mutex<core::cell::RefCell<..>>`.
 
-A transport over `simple_doip`'s `entity::Entity` is built at run time, because
-the entity borrows an acceptor the network stack creates then, and `Entity::new`
-is not `const`. So the cell is a `static_cell::StaticCell`, filled with
-`init_with(|| Server::new(..))`; `static_cell::ConstStaticCell`, which
-`uds_services::Server::new` shows, serves only a transport with a `const`
-constructor. `Entity::new` returns the entity by value, its buffers included, so
-the server is built on the caller's stack and then copied into the cell: the
-stack needs room for the whole server once, while it is built. The entity holds
-a receive buffer and a transmit queue of `MAX_MESSAGE` bytes for each of its
-`MCTS` connections.
+A transport over `simple_doip`'s `entity::Entity` is built in place, as the
+`static`'s initializer, where the acceptor is a `static` too:
+`Entity::new_discovery_later`, `DoIpTransport::new` and
+`uds_services::Server::new` are `const fn`s, so the cell is a
+`static_cell::ConstStaticCell`, and the server is never on the stack. Its
+initializer is an image in flash, copied to RAM at start-up. The entity is built
+without discovery, because the identity it announces is known only at run time,
+and discovery is started once the interface has an address, before the first
+step:
+
+```rust
+let server = SERVER.take();
+server
+    .transport_mut()
+    .entity_mut()
+    .start_discovery(udp_socket, identity, seed);
+```
+
+Where the acceptor is created at run time, the entity borrows it then, so the cell
+is a `static_cell::StaticCell`, filled with `init_with(|| Server::new(..))`.
+`Entity::new` returns the entity by value, its buffers included, so the server is
+built on the caller's stack and then copied into the cell: the stack needs room
+for the whole server once, while it is built. The entity holds a receive buffer
+and a transmit queue of `MAX_MESSAGE` bytes for each of its `MCTS` connections.
 
 The integrator supplies, for the target:
 
@@ -156,7 +170,7 @@ The integrator supplies, for the target:
 
 The workspace's unpublished `testing/embedded-probe` assembles all of it for
 bare metal: a `SysTick` driver with a generic queue, `cortex-m`'s critical
-section, and the sensor's server in a `StaticCell`.
+section, and the sensor's server built in place in a `ConstStaticCell`.
 
 ## Relationship to the standards
 
