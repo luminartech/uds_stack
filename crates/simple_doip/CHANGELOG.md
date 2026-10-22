@@ -13,6 +13,14 @@ changed rather than what was announced at the time.
 
 ## [Unreleased]
 
+### Added
+
+- `Entity::new_discovery_later`, a `const fn` constructor for an entity whose type has
+  `Option<Discovery<U, I>>` as its discovery, built with none, and
+  `Entity::start_discovery`, which starts it. A target whose stack cannot hold an
+  entity builds it as a `static`'s initializer and starts discovery once the interface
+  has a valid address and the identity is known.
+
 ### Changed
 
 - **Breaking.** Every duration the tester takes or exports is a `core::time::Duration`:
@@ -22,6 +30,7 @@ changed rather than what was announced at the time.
   A hosted caller no longer names `embassy_time` to configure a tester.
 - **Breaking.** `tester::ACK_TIMEOUT` is gone: it was `TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`
   rebuilt in the other type, and that constant is the default it named.
+- `EntityAddress::new` is a `const fn`, so an entity's addresses can be a `const`.
 
 ## [0.7.0] — 2026-10-16
 

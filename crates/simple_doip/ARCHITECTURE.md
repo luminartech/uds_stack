@@ -517,7 +517,9 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   (on embassy-net, after `Stack::wait_config_up`). A new address discards every
   `TCP_DATA` socket (7.DoIP-030), so the integrator that re-addresses rebuilds the
   entity, and the new entity announces. There is no `announce` method: through
-  `DoIpTransport` nothing could call it.
+  `DoIpTransport` nothing could call it. An entity built as a `static`'s initializer,
+  before the address is up, comes from the `const fn` `new_discovery_later`, whose
+  discovery is `None` until `start_discovery` starts it, once.
 - **Randomness is a seed.** `with_discovery` takes a `u32` the integrator draws from its
   hardware RNG (embassy-net's stack needs one too), mixes the identity's EID into it, and
   steps a xorshift from the result for each `A_DoIP_Announce_Wait`. No `rand_core`
