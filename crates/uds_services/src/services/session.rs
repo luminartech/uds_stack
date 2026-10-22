@@ -51,9 +51,14 @@ impl SessionTiming {
 /// classifies the change before the application sees it, so an application never tracks
 /// a session itself.
 ///
-/// No `MAY_RESPOND_PENDING`, unlike the services in ``UDSSVC_ARCH_0033``: nothing here is
-/// awaited, so there is no window in which a 0x78 could come due.
+/// [`Self::prepare`] is the stage the driver awaits (``UDSSVC_ARCH_0046``), so the
+/// service declares [`Self::MAY_RESPOND_PENDING`] as every service in
+/// ``UDSSVC_ARCH_0033`` does.
 pub trait DiagnosticSessionControl {
+    /// ``UDSSVC_ARCH_0033``: whether the driver may answer
+    /// `requestCorrectlyReceivedResponsePending` (0x78) while [`Self::prepare`] runs.
+    const MAY_RESPOND_PENDING: bool;
+
     /// The longest positive response beyond the mandatory four timing bytes.
     const MAX_RESPONSE_LEN: usize;
 
@@ -125,7 +130,48 @@ pub trait DiagnosticSessionControl {
     /// * `session` - the session being entered; see [`DiagnosticSessionType`].
     fn leaves_running_software(&self, session: DiagnosticSessionType) -> bool;
 
-    /// Called after the positive response, and on `tS3_Server` expiry.
+    /// Reach the state `session` needs, or refuse it, before the positive response
+    /// (``UDSSVC_ARCH_0046``): stop what the server is doing before a programming
+    /// session, say. Asked once [`Self::supports`] and [`Self::supported_from`] have
+    /// admitted the request, so what remains is whether the server's own state allows the
+    /// change now.
+    ///
+    /// `session` is entered, and [`Self::on_transition`] called, only once the positive
+    /// response is confirmed sent, or a suppressed one's completion reported. Where the
+    /// confirmation fails, or the link closes first, the server stays in the active
+    /// session, prepared: what `prepare` changes must be valid in that session too.
+    ///
+    /// With [`Self::MAY_RESPOND_PENDING`] the driver answers 0x78 each time the response
+    /// window runs out first. A client may give up after a ceiling of its own on those,
+    /// such as [`ClientTiming::max_response_pending`], so a `prepare` that can pend long
+    /// completes within what its clients accept.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - the session being requested; see [`DiagnosticSessionType`].
+    ///
+    /// # Errors
+    ///
+    /// The [`NegativeResponseCode`] refusing the change, which nothing is entered after.
+    /// It is sent as returned, under the suppression rules every handler's code is
+    /// (``UDSSVC_ARCH_0009``): `conditionsNotCorrect` (0x22) where the server's state
+    /// does not allow the change, ISO 14229-1:2020 clause 10.2.4.
+    ///
+    /// # Cancel safety
+    ///
+    /// The future is dropped unfinished where the requesting client's link closes, and
+    /// where [`Server::step`](crate::Server::step) is dropped. Nothing is sent and the
+    /// session does not change, so every await must leave a state valid in the active
+    /// session.
+    ///
+    /// [`ClientTiming::max_response_pending`]: crate::ClientTiming::max_response_pending
+    fn prepare(
+        &mut self,
+        session: DiagnosticSessionType,
+    ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
+
+    /// Called once the positive response is confirmed sent, or a suppressed one's
+    /// completion reported, and on `tS3_Server` expiry.
     ///
     /// ``UDSSVC_ARCH_0038``. The application applies what clause 10.2 Figure 7 owes the
     /// state it holds: `transition` says which of the four cases occurred, and `entered`
@@ -369,6 +415,7 @@ mod tests {
     struct Ecu;
 
     impl DiagnosticSessionControl for Ecu {
+        const MAY_RESPOND_PENDING: bool = false;
         const MAX_RESPONSE_LEN: usize = 0;
         fn supports(&self, session: DiagnosticSessionType) -> bool {
             matches!(
@@ -394,6 +441,12 @@ mod tests {
                 p2_server_max_ms: 50,
                 p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             }
+        }
+        fn prepare(
+            &mut self,
+            _s: DiagnosticSessionType,
+        ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>> {
+            core::future::ready(Ok(()))
         }
         fn on_transition(
             &mut self,
