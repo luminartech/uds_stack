@@ -1,7 +1,7 @@
 Architecture
 ============
 
-How the five crates of the stack fit together: what each one owns, what it must not
+How the six crates of the stack fit together: what each one owns, what it must not
 acquire, the seams between them, and who owns each timer. Each crate's own design is
 described separately, under :ref:`crate-architecture`.
 
@@ -47,9 +47,14 @@ bound to one.
    package "ISO 14229-1:2020, messages" {
      [uds_protocol] as PROTO
    }
+   package "C firmware" {
+     [uds_c] as UC
+   }
 
    CLI -down-> SVC : typed requests
    APP -down-> SVC : typed service handlers
+   UC -down-> SVC : table-driven handlers
+   UC -down-> DOIP : sockets over the C ABI
    SVC -right-> SESS : drives
    SVC -down-> OIP : UdsTransport
    OIP -down-> DOIP : DiagnosticEntity /\nTesterConnection
@@ -92,6 +97,12 @@ The crates
      - ISO 13400-2:2019
      - DoIP: framing, the TCP and UDP sockets, routing activation, alive check, vehicle
        identification and the ``DoIP_Data`` primitives.
+   * - ``uds_c``
+     - none: the C ABI of ``include/uds_c.h``
+     - A server for firmware written in C: an application serving every staged service
+       from layers of C tables and handlers, the record and operation-status protocols
+       those handlers answer through, ``edge-nal`` sockets over the firmware's socket
+       calls, and a clock over its millisecond counter.
 
 Each also has something it must not acquire, and that is the more useful half:
 
@@ -108,11 +119,15 @@ Each also has something it must not acquire, and that is the more useful half:
   ISO 14229-5:2022 clause 8 and transport rules keyed on a service, not service semantics.
 - ``simple_doip`` never learns what a UDS message means. A diagnostic message's payload is
   an opaque byte string to it.
+- ``uds_c`` never implements a standard. Every rule it serves by is a protocol crate's: it
+  states the firmware's tables through the service traits of ``uds_services`` and carries
+  the firmware's sockets under ``simple_doip``'s entity, and decides only what the C
+  contract leaves to it.
 
 ``automotive-wire-codec``, outside this repository, provides the zero-copy ``no_std`` codec
 traits ``uds_protocol``, ``simple_doip`` and ``uds_services`` are built on.
 
-The five crates release in lockstep to crates.io: one version for the stack, published
+The six crates release in lockstep to crates.io: one version for the stack, published
 bottom-up in dependency order.
 
 When and what
@@ -274,7 +289,7 @@ names a binding. The graph therefore has no cycle and needs no feature gate to a
    :align: center
    :caption: Cargo dependencies. An arrow points from a crate to a crate that depends on
              it, so left to right is publication order. Every edge is unconditional, and
-             ``uds_on_ip`` is a leaf.
+             ``uds_c`` is the one leaf.
 
    @startuml
    left to right direction
@@ -284,6 +299,7 @@ names a binding. The graph therefore has no cycle and needs no feature gate to a
    [uds_session] as US
    [uds_services] as USVC
    [uds_on_ip] as UOI
+   [uds_c] as UC
 
    AWC --> UP
    AWC --> SD
@@ -294,6 +310,9 @@ names a binding. The graph therefore has no cycle and needs no feature gate to a
    US --> UOI
    SD --> UOI
    USVC --> UOI
+   SD --> UC
+   USVC --> UC
+   UOI --> UC
    @enduml
 
 What a transport swap replaces
@@ -357,3 +376,5 @@ Each crate's architecture
      - :doc:`../requirements/index`, and its README
    * - ``uds_protocol``
      - its README
+   * - ``uds_c``
+     - its README and crate documentation, and ``include/uds_c.h``

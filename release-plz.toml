@@ -1,5 +1,5 @@
-# Lockstep. The five crates are one stack and release as one: every release publishes all
-# five at the same version, which lives once, in the root Cargo.toml's [workspace.package].
+# Lockstep. The six crates are one stack and release as one: every release publishes all
+# six at the same version, which lives once, in the root Cargo.toml's [workspace.package].
 # A shared field rather than release-plz's `version_group`, because a version group only
 # moves the members that changed, and an untouched member would be left behind.
 [workspace]
@@ -17,11 +17,12 @@ git_release_enable = false
 
 # The anchor. release-plz releases packages one at a time in dependency order and tags each
 # as soon as it is published, so the tag has to sit on the crate that is always published
-# last, or `v<version>` could exist over a partial release. uds_on_ip is the only crate
-# that depends on all four others. That is publish order, not architecture: it depends on
+# last, or `v<version>` could exist over a partial release. uds_c is the only crate that
+# depends on uds_on_ip, which depends on all four others. That is publish order, not
+# architecture: uds_c binds C firmware to the stack, and uds_on_ip depends on
 # uds_services because it implements uds_services' transport trait.
 [[package]]
-name = "uds_on_ip"
+name = "uds_c"
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
 git_release_enable = true
@@ -30,7 +31,7 @@ git_release_enable = true
 # `{{ changelog }}` empty.
 git_release_name = "uds_stack v{{ version }}"
 git_release_body = """
-All five crates released together at {{ version }}. Each crate's changelog has its own
+All six crates released together at {{ version }}. Each crate's changelog has its own
 entry for this version:
 
 - uds_protocol: [crate](https://crates.io/crates/uds_protocol/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/uds_protocol/CHANGELOG.md)
@@ -38,4 +39,5 @@ entry for this version:
 - uds_services: [crate](https://crates.io/crates/uds_services/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/uds_services/CHANGELOG.md)
 - simple_doip: [crate](https://crates.io/crates/simple_doip/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/simple_doip/CHANGELOG.md)
 - uds_on_ip: [crate](https://crates.io/crates/uds_on_ip/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/uds_on_ip/CHANGELOG.md)
+- uds_c: [crate](https://crates.io/crates/uds_c/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/uds_c/CHANGELOG.md)
 """

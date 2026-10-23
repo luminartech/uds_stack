@@ -1,0 +1,28 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/) (treating
+`0.x` breaking changes as minor bumps, per the Cargo/SemVer convention for
+pre-1.0 crates).
+
+## [Unreleased]
+
+### Added
+
+- First release. `uds_c` serves UDS over `DoIP` from C firmware's tables of handlers,
+  with the C contract in `include/uds_c.h`:
+  - `UdsLayer` and its tables, `#[repr(C)]` mirrors of the header's, read in the order
+    a `Layers` lists them.
+  - `TableApp<P: Policy>`, an application implementing every `uds_services` service
+    trait over the layers, built as a `const`, with `TableApp::validate` to refuse
+    tables at start-up; `Policy` states the sessions, their timing and the limits.
+  - `uds_record_copy`, through which a handler answers into the record the server
+    lends it, and the operation-status protocol of handlers that pend or are canceled.
+  - `execute_deferred`, which makes a reset or session change once its response has
+    gone out.
+  - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
+    and transport over them with `doip::poll_run` to drive the server.
+  - The `time-driver` feature and `time_driver!`, `embassy-time`'s clock over
+    `uds_now_ms`.

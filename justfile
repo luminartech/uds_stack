@@ -1,4 +1,4 @@
-# Command runner for the uds_stack workspace: five crates, an example crate, two test
+# Command runner for the uds_stack workspace: six crates, an example crate, two test
 # crates and one requirement set.
 #
 # The Python toolchain is pinned in pyproject.toml and locked in uv.lock, and every recipe
@@ -115,12 +115,14 @@ test:
 # `-D warnings` promotes anything a crate's Cargo.toml lint table leaves at warn level, and
 # `--all-targets` means the lints are enforced in tests too, not just the libraries.
 #
-# The embedded probe is empty on a host, so it is linted again for bare metal.
+# The embedded probe is empty on a host, so it is linted again for bare metal, and uds_c
+# is, for the layout checks it compiles only where pointers are 32 bits wide.
 [doc("Lint the workspace at the level pre-commit enforces")]
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
     rustup target add {{ embedded_target }}
     cargo clippy -p embedded-probe --target {{ embedded_target }} -- -D warnings
+    cargo clippy -p uds_c --target {{ embedded_target }} --all-features -- -D warnings
 
 # A broken intra-doc link renders as plain text and fails nothing else, so a renamed item
 # leaves its references silently dangling. Denied here so the rename fails instead.
@@ -134,7 +136,8 @@ doc:
 #
 # Then the embedded probe, the sensor's whole server path linked as firmware: here for the
 # core without compare-and-swap, and by `size` for the other target, whose image it holds
-# to the recorded baseline.
+# to the recorded baseline. uds_c is built for both targets too: firmware in C runs on
+# either kind of core.
 [doc("Build the no_std crates for a bare-metal target, and check the probe's size")]
 embedded: && size
     rustup target add {{ embedded_target }} {{ embedded_target_no_cas }}
@@ -143,9 +146,11 @@ embedded: && size
     cargo build -p uds_services --target {{ embedded_target }} --no-default-features
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features
     cargo build -p simple_doip  --target {{ embedded_target }} --no-default-features --features connection
+    cargo build -p uds_c        --target {{ embedded_target }} --all-features
     cargo build -p embassy-net-entity --target {{ embedded_target }}
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features --features alloc
     cargo build -p embedded-probe --target {{ embedded_target_no_cas }}
+    cargo build -p uds_c        --target {{ embedded_target_no_cas }} --all-features
 
 # The probe's flash, static RAM and main's stack frame against
 # testing/embedded-probe/size-baseline.json, in the `firmware` profile on the pinned
@@ -180,7 +185,8 @@ size-baseline: (size "--record")
 # emulate. Linux's `epoll` it does.
 #
 # Then simple_doip's `connection` tests on the mock stack, which default features leave
-# out, as ci.yml's `miri-connection-target` jobs run them.
+# out, as ci.yml's `miri-connection-target` jobs run them, and uds_c's, as its
+# `uds-c-miri` job does: every test but the one that runs the C compiler.
 [doc("Run the test suite under Miri, as CI does")]
 miri:
     rustup toolchain install nightly --component miri --profile minimal --no-self-update
@@ -190,6 +196,9 @@ miri:
     MIRIFLAGS="-Zmiri-tree-borrows" \
         cargo +nightly miri test --target {{ miri_target }} -p simple_doip --features connection \
         --lib --test tester --test entity --test entity_cancel --test mock_stack
+    MIRIFLAGS="-Zmiri-tree-borrows" \
+        cargo +nightly miri test --target {{ miri_target }} -p uds_c --all-features \
+        --lib --test server --test clock
 
 # A guard rail is only verified by watching it fail, so each check in validate_needs.py is
 # demonstrated stopping something.
