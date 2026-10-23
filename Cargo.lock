@@ -1163,6 +1163,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 
 [[package]]
+name = "uds_c"
+version = "0.7.0"
+dependencies = [
+ "critical-section",
+ "edge-nal",
+ "embassy-time",
+ "embassy-time-driver",
+ "embedded-io-async",
+ "simple_doip",
+ "thiserror",
+ "uds_on_ip",
+ "uds_protocol",
+ "uds_services",
+]
+
+[[package]]
 name = "uds_on_ip"
 version = "0.7.0"
 dependencies = [
