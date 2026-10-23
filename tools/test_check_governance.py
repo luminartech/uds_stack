@@ -102,6 +102,48 @@ class CheckGovernance(unittest.TestCase):
         )
         self.assert_rejects("replaces the workspace standard")
 
+    def restate_lints(self, rust: str, crate: str = "uds_c") -> None:
+        """Give the workspace a lint table and `crate` its own copy, `rust` changed."""
+        directory = self.root / "crates" / crate
+        if not directory.exists():
+            directory.mkdir()
+            for name in LICENCES:
+                (directory / name).symlink_to(f"../../{name}")
+        (self.root / "Cargo.toml").write_text(
+            '[workspace]\n\n[workspace.lints.rust]\nunsafe_code = "forbid"\n'
+            'missing_docs = "deny"\n\n[workspace.lints.clippy]\n'
+            'pedantic = { level = "deny", priority = -1 }\n',
+            encoding="utf-8",
+        )
+        (directory / "Cargo.toml").write_text(
+            '[package]\nname = "c"\nlicense = "MIT OR Apache-2.0"\n\n'
+            f"[lints.rust]\n{rust}\n\n[lints.clippy]\n"
+            'pedantic = { level = "deny", priority = -1 }\n',
+            encoding="utf-8",
+        )
+
+    def test_restated_lints_relaxing_only_unsafe_code_pass(self) -> None:
+        self.restate_lints('unsafe_code = "deny"\nmissing_docs = "deny"')
+        self.assertEqual(check(self.root), [])
+
+    def test_restated_lints_dropping_an_entry_are_rejected(self) -> None:
+        self.restate_lints('unsafe_code = "deny"')
+        self.assert_rejects("may differ from [workspace.lints] only")
+
+    def test_restated_lints_relaxing_another_entry_are_rejected(self) -> None:
+        self.restate_lints('unsafe_code = "deny"\nmissing_docs = "warn"')
+        self.assert_rejects("may differ from [workspace.lints] only")
+
+    def test_restated_lints_identical_to_the_workspace_are_rejected(self) -> None:
+        # Nothing to relax, so the crate inherits instead.
+        self.restate_lints('unsafe_code = "forbid"\nmissing_docs = "deny"')
+        self.assert_rejects("may differ from [workspace.lints] only")
+
+    def test_restated_lints_in_another_crate_are_rejected(self) -> None:
+        # The relaxation is the C binding's alone.
+        self.restate_lints('unsafe_code = "deny"\nmissing_docs = "deny"', crate="alpha")
+        self.assert_rejects("only the C binding, uds_c, may restate them")
+
     def test_empty_root_licence_is_rejected(self) -> None:
         (self.root / "LICENSE-APACHE").write_text("   \n", encoding="utf-8")
         self.assert_rejects("empty")
