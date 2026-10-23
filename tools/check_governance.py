@@ -18,12 +18,14 @@ Checked:
   * no crate carries its own CONTRIBUTING / SECURITY / CODE_OF_CONDUCT -- those
     are the repository's, and a per-crate copy would go stale unread
   * every crate manifest declares the same SPDX expression
-  * every crate inherits the workspace lint standard rather than declaring its own
+  * every crate inherits the workspace lint standard rather than declaring its own,
+    save the C binding, `uds_c`, which restates it with `unsafe_code` at `deny`
   * the root pair exists and is not empty
 """
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +38,52 @@ NOT_PER_CRATE = ("CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md")
 # it, and a silent one. A crate that needs more or less says so as a crate-root
 # attribute in its own lib.rs, where a reader opening the file sees it.
 INHERITS_LINTS = "[lints]\nworkspace = true"
+# The one replacement admitted, and the one crate admitted to it. The C binding declares
+# and calls C, which `forbid(unsafe_code)` rules out and no attribute can relax, so it
+# restates the table with that entry at `deny` and allows `unsafe` module by module, with
+# a reason. Every other entry must equal the workspace's, so the standard is still
+# declared once.
+C_BINDING = "uds_c"
+RELAXED = ("rust", "unsafe_code", "deny")
+
+
+def lint_entries(manifest: str, prefix: str) -> set[tuple[str, str, str]]:
+    """Every `(group, lint, value)` in the `[<prefix>.<group>]` tables of a manifest.
+
+    A line-based reading, enough for the flat tables a lint standard is written in, so
+    the check runs on any Python 3 without a TOML parser.
+    """
+    entries: set[tuple[str, str, str]] = set()
+    group = None
+    for raw in manifest.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        header = re.fullmatch(r"\[([^\]]+)\]", line)
+        if header:
+            name = header.group(1).strip()
+            group = name[len(prefix) + 1 :] if name.startswith(prefix + ".") else None
+        elif group and "=" in line:
+            lint, value = (part.strip() for part in line.split("=", 1))
+            entries.add((group, lint, re.sub(r"\s+", " ", value)))
+    return entries
+
+
+def restated_lints_problem(root: Path, manifest: str) -> str | None:
+    """Why a crate's own lint tables are not the workspace's with RELAXED applied."""
+    try:
+        workspace = (root / "Cargo.toml").read_text(encoding="utf-8")
+    except OSError as error:
+        return f"cannot compare its lint tables with the workspace's: {error}"
+    group, lint, level = RELAXED
+    expected = {
+        (g, name, f'"{level}"' if (g, name) == (group, lint) else value)
+        for g, name, value in lint_entries(workspace, "workspace.lints")
+    }
+    if lint_entries(manifest, "lints") != expected:
+        return (
+            "declares its own lint tables, which may differ from [workspace.lints] "
+            f'only in `{lint} = "{level}"`; restate the workspace\'s entry for entry'
+        )
+    return None
 
 
 def check(root: Path) -> list[str]:
@@ -79,7 +127,17 @@ def check(root: Path) -> list[str]:
         manifest = (crate / "Cargo.toml").read_text(encoding="utf-8")
         if SPDX not in manifest:
             problems.append(f"{crate.name}/Cargo.toml: expected `{SPDX}`")
-        if INHERITS_LINTS not in manifest:
+        if INHERITS_LINTS not in manifest and "[lints." in manifest:
+            problem = (
+                restated_lints_problem(root, manifest)
+                if crate.name == C_BINDING
+                else "declares its own lint tables; only the C binding, "
+                f"{C_BINDING}, may restate them, and every other crate inherits "
+                "[workspace.lints] with `[lints]` / `workspace = true`"
+            )
+            if problem:
+                problems.append(f"{crate.name}/Cargo.toml: {problem}")
+        elif INHERITS_LINTS not in manifest:
             problems.append(
                 f"{crate.name}/Cargo.toml: must inherit the workspace lint standard "
                 f"with `[lints]` / `workspace = true`"
