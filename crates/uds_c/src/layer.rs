@@ -23,16 +23,21 @@ pub type UdsSeedFn =
     unsafe extern "C" fn(op: u8, option: *const u8, option_len: usize) -> u8;
 /// `UdsKeyFn`.
 pub type UdsKeyFn = unsafe extern "C" fn(op: u8, key: *const u8, key_len: usize) -> u8;
-/// `UdsDtcReportFn`.
-pub type UdsDtcReportFn = unsafe extern "C" fn(
-    op: u8,
-    report_type: u8,
-    status_mask: u8,
-    dtc: u32,
-    record_number: u8,
-) -> u8;
+/// `UdsDtcGetFn`.
+pub type UdsDtcGetFn =
+    unsafe extern "C" fn(index: usize, dtc: *mut u32, status: *mut u8) -> bool;
+/// `UdsDtcSnapshotCountFn`.
+pub type UdsDtcSnapshotCountFn = unsafe extern "C" fn(index: usize) -> usize;
+/// `UdsDtcSnapshotItemFn`.
+pub type UdsDtcSnapshotItemFn = unsafe extern "C" fn(
+    index: usize,
+    item: usize,
+    did: *mut u16,
+    data: *mut *const u8,
+    len: *mut usize,
+) -> bool;
 /// `UdsDtcClearFn`.
-pub type UdsDtcClearFn = unsafe extern "C" fn(op: u8, group: u32) -> u8;
+pub type UdsDtcClearFn = unsafe extern "C" fn(op: u8, index: usize) -> u8;
 /// `UdsDtcSettingFn`.
 pub type UdsDtcSettingFn = unsafe extern "C" fn(op: u8, setting_type: u8) -> u8;
 /// `UdsCommControlFn`.
@@ -120,12 +125,16 @@ pub struct UdsSecurityLevel {
     pub key: Option<UdsKeyFn>,
 }
 
-/// `UdsDtcHooks`: a layer's DTC handlers, `None` where the layer serves none.
+/// `UdsDtcHooks`: a layer's DTC memory and handlers, `None` where the layer serves none.
 #[repr(C)]
 #[derive(Debug)]
 pub struct UdsDtcHooks {
-    /// `ReadDTCInformation` (0x19).
-    pub report: Option<UdsDtcReportFn>,
+    /// `ReadDTCInformation` (0x19): each DTC's number and status.
+    pub get: Option<UdsDtcGetFn>,
+    /// The number of identifiers in a DTC's snapshot record.
+    pub snapshot_count: Option<UdsDtcSnapshotCountFn>,
+    /// One identifier of a DTC's snapshot record, and its data.
+    pub snapshot_item: Option<UdsDtcSnapshotItemFn>,
     /// `ClearDiagnosticInformation` (0x14).
     pub clear: Option<UdsDtcClearFn>,
     /// `ControlDTCSetting` (0x85).
@@ -201,12 +210,12 @@ const _: () = {
     assert!(
         size_of::<UdsSecurityLevel>() == 16 && offset_of!(UdsSecurityLevel, delay_ms) == 4
     );
-    assert!(size_of::<UdsDtcHooks>() == 12);
+    assert!(size_of::<UdsDtcHooks>() == 20);
     assert!(size_of::<UdsTransferHooks>() == 16);
     assert!(size_of::<UdsTransitionHooks>() == 12);
-    assert!(size_of::<UdsLayer>() == 80);
-    assert!(offset_of!(UdsLayer, dtc) == 24 && offset_of!(UdsLayer, transfer) == 40);
-    assert!(offset_of!(UdsLayer, session) == 56 && offset_of!(UdsLayer, reset) == 68);
+    assert!(size_of::<UdsLayer>() == 88);
+    assert!(offset_of!(UdsLayer, dtc) == 24 && offset_of!(UdsLayer, transfer) == 48);
+    assert!(offset_of!(UdsLayer, session) == 64 && offset_of!(UdsLayer, reset) == 76);
 };
 
 /// `UDS_SESSION_MASK_*`: each session's bit in an access mask.
@@ -348,8 +357,15 @@ impl Layers {
         self.iter().find_map(of)
     }
 
-    pub(crate) fn dtc_report(self) -> Option<Handler<UdsDtcReportFn>> {
-        self.first(|l| l.dtc.report).map(Handler)
+    /// The DTC memory of the first layer that keeps one.
+    pub(crate) fn dtc_memory(self) -> Option<DtcMemory> {
+        self.first(|l| {
+            l.dtc.get.map(|get| DtcMemory {
+                get,
+                snapshot_count: l.dtc.snapshot_count,
+                snapshot_item: l.dtc.snapshot_item,
+            })
+        })
     }
 
     pub(crate) fn dtc_clear(self) -> Option<Handler<UdsDtcClearFn>> {
@@ -400,6 +416,62 @@ impl Layers {
     }
 }
 
+/// A layer's DTC memory, read through its `UdsDtcHooks`, and so covered by
+/// [`Layers::new`]'s contract.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DtcMemory {
+    get: UdsDtcGetFn,
+    snapshot_count: Option<UdsDtcSnapshotCountFn>,
+    snapshot_item: Option<UdsDtcSnapshotItemFn>,
+}
+
+impl DtcMemory {
+    /// DTC `index`'s number and status, `None` past the last DTC.
+    pub(crate) fn get(self, index: usize) -> Option<(u32, u8)> {
+        let (mut dtc, mut status) = (0, 0);
+        // SAFETY: `Layers::new`: a handler with the header's signature; both
+        // out-pointers are to locals.
+        unsafe { (self.get)(index, &raw mut dtc, &raw mut status) }.then_some((dtc, status))
+    }
+
+    /// Every DTC, in index order: its index, number and status.
+    pub(crate) fn dtcs(self) -> impl Iterator<Item = (usize, u32, u8)> {
+        (0..).map_while(move |index| {
+            self.get(index).map(|(dtc, status)| (index, dtc, status))
+        })
+    }
+
+    /// The number of identifiers in DTC `index`'s snapshot record, zero where it holds
+    /// none.
+    pub(crate) fn snapshot_count(self, index: usize) -> usize {
+        // SAFETY: `Layers::new`: a handler with the header's signature.
+        self.snapshot_count
+            .map_or(0, |count| unsafe { count(index) })
+    }
+
+    /// Calls `with` on identifier `item` of DTC `index`'s snapshot record and its data,
+    /// `None` where the memory has no such item.
+    pub(crate) fn snapshot_item<R>(
+        self,
+        index: usize,
+        item: usize,
+        with: impl FnOnce(u16, &[u8]) -> R,
+    ) -> Option<R> {
+        let read = self.snapshot_item?;
+        let (mut did, mut data, mut len) = (0, core::ptr::null(), 0);
+        // SAFETY: `Layers::new`: a handler with the header's signature; the out-pointers
+        // are to locals.
+        let found = unsafe { read(index, item, &raw mut did, &raw mut data, &raw mut len) };
+        if !found || data.is_null() {
+            return None;
+        }
+        // SAFETY: the header's contract: `data` points to `len` readable bytes that stay
+        // valid until the server's next call into the layer, after `with` returns.
+        let data = unsafe { core::slice::from_raw_parts(data, len) };
+        Some(with(did, data))
+    }
+}
+
 /// A C handler read from a [`Layers`], and so covered by [`Layers::new`]'s contract.
 ///
 /// Several of the header's handler types share a signature, so the calls are given per
@@ -428,15 +500,8 @@ impl Handler<unsafe extern "C" fn(u8, u8, u8) -> u8> {
     }
 }
 
-impl Handler<unsafe extern "C" fn(u8, u8, u8, u32, u8) -> u8> {
-    pub(crate) fn call(self, op: u8, a: u8, b: u8, value: u32, c: u8) -> u8 {
-        // SAFETY: `Layers::new`: a handler with this signature in the header.
-        unsafe { (self.0)(op, a, b, value, c) }
-    }
-}
-
-impl Handler<unsafe extern "C" fn(u8, u32) -> u8> {
-    pub(crate) fn call(self, op: u8, value: u32) -> u8 {
+impl Handler<unsafe extern "C" fn(u8, usize) -> u8> {
+    pub(crate) fn call(self, op: u8, value: usize) -> u8 {
         // SAFETY: `Layers::new`: a handler with this signature in the header.
         unsafe { (self.0)(op, value) }
     }

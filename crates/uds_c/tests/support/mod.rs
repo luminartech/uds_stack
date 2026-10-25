@@ -4,7 +4,7 @@
 //! The socket calls run over in-memory buffers with one TCP connection the test drives;
 //! each connection the test opens is handed out under a socket index of its own. Two
 //! layers serve: a platform layer with the VIN, a slow DID, a routine, a security level,
-//! the DTC, communication control and download handlers, and records of the transitions
+//! a DTC memory of [`DTCS`], communication control and download handlers, and records of the transitions
 //! it executes, and an OEM layer that adds a writable DID, can refuse a reset, and
 //! prepares session changes as [`PREPARE`] says. A second server, [`Ecu::start_bare`],
 //! serves a layer of one DID and no other handler. Tests share these statics, so each
@@ -58,7 +58,9 @@ const NO_TRANSFER: UdsTransferHooks = UdsTransferHooks {
 };
 
 const NO_DTC: UdsDtcHooks = UdsDtcHooks {
-    report: None,
+    get: None,
+    snapshot_count: None,
+    snapshot_item: None,
     clear: None,
     setting: None,
 };
@@ -72,10 +74,8 @@ pub enum Call {
     Reset(&'static str, u8),
     /// The slow DID's handler, with its operation status.
     Slow(u8),
-    /// The DTC report handler: report type, status mask, DTC and record number.
-    DtcReport(u8, u8, u32, u8),
-    /// The DTC clear handler, with the group.
-    DtcClear(u32),
+    /// The DTC clear handler, with the DTC's index, `UDS_DTC_ALL` for every DTC.
+    DtcClear(usize),
     /// The DTC setting handler, with the setting type.
     DtcSetting(u8),
     /// The communication control handler: control type and communication type.
@@ -174,23 +174,50 @@ unsafe extern "C" fn write_ok(_op: u8, _data: *const u8, _len: usize) -> u8 {
     0x00
 }
 
-/// Echoes the DTC a snapshot request names, then one record byte.
-unsafe extern "C" fn dtc_report(
-    _op: u8,
-    report_type: u8,
-    mask: u8,
-    dtc: u32,
-    record_number: u8,
-) -> u8 {
-    record(Call::DtcReport(report_type, mask, dtc, record_number));
-    let [_, high, mid, low] = dtc.to_be_bytes();
-    let report = [high, mid, low, record_number];
-    // SAFETY: a local source of its length.
-    answer(unsafe { uds_record_copy(0, report.as_ptr(), report.len()) })
+/// The platform layer's DTC memory: two DTCs and their statuses, the first holding a
+/// snapshot record of [`SNAPSHOT`]'s identifiers.
+pub const DTCS: [(u32, u8); 2] = [(0xEF_0100, 0x09), (0xEF_0200, 0x50)];
+
+/// The first DTC's snapshot record: each identifier and its data.
+pub static SNAPSHOT: [(u16, &[u8]); 2] = [(0x0100, &[0xAA]), (0x0101, &[0x01, 0x02])];
+
+unsafe extern "C" fn dtc_get(index: usize, dtc: *mut u32, status: *mut u8) -> bool {
+    let Some(&(number, byte)) = DTCS.get(index) else {
+        return false;
+    };
+    // SAFETY: the server passes valid out-pointers (uds_c.h).
+    unsafe {
+        dtc.write(number);
+        status.write(byte);
+    }
+    true
 }
 
-unsafe extern "C" fn dtc_clear(_op: u8, group: u32) -> u8 {
-    record(Call::DtcClear(group));
+unsafe extern "C" fn dtc_snapshot_count(index: usize) -> usize {
+    if index == 0 { SNAPSHOT.len() } else { 0 }
+}
+
+unsafe extern "C" fn dtc_snapshot_item(
+    index: usize,
+    item: usize,
+    did: *mut u16,
+    data: *mut *const u8,
+    len: *mut usize,
+) -> bool {
+    let Some(&(id, bytes)) = SNAPSHOT.get(item).filter(|_| index == 0) else {
+        return false;
+    };
+    // SAFETY: the server passes valid out-pointers (uds_c.h); the data is static.
+    unsafe {
+        did.write(id);
+        data.write(bytes.as_ptr());
+        len.write(bytes.len());
+    }
+    true
+}
+
+unsafe extern "C" fn dtc_clear(_op: u8, index: usize) -> u8 {
+    record(Call::DtcClear(index));
     0x00
 }
 
@@ -318,7 +345,9 @@ static PLATFORM: UdsLayer = UdsLayer {
     security_levels: PLATFORM_LEVELS.as_ptr(),
     security_level_count: PLATFORM_LEVELS.len(),
     dtc: UdsDtcHooks {
-        report: Some(dtc_report),
+        get: Some(dtc_get),
+        snapshot_count: Some(dtc_snapshot_count),
+        snapshot_item: Some(dtc_snapshot_item),
         clear: Some(dtc_clear),
         setting: Some(dtc_setting),
     },

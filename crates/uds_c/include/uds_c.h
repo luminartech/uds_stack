@@ -8,7 +8,8 @@
  * The server owns every request and response buffer. A handler reads its
  * request through const pointers and answers through uds_record_copy; it
  * never writes server memory. Every call runs in one execution context, the
- * one that polls the server; none is ISR-safe.
+ * one that polls the server; none is ISR-safe, but for the DTC status
+ * transitions, which are pure.
  */
 #ifndef UDS_C_H
 #define UDS_C_H
@@ -185,32 +186,95 @@ typedef struct
     UdsKeyFn  key;
 } UdsSecurityLevel;
 
-/* ReadDTCInformation (0x19), ClearDiagnosticInformation (0x14), ControlDTCSetting (0x85) */
+/* ReadDTCInformation (0x19), ClearDiagnosticInformation (0x14), ControlDTCSetting (0x85)
+ *
+ * A layer keeps a DTC memory: each DTC's number, its status byte and one
+ * snapshot record of identifiers. The server encodes the 0x19 reports from it
+ * (0x01, 0x02, 0x03, 0x04 and 0x0A), reporting the status bits below as its
+ * DTCStatusAvailabilityMask, and the memory updates each status with the
+ * transitions below, so it applies ISO 14229-1 Annex D rather than restating
+ * it. */
+
+/* A DTC's status bits (ISO 14229-1:2020 Annex D.2), those the transitions
+ * maintain. */
+#define UDS_DTC_TEST_FAILED (0x01U)
+#define UDS_DTC_TEST_FAILED_THIS_OPERATION_CYCLE (0x02U)
+#define UDS_DTC_PENDING (0x04U)
+#define UDS_DTC_CONFIRMED (0x08U)
+#define UDS_DTC_TEST_NOT_COMPLETED_SINCE_LAST_CLEAR (0x10U)
+#define UDS_DTC_TEST_FAILED_SINCE_LAST_CLEAR (0x20U)
+#define UDS_DTC_TEST_NOT_COMPLETED_THIS_OPERATION_CYCLE (0x40U)
 
 /**
- * @brief Copies a 0x19 response after its sub-function byte for
- *        `report_type` (0x01, 0x02, 0x03, 0x04 or 0x0A) and the parameters it
- *        has, 0 where it has none: `status_mask` (0x01, 0x02), `dtc` and
- *        `record_number` (0x04); the response carries as many bytes as were
- *        copied, at most a report of every DTC the policy's MAX_DTCS allows.
+ * @brief A DTC's status after ClearDiagnosticInformation, and a new DTC's:
+ *        not tested since the clear nor in this operation cycle. Pure: any
+ *        task may call it.
+ * @return The status byte.
  */
-typedef UdsNrc (*UdsDtcReportFn)(UdsOpStatus op, uint8_t report_type, uint8_t status_mask, uint32_t dtc, uint8_t record_number);
+uint8_t uds_dtc_status_cleared(void);
 
 /**
- * @brief Clears the DTCs of `group` (0xFFFFFF: all). A request that carries a
- *        memorySelection is answered requestOutOfRange without this being called.
+ * @brief The status after a matured test result: a failure sets testFailed,
+ *        testFailedThisOperationCycle, pendingDTC, confirmedDTC and
+ *        testFailedSinceLastClear, a pass clears testFailed, and either marks
+ *        the test completed. Pure: any task may call it.
+ * @param status The DTC's status.
+ * @param failed True for a failed result, false for a passed one.
+ * @return The new status.
  */
-typedef UdsNrc (*UdsDtcClearFn)(UdsOpStatus op, uint32_t group);
+uint8_t uds_dtc_status_after_test_result(uint8_t status, bool failed);
+
+/**
+ * @brief The status an operation cycle starts with, from the status the last
+ *        one ended with: pendingDTC clears where that cycle tested the DTC
+ *        without a failure, testFailed clears until the test reports again, and
+ *        this cycle has not tested the DTC yet. Pure: any task may call it.
+ * @param status The status the last operation cycle ended with.
+ * @return The status the new cycle starts with.
+ */
+uint8_t uds_dtc_status_at_operation_cycle_start(uint8_t status);
+
+/**
+ * @brief DTC `index`'s number and status; false past the last DTC, which ends
+ *        the DTCs the server reads from index 0 up.
+ */
+typedef bool (*UdsDtcGetFn)(size_t index, uint32_t *dtc, uint8_t *status);
+
+/** @brief The number of identifiers in DTC `index`'s snapshot record; 0 where it holds none. */
+typedef size_t (*UdsDtcSnapshotCountFn)(size_t index);
+
+/**
+ * @brief Identifier `item` of DTC `index`'s snapshot record and its data:
+ *        `*data` points to `*len` bytes that stay valid until the server's next
+ *        call into the layer. False where there is no such item.
+ */
+typedef bool (*UdsDtcSnapshotItemFn)(size_t index, size_t item, uint16_t *did, uint8_t const **data, size_t *len);
+
+/** @brief A clear of every DTC, for UdsDtcClearFn's `index`. */
+#define UDS_DTC_ALL (SIZE_MAX)
+
+/**
+ * @brief Clears DTC `index`, or every DTC for UDS_DTC_ALL: the server has
+ *        matched the request's groupOfDTC to the memory, answering
+ *        requestOutOfRange for one it does not hold, or a memorySelection,
+ *        without this being called.
+ */
+typedef UdsNrc (*UdsDtcClearFn)(UdsOpStatus op, size_t index);
 
 /** @brief Turns DTC status updates on (0x01) or off (0x02). */
 typedef UdsNrc (*UdsDtcSettingFn)(UdsOpStatus op, uint8_t setting_type);
 
-/** @brief A layer's DTC handlers; NULL: not served by this layer. */
+/**
+ * @brief A layer's DTC memory and handlers; NULL: not served by this layer.
+ *        The first layer whose `get` is set keeps the memory 0x19 reads.
+ */
 typedef struct
 {
-    UdsDtcReportFn  report;
-    UdsDtcClearFn   clear;
-    UdsDtcSettingFn setting;
+    UdsDtcGetFn           get;
+    UdsDtcSnapshotCountFn snapshot_count;
+    UdsDtcSnapshotItemFn  snapshot_item;
+    UdsDtcClearFn         clear;
+    UdsDtcSettingFn       setting;
 } UdsDtcHooks;
 
 /* CommunicationControl (0x28) */
@@ -414,14 +478,14 @@ UDS_C_STATIC_ASSERT(sizeof(UdsRidEntry) == 20U, "UdsRidEntry layout");
 UDS_C_STATIC_ASSERT(offsetof(UdsRidEntry, start) == 8U, "UdsRidEntry layout");
 UDS_C_STATIC_ASSERT(sizeof(UdsSecurityLevel) == 16U, "UdsSecurityLevel layout");
 UDS_C_STATIC_ASSERT(offsetof(UdsSecurityLevel, delay_ms) == 4U, "UdsSecurityLevel layout");
-UDS_C_STATIC_ASSERT(sizeof(UdsDtcHooks) == 12U, "UdsDtcHooks layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsDtcHooks) == 20U, "UdsDtcHooks layout");
 UDS_C_STATIC_ASSERT(sizeof(UdsTransferHooks) == 16U, "UdsTransferHooks layout");
 UDS_C_STATIC_ASSERT(sizeof(UdsTransitionHooks) == 12U, "UdsTransitionHooks layout");
-UDS_C_STATIC_ASSERT(sizeof(UdsLayer) == 80U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsLayer) == 88U, "UdsLayer layout");
 UDS_C_STATIC_ASSERT(offsetof(UdsLayer, dtc) == 24U, "UdsLayer layout");
-UDS_C_STATIC_ASSERT(offsetof(UdsLayer, transfer) == 40U, "UdsLayer layout");
-UDS_C_STATIC_ASSERT(offsetof(UdsLayer, session) == 56U, "UdsLayer layout");
-UDS_C_STATIC_ASSERT(offsetof(UdsLayer, reset) == 68U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsLayer, transfer) == 48U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsLayer, session) == 64U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsLayer, reset) == 76U, "UdsLayer layout");
 #endif
 
 #undef UDS_C_STATIC_ASSERT

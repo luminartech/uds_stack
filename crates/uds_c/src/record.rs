@@ -186,8 +186,14 @@ mod tests {
         assert!(record.lend(|| uds_record_copy_16_be(0, 0x0102)));
         assert!(record.lend(|| uds_record_copy_32_be(2, 0x0304_0506)));
         assert!(record.lend(|| uds_record_copy_64_be(6, 0x0708_090A_0B0C_0D0E)));
-        assert_eq!(record.all(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
-        assert!(!record.lend(|| uds_record_copy_32_be(11, 0)), "past the bound");
+        assert_eq!(
+            record.all(),
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        );
+        assert!(
+            !record.lend(|| uds_record_copy_32_be(11, 0)),
+            "past the bound"
+        );
         assert!(!uds_record_copy_16_be(0, 0), "outside a handler");
     }
 

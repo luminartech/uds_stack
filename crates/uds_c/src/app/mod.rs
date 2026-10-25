@@ -7,6 +7,7 @@
 mod comm;
 mod data;
 mod dtc;
+pub use dtc::UDS_DTC_ALL;
 mod routine;
 mod security;
 mod transfer;
@@ -96,20 +97,15 @@ pub trait Policy: 'static {
 }
 
 /// The longest record any handler of an application under `P` answers with: a DID
-/// record, a routine status, a seed or a DTC report. [`TableApp`]'s `RECORD` must be at
-/// least this.
+/// record, a routine status or a seed. [`TableApp`]'s `RECORD` must be at least this.
 #[must_use]
 pub const fn record_len<P: Policy>() -> usize {
-    let dtc_report = dtc::report_len(P::MAX_DTCS);
     let mut len = P::MAX_DID_LEN;
     if P::MAX_STATUS_LEN > len {
         len = P::MAX_STATUS_LEN;
     }
     if P::MAX_SEED_LEN > len {
         len = P::MAX_SEED_LEN;
-    }
-    if dtc_report > len {
-        len = dtc_report;
     }
     len
 }

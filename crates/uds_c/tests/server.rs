@@ -166,20 +166,62 @@ fn a_routine_answers_the_status_it_copied() {
     assert_eq!(ecu.request(&[0x31, 0x02, 0x02, 0x01]), [0x7F, 0x31, 0x12]);
 }
 
-/// A snapshot report reaches the handler with the DTC and record number it names, and a
-/// status report with its mask.
+/// The server encodes each report from the layer's DTC memory, against the
+/// availability mask 0x7F: the count and the list of DTCs a status mask matches, every
+/// DTC, the DTCs holding a snapshot, and one DTC's snapshot record.
 #[test]
-fn a_dtc_report_carries_its_parameters() {
+fn the_dtc_reports_are_encoded_from_the_memory() {
     let _lock = lock();
     let mut ecu = Ecu::start();
     ecu.activate();
     assert_eq!(
-        ecu.request(&[0x19, 0x04, 0xEF, 0x01, 0x00, 0x01]),
-        [0x59, 0x04, 0xEF, 0x01, 0x00, 0x01]
+        ecu.request(&[0x19, 0x01, 0x08]),
+        [0x59, 0x01, 0x7F, 0x01, 0x00, 0x01]
     );
-    assert_eq!(calls(), [Call::DtcReport(0x04, 0x00, 0xEF_0100, 0x01)]);
-    let _ = ecu.request(&[0x19, 0x02, 0x08]);
-    assert_eq!(calls(), [Call::DtcReport(0x02, 0x08, 0, 0)]);
+    assert_eq!(
+        ecu.request(&[0x19, 0x02, 0x08]),
+        [0x59, 0x02, 0x7F, 0xEF, 0x01, 0x00, 0x09]
+    );
+    assert_eq!(
+        ecu.request(&[0x19, 0x0A]),
+        [
+            0x59, 0x0A, 0x7F, 0xEF, 0x01, 0x00, 0x09, 0xEF, 0x02, 0x00, 0x50
+        ]
+    );
+    assert_eq!(
+        ecu.request(&[0x19, 0x03]),
+        [0x59, 0x03, 0xEF, 0x01, 0x00, 0x01]
+    );
+    assert_eq!(
+        ecu.request(&[0x19, 0x04, 0xEF, 0x01, 0x00, 0x01]),
+        [
+            0x59, 0x04, 0xEF, 0x01, 0x00, 0x09, 0x01, 0x02, 0x01, 0x00, 0xAA, 0x01, 0x01,
+            0x01, 0x02
+        ]
+    );
+    assert_eq!(calls(), []);
+}
+
+/// A snapshot request for a DTC without one answers the DTC and its status alone; a DTC
+/// the memory does not hold, or a record number other than its one record or all of
+/// them, is requestOutOfRange.
+#[test]
+fn a_snapshot_request_names_a_held_dtc_and_record() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    assert_eq!(
+        ecu.request(&[0x19, 0x04, 0xEF, 0x02, 0x00, 0xFF]),
+        [0x59, 0x04, 0xEF, 0x02, 0x00, 0x50]
+    );
+    assert_eq!(
+        ecu.request(&[0x19, 0x04, 0xEF, 0x03, 0x00, 0x01]),
+        [0x7F, 0x19, 0x31]
+    );
+    assert_eq!(
+        ecu.request(&[0x19, 0x04, 0xEF, 0x01, 0x00, 0x02]),
+        [0x7F, 0x19, 0x31]
+    );
 }
 
 /// A session change a layer's prepare refuses is answered with its code, and neither
@@ -261,15 +303,20 @@ fn a_security_level_locks_out_until_its_delay_expires() {
     assert_eq!(ecu.request(&[0x27, 0x02, 0x12, 0x35]), [0x67, 0x02]);
 }
 
-/// `ClearDiagnosticInformation` passes its group to the handler; a `memorySelection`,
-/// which the handler has no parameter for, is requestOutOfRange without calling it.
+/// `ClearDiagnosticInformation` clears every DTC, or the one its group names, by index;
+/// a DTC the memory does not hold, or a `memorySelection`, which the handler has no
+/// parameter for, is requestOutOfRange without calling it.
 #[test]
-fn a_clear_reaches_its_handler_without_a_memory_selection() {
+fn a_clear_reaches_its_handler_by_index() {
     let _lock = lock();
     let mut ecu = Ecu::start();
     ecu.activate();
     assert_eq!(ecu.request(&[0x14, 0xFF, 0xFF, 0xFF]), [0x54]);
-    assert_eq!(calls(), [Call::DtcClear(0xFF_FFFF)]);
+    assert_eq!(calls(), [Call::DtcClear(uds_c::UDS_DTC_ALL)]);
+    assert_eq!(ecu.request(&[0x14, 0xEF, 0x02, 0x00]), [0x54]);
+    assert_eq!(calls(), [Call::DtcClear(1)]);
+    assert_eq!(ecu.request(&[0x14, 0xEF, 0x03, 0x00]), [0x7F, 0x14, 0x31]);
+    assert_eq!(calls(), []);
     assert_eq!(
         ecu.request(&[0x14, 0xFF, 0xFF, 0xFF, 0x01]),
         [0x7F, 0x14, 0x31]
@@ -420,7 +467,9 @@ const fn layer_of(dids: &'static [UdsDidEntry]) -> UdsLayer {
         security_levels: core::ptr::null(),
         security_level_count: 0,
         dtc: uds_c::UdsDtcHooks {
-            report: None,
+            get: None,
+            snapshot_count: None,
+            snapshot_item: None,
             clear: None,
             setting: None,
         },
