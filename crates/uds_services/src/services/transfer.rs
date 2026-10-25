@@ -72,6 +72,18 @@ pub trait DataTransfer {
     /// sessions both allow, and ends in any other (Figure 7 key 3(iii)).
     const SESSIONS: Sessions;
 
+    /// Whether this server serves downloads at all, for an application that learns it
+    /// only at run time, from tables it is given, say. `true` by default.
+    ///
+    /// ISO 14229-1:2020 8.7.2 Figure 5, ``UDSSVC_ARCH_0006``: `false` settles every
+    /// request for any of the three services `serviceNotSupported` (0x11), as for a
+    /// service the assembly does not list, before any other check and without anything
+    /// else here being asked.
+    #[must_use]
+    fn serves(&self) -> bool {
+        true
+    }
+
     /// Whether `format` is a `dataFormatIdentifier` this server accepts. Figure 31 asks it
     /// before the request's full length; `false` is `requestOutOfRange` (0x31).
     ///

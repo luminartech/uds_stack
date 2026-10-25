@@ -217,7 +217,8 @@ Mandatory preconditions
         - Service identifier supported?
         - 0x11
         - Determined by which service traits the server implements
-          (``UDSSVC_ARCH_0013``)
+          (``UDSSVC_ARCH_0013``), and by a trait's ``serves`` where the application
+          declines a listed service at run time
       * - 2
         - Authentication check OK?
         - 0x34
