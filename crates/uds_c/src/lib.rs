@@ -22,6 +22,10 @@
 //!   looked up in the layers and answered by the handler the entry names.
 //! - [`uds_record_copy`], through which a handler answers: the server owns every
 //!   response record and lends one to the handler being called.
+//! - The DTC services over a DTC memory a layer keeps: the server reads each DTC's
+//!   number, status and snapshot record and encodes the reports itself, and the memory
+//!   applies the status transitions [`uds_dtc_status_after_test_result`] and its
+//!   companions export.
 //!   [`uds_record_copy_16_be`], [`uds_record_copy_32_be`] and [`uds_record_copy_64_be`]
 //!   copy an integer big-endian, the byte order of UDS records.
 //! - [`execute_deferred`], which makes a reset or session change once its response
@@ -123,6 +127,7 @@
 #![no_std]
 
 mod app;
+mod dtc_status;
 mod layer;
 mod op;
 mod record;
@@ -135,15 +140,20 @@ pub mod nal;
 pub mod clock;
 
 pub use app::{
-    ACTIVE_SESSION_DID, AccessOf, Did, Policy, Rid, TableApp, TableError, execute_deferred,
-    record_len,
+    ACTIVE_SESSION_DID, AccessOf, Did, Policy, Rid, TableApp, TableError, UDS_DTC_ALL,
+    execute_deferred, record_len,
+};
+pub use dtc_status::{
+    uds_dtc_status_after_test_result, uds_dtc_status_at_operation_cycle_start,
+    uds_dtc_status_cleared,
 };
 pub use layer::{
     Layers, UdsAccess, UdsCommControlFn, UdsDidEntry, UdsDidReadFn, UdsDidWriteFn,
-    UdsDtcClearFn, UdsDtcHooks, UdsDtcReportFn, UdsDtcSettingFn, UdsKeyFn, UdsLayer,
-    UdsRidEntry, UdsRoutineFn, UdsSecurityLevel, UdsSeedFn, UdsTransferBeginFn,
-    UdsTransferBlockFn, UdsTransferFinishFn, UdsTransferHooks, UdsTransitionCheckFn,
-    UdsTransitionExecuteFn, UdsTransitionHooks, UdsTransitionPrepareFn,
+    UdsDtcClearFn, UdsDtcGetFn, UdsDtcHooks, UdsDtcSettingFn, UdsDtcSnapshotCountFn,
+    UdsDtcSnapshotItemFn, UdsKeyFn, UdsLayer, UdsRidEntry, UdsRoutineFn, UdsSecurityLevel,
+    UdsSeedFn, UdsTransferBeginFn, UdsTransferBlockFn, UdsTransferFinishFn,
+    UdsTransferHooks, UdsTransitionCheckFn, UdsTransitionExecuteFn, UdsTransitionHooks,
+    UdsTransitionPrepareFn,
 };
 pub use record::{
     uds_record_copy, uds_record_copy_16_be, uds_record_copy_32_be, uds_record_copy_64_be,

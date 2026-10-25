@@ -20,6 +20,10 @@ provides everything between those and a running server:
   handler it calls, and the handler fills it with `uds_record_copy`, which bounds
   every copy, or with `uds_record_copy_16_be`, `_32_be` and `_64_be` for an integer
   in big-endian order.
+- The DTC services over a DTC memory a layer keeps: the server reads each DTC's number,
+  status and snapshot record and encodes the reports itself, and the memory updates each
+  status with the ISO 14229-1 Annex D transitions the crate exports to C, so firmware
+  keeps its DTCs and their storage but restates none of the standard.
 - The operation-status protocol: a handler that needs time answers response-pending
   and is called again on each poll until it settles, or told to cancel.
 - Resets and session changes in three stages: every layer's check, every layer's

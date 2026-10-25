@@ -3,12 +3,14 @@
 
 use uds_services::NegativeResponseCode as Nrc;
 use uds_services::{
-    Access, ClearDiagnosticInformation, ControlDtcSetting, DtcRecord, DtcReportKind,
-    DtcSettingType, ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation,
-    ResponseSink, Sink,
+    Access, CLEAR_ALL_DTCS, ClearDiagnosticInformation, ControlDtcSetting,
+    DtcFormatIdentifier, DtcRecord, DtcReportKind, DtcSettingType, DtcSnapshotRecordNumber,
+    DtcStatusMask, Encode, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
+    ReadDtcInformation, ResponseSink, Sink, dtc_status,
 };
 
 use super::{Policy, TableApp, everywhere, outside_default, settled};
+use crate::layer::DtcMemory;
 use crate::op;
 
 /// reportNumberOfDTCByStatusMask, reportDTCByStatusMask,
@@ -16,59 +18,142 @@ use crate::op;
 /// reportSupportedDTC.
 const REPORT_TYPES: [u8; 5] = [0x01, 0x02, 0x03, 0x04, 0x0A];
 
-/// The longest report a handler copies for `dtcs` DTCs: the count report's four bytes,
-/// or the availability mask and four bytes per DTC.
-pub(super) const fn report_len(dtcs: usize) -> usize {
-    let list = dtcs.saturating_mul(4).saturating_add(1);
-    if list > 4 { list } else { 4 }
-}
+/// The `DTCStatusAvailabilityMask`: the bits maintained by the status transitions the
+/// memory makes ([`dtc_status::MAINTAINED`]).
+const AVAILABILITY: DtcStatusMask = dtc_status::MAINTAINED;
+
+/// `DTCFormatIdentifier`: the ISO 14229-1 DTC format.
+const FORMAT: DtcFormatIdentifier = DtcFormatIdentifier::Iso14229_1DtcFormat;
+
+/// The one snapshot record a DTC holds.
+const SNAPSHOT_RECORD: DtcSnapshotRecordNumber = DtcSnapshotRecordNumber::new(0x01);
+
+/// `DTCSnapshotRecordNumber` 0xFF: every record the DTC holds.
+const ALL_SNAPSHOT_RECORDS: u8 = 0xFF;
+
+/// `UDS_DTC_ALL`: a clear of every DTC.
+pub const UDS_DTC_ALL: usize = usize::MAX;
 
 impl<P: Policy, const RECORD: usize, const LEVELS: usize> ReadDtcInformation
     for TableApp<P, RECORD, LEVELS>
 {
-    const MAY_RESPOND_PENDING: bool = true;
+    const MAY_RESPOND_PENDING: bool = false;
     const MAX_DTCS: usize = P::MAX_DTCS;
     const REPORTS: &'static [DtcReportKind] =
         &[DtcReportKind::Count, DtcReportKind::DtcList];
 
-    /// Where a layer serves it.
+    /// Where a layer keeps a DTC memory.
     fn serves(&self) -> bool {
-        P::LAYERS.dtc_report().is_some()
+        P::LAYERS.dtc_memory().is_some()
     }
 
     fn access(&self, report: ReadDtcInfoReportType) -> Option<Access> {
         REPORT_TYPES.contains(&u8::from(report)).then(everywhere)
     }
 
-    /// Answers as many bytes as the handler copied.
-    async fn read_dtc_information(
+    /// Encodes the report from the memory's DTCs, clause 12.3: a response longer than
+    /// the buffer is `responseTooLong` (0x14), which the sink settles. The memory answers
+    /// at once, so the report is ready when asked.
+    fn read_dtc_information(
         &mut self,
         request: ReadDtcInfoSubFunction,
         out: &mut ResponseSink<'_>,
-    ) -> Result<(), Nrc> {
-        let Some(report) = P::LAYERS.dtc_report() else {
-            return Err(Nrc::ServiceNotSupported);
-        };
-        let (mask, dtc, record) = match request {
-            ReadDtcInfoSubFunction::ReportNumberOfDtcByStatusMask(mask)
-            | ReadDtcInfoSubFunction::ReportDtcByStatusMask(mask) => (u8::from(mask), 0, 0),
-            ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(dtc, record) => {
-                (0, dtc.to_u32(), u8::from(record))
-            }
-            _ => (0, 0, 0),
-        };
-        let report_type = u8::from(request.report_type());
-        let len = report_len(P::MAX_DTCS);
-        let mut answer = self.answer(len, len)?;
-        settled(
-            op::settle(|op| {
-                answer.lend(|| report.call(op, report_type, mask, dtc, record))
-            })
-            .await,
-        )?;
-        let _ = out.write_all(answer.filled());
-        Ok(())
+    ) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        core::future::ready(report(P::LAYERS.dtc_memory(), request, out))
     }
+}
+
+/// The report `request` asks for, from `memory`.
+fn report(
+    memory: Option<DtcMemory>,
+    request: ReadDtcInfoSubFunction,
+    out: &mut ResponseSink<'_>,
+) -> Result<(), Nrc> {
+    let Some(memory) = memory else {
+        return Err(Nrc::ServiceNotSupported);
+    };
+    match request {
+        ReadDtcInfoSubFunction::ReportNumberOfDtcByStatusMask(mask) => {
+            let mask = mask & AVAILABILITY;
+            let count = memory
+                .dtcs()
+                .filter(|&(_, _, status)| DtcStatusMask::from(status).intersects(mask))
+                .count();
+            let _ = AVAILABILITY.encode(out);
+            let _ = out.write_all(&[u8::from(FORMAT)]);
+            let _ = out.write_all(&u16::try_from(count).unwrap_or(u16::MAX).to_be_bytes());
+        }
+        ReadDtcInfoSubFunction::ReportDtcByStatusMask(mask) => {
+            list(memory, out, Some(mask & AVAILABILITY));
+        }
+        ReadDtcInfoSubFunction::ReportSupportedDtc => list(memory, out, None),
+        ReadDtcInfoSubFunction::ReportDtcSnapshotIdentification => {
+            for (index, dtc, _) in memory.dtcs() {
+                if memory.snapshot_count(index) > 0 {
+                    let _ = record(dtc).encode(out);
+                    let _ = SNAPSHOT_RECORD.encode(out);
+                }
+            }
+        }
+        ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(dtc, number) => {
+            snapshot(memory, out, dtc, u8::from(number))?;
+        }
+        _ => return Err(Nrc::SubFunctionNotSupported),
+    }
+    Ok(())
+}
+
+/// The availability mask, then each DTC whose status matches `mask` with its status,
+/// or every DTC where there is no mask (reportSupportedDTC).
+fn list(memory: DtcMemory, out: &mut ResponseSink<'_>, mask: Option<DtcStatusMask>) {
+    let _ = AVAILABILITY.encode(out);
+    for (_, dtc, status) in memory.dtcs() {
+        let status = DtcStatusMask::from(status);
+        if mask.is_none_or(|mask| status.intersects(mask)) {
+            let _ = record(dtc).encode(out);
+            let _ = (status & AVAILABILITY).encode(out);
+        }
+    }
+}
+
+/// The DTC and its status, then its snapshot record where it holds one: the record
+/// number, the number of identifiers, then each identifier and its data. A DTC the
+/// memory does not hold, or a record number other than the one record or all of them,
+/// is `requestOutOfRange` (0x31).
+fn snapshot(
+    memory: DtcMemory,
+    out: &mut ResponseSink<'_>,
+    dtc: DtcRecord,
+    number: u8,
+) -> Result<(), Nrc> {
+    let wanted = dtc.to_u32();
+    let Some((index, _, status)) = memory.dtcs().find(|&(_, held, _)| held == wanted)
+    else {
+        return Err(Nrc::RequestOutOfRange);
+    };
+    if number != SNAPSHOT_RECORD.value() && number != ALL_SNAPSHOT_RECORDS {
+        return Err(Nrc::RequestOutOfRange);
+    }
+    let _ = dtc.encode(out);
+    let _ = (DtcStatusMask::from(status) & AVAILABILITY).encode(out);
+    let items = memory.snapshot_count(index);
+    if items > 0 {
+        let _ = SNAPSHOT_RECORD.encode(out);
+        let _ = out.write_all(&[u8::try_from(items).unwrap_or(u8::MAX)]);
+        for item in 0..items {
+            let _ = memory.snapshot_item(index, item, |did, data| {
+                let _ = out.write_all(&did.to_be_bytes());
+                let _ = out.write_all(data);
+            });
+        }
+    }
+    Ok(())
+}
+
+/// A DTC number the memory holds, as the three bytes of a `DTCRecord`.
+fn record(dtc: u32) -> DtcRecord {
+    let [_, high, middle, low] = dtc.to_be_bytes();
+    DtcRecord::new(high, middle, low)
 }
 
 impl<P: Policy, const RECORD: usize, const LEVELS: usize> ClearDiagnosticInformation
@@ -81,8 +166,9 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ClearDiagnosticInforma
         P::LAYERS.dtc_clear().is_some()
     }
 
-    /// The handler clears from the one memory it has, so a `memorySelection` is
-    /// `requestOutOfRange` (0x31), ISO 14229-1:2020 Figure 28.
+    /// Clears every DTC for the all-groups `groupOfDTC`, or the one DTC it names; any
+    /// other group, and a `memorySelection` (the handler clears from the one memory it
+    /// has), is `requestOutOfRange` (0x31), ISO 14229-1:2020 Figure 28.
     async fn clear(&mut self, group: DtcRecord, memory: Option<u8>) -> Result<(), Nrc> {
         let Some(clear) = P::LAYERS.dtc_clear() else {
             return Err(Nrc::ServiceNotSupported);
@@ -90,7 +176,17 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ClearDiagnosticInforma
         if memory.is_some() {
             return Err(Nrc::RequestOutOfRange);
         }
-        settled(op::settle(|op| clear.call(op, group.to_u32())).await)
+        let index = if group == CLEAR_ALL_DTCS {
+            UDS_DTC_ALL
+        } else {
+            let wanted = group.to_u32();
+            P::LAYERS
+                .dtc_memory()
+                .and_then(|memory| memory.dtcs().find(|&(_, dtc, _)| dtc == wanted))
+                .map(|(index, _, _)| index)
+                .ok_or(Nrc::RequestOutOfRange)?
+        };
+        settled(op::settle(|op| clear.call(op, index)).await)
     }
 }
 
@@ -120,16 +216,5 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ControlDtcSetting
         };
         let setting = u8::from(setting);
         settled(op::settle(|op| control.call(op, setting)).await)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::report_len;
-
-    #[test]
-    fn a_report_holds_the_count_or_every_dtc() {
-        assert_eq!(report_len(0), 4);
-        assert_eq!(report_len(64), 257);
     }
 }

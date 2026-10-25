@@ -39,7 +39,7 @@ fn the_header_lays_out_every_structure_as_rust_does() {
         UdsDidEntry { did, read_sessions, read, write_access, len, write }
         UdsRidEntry { rid, status_len, access, start, stop, results }
         UdsSecurityLevel { level, sessions, attempt_limit, seed_len, delay_ms, seed, key }
-        UdsDtcHooks { report, clear, setting }
+        UdsDtcHooks { get, snapshot_count, snapshot_item, clear, setting }
         UdsTransferHooks { access, begin, block, finish }
         UdsTransitionHooks { check, prepare, execute }
         UdsLayer {
