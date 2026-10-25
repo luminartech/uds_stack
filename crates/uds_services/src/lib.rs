@@ -149,6 +149,8 @@ mod select;
 pub mod identifier;
 pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};
 
+pub mod dtc_status;
+
 pub mod services;
 pub use services::{
     AfterReset, ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting,
@@ -172,11 +174,11 @@ pub use services::{Received, Unsettled};
 pub use uds_protocol::{
     AddressAndLengthFormatIdentifier, CLEAR_ALL_DTCS, CommunicationControlRequest,
     CommunicationControlType, CommunicationType, DataFormatIdentifier,
-    DiagnosticSessionType, DtcExtDataRecordNumber, DtcRecord, DtcSettingType,
-    DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
-    NegativeResponseCode, P2StarServerMax, ReadDtcInfoReportType, ReadDtcInfoResponse,
-    ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction, SubnetNumber,
-    UdsServiceType,
+    DiagnosticSessionType, DtcExtDataRecordNumber, DtcFormatIdentifier, DtcRecord,
+    DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode,
+    FunctionalGroupIdentifier, NegativeResponseCode, P2StarServerMax,
+    ReadDtcInfoReportType, ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType,
+    RoutineControlSubFunction, SubnetNumber, UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.
