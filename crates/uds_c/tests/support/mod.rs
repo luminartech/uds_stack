@@ -30,7 +30,7 @@ use uds_c::doip::{self, RunError};
 use uds_c::{
     Layers, Policy, TableApp, UdsAccess, UdsDidEntry, UdsDtcHooks, UdsLayer, UdsRidEntry,
     UdsSecurityLevel, UdsTransferHooks, UdsTransitionHooks, execute_deferred,
-    uds_record_copy,
+    uds_record_copy, uds_record_copy_16_be,
 };
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
@@ -160,8 +160,7 @@ unsafe extern "C" fn routine_start(_op: u8, option: *const u8, option_len: usize
 }
 
 unsafe extern "C" fn seed(_op: u8, _option: *const u8, _option_len: usize) -> u8 {
-    // SAFETY: a static source of its length.
-    answer(unsafe { uds_record_copy(0, [0x12, 0x34].as_ptr(), 2) })
+    answer(uds_record_copy_16_be(0, 0x1234))
 }
 
 /// The right key is the seed plus one.
