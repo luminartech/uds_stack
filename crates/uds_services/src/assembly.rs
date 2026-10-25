@@ -482,6 +482,37 @@ macro_rules! __uds_sub_function_access {
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
+/// Whether the application serves one listed service, for `pipeline::begin_with`'s
+/// support check: an early `return false` where the service's trait declines it. Only the
+/// services whose traits carry a `serves` emit one.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_serves {
+    (@declines $self:ident, $service:ident, $svc:ident) => {
+        if $crate::__uds_sids!($svc).contains(&$service)
+            && !<<Self as $crate::ServiceSet>::App as $crate::$svc>::serves($self)
+        {
+            return false;
+        }
+    };
+    ($self:ident, $service:ident, ReadDtcInformation) => {
+        $crate::__uds_serves!(@declines $self, $service, ReadDtcInformation);
+    };
+    ($self:ident, $service:ident, ClearDiagnosticInformation) => {
+        $crate::__uds_serves!(@declines $self, $service, ClearDiagnosticInformation);
+    };
+    ($self:ident, $service:ident, CommunicationControl) => {
+        $crate::__uds_serves!(@declines $self, $service, CommunicationControl);
+    };
+    ($self:ident, $service:ident, ControlDtcSetting) => {
+        $crate::__uds_serves!(@declines $self, $service, ControlDtcSetting);
+    };
+    ($self:ident, $service:ident, DataTransfer) => {
+        $crate::__uds_serves!(@declines $self, $service, DataTransfer);
+    };
+    ($self:ident, $service:ident, $svc:ident) => {};
+}
+
 /// The checks one listed service asks of the raw request between Table 23 and its decode,
 /// for `pipeline::begin_with`'s `ahead`: only `DataTransfer` has any.
 #[doc(hidden)]
@@ -1058,6 +1089,14 @@ macro_rules! uds_server {
                             ))
                         };
                         #[allow(unused_variables, reason = "used only by some assemblies")]
+                        let supports = |service: $crate::UdsServiceType| {
+                            if !<Self as $crate::ServiceSet>::supports(service) {
+                                return false;
+                            }
+                            $( $crate::__uds_serves!(app, service, $svc); )+
+                            true
+                        };
+                        #[allow(unused_variables, reason = "used only by some assemblies")]
                         let ahead = |service: $crate::UdsServiceType,
                                      active: $crate::DiagnosticSessionType,
                                      bytes: &[u8]|
@@ -1070,7 +1109,7 @@ macro_rules! uds_server {
                         let (sid, decoded) = match $crate::pipeline::begin_with(
                             state,
                             received.bytes(),
-                            <Self as $crate::ServiceSet>::supports,
+                            supports,
                             access,
                             ahead,
                         ) {
