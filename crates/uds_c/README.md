@@ -18,7 +18,8 @@ provides everything between those and a running server:
   `serviceNotSupported` (0x11).
 - The record protocol: the server owns every response record, lends one to the
   handler it calls, and the handler fills it with `uds_record_copy`, which bounds
-  every copy.
+  every copy, or with `uds_record_copy_16_be`, `_32_be` and `_64_be` for an integer
+  in big-endian order.
 - The operation-status protocol: a handler that needs time answers response-pending
   and is called again on each poll until it settles, or told to cancel.
 - Resets and session changes in three stages: every layer's check, every layer's

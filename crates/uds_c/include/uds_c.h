@@ -106,6 +106,18 @@ typedef struct
  */
 bool uds_record_copy(size_t offset, uint8_t const *src, size_t len);
 
+/**
+ * @brief Copies `value` big-endian, the byte order of UDS records, into the
+ *        record at byte `offset`: two, four or eight bytes, bounded as
+ *        uds_record_copy bounds them. A float goes as its IEEE 754 bits.
+ * @return As uds_record_copy.
+ */
+bool uds_record_copy_16_be(size_t offset, uint16_t value);
+/** @copydoc uds_record_copy_16_be */
+bool uds_record_copy_32_be(size_t offset, uint32_t value);
+/** @copydoc uds_record_copy_16_be */
+bool uds_record_copy_64_be(size_t offset, uint64_t value);
+
 /* ReadDataByIdentifier (0x22) and WriteDataByIdentifier (0x2E) */
 
 /**

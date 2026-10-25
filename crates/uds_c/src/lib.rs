@@ -22,6 +22,8 @@
 //!   looked up in the layers and answered by the handler the entry names.
 //! - [`uds_record_copy`], through which a handler answers: the server owns every
 //!   response record and lends one to the handler being called.
+//!   [`uds_record_copy_16_be`], [`uds_record_copy_32_be`] and [`uds_record_copy_64_be`]
+//!   copy an integer big-endian, the byte order of UDS records.
 //! - [`execute_deferred`], which makes a reset or session change once its response
 //!   has gone out, called between polls.
 //! - [`nal`], `edge-nal` sockets over the C socket calls, and [`doip`], the entity
@@ -143,7 +145,9 @@ pub use layer::{
     UdsTransferBlockFn, UdsTransferFinishFn, UdsTransferHooks, UdsTransitionCheckFn,
     UdsTransitionExecuteFn, UdsTransitionHooks, UdsTransitionPrepareFn,
 };
-pub use record::uds_record_copy;
+pub use record::{
+    uds_record_copy, uds_record_copy_16_be, uds_record_copy_32_be, uds_record_copy_64_be,
+};
 
 /// What [`time_driver!`] expands to names, reached through this crate so the binary
 /// need not depend on it.

@@ -22,6 +22,8 @@ pre-1.0 crates).
     `serviceNotSupported` (0x11).
   - `uds_record_copy`, through which a handler answers into the record the server
     lends it, and the operation-status protocol of handlers that pend or are canceled.
+    `uds_record_copy_16_be`, `uds_record_copy_32_be` and `uds_record_copy_64_be`
+    copy an integer big-endian.
   - `execute_deferred`, which makes a reset or session change once its response has
     gone out.
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
