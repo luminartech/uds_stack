@@ -11,6 +11,12 @@ use uds_services::{
     Access, DiagnosticSessionType as Session, Levels, SecurityLevel, Sessions,
 };
 
+use crate::UDS_DTC_ALL;
+
+/// A DTC number's three bytes, `DTCHighByte` to `DTCLowByte`: the memory's `uint32_t`
+/// carries no fourth.
+const DTC_NUMBER: u32 = 0x00FF_FFFF;
+
 /// `UdsDidReadFn`.
 pub type UdsDidReadFn = unsafe extern "C" fn(op: u8) -> u8;
 /// `UdsDidWriteFn`.
@@ -331,6 +337,11 @@ impl Layers {
         self.iter().map(|l| &l.transfer)
     }
 
+    /// Every layer's DTC memory and handlers, in order.
+    pub(crate) fn dtc_hooks(self) -> impl Iterator<Item = &'static UdsDtcHooks> {
+        self.iter().map(|l| &l.dtc)
+    }
+
     /// The first entry for `did`.
     pub(crate) fn did(self, did: u16) -> Option<&'static UdsDidEntry> {
         self.dids().find(|e| e.did == did)
@@ -357,19 +368,16 @@ impl Layers {
         self.iter().find_map(of)
     }
 
-    /// The DTC memory of the first layer that keeps one.
+    /// The DTC memory of the first layer that keeps one, with that layer's clear.
     pub(crate) fn dtc_memory(self) -> Option<DtcMemory> {
         self.first(|l| {
             l.dtc.get.map(|get| DtcMemory {
                 get,
                 snapshot_count: l.dtc.snapshot_count,
                 snapshot_item: l.dtc.snapshot_item,
+                clear: l.dtc.clear,
             })
         })
-    }
-
-    pub(crate) fn dtc_clear(self) -> Option<Handler<UdsDtcClearFn>> {
-        self.first(|l| l.dtc.clear).map(Handler)
     }
 
     pub(crate) fn dtc_setting(self) -> Option<Handler<UdsDtcSettingFn>> {
@@ -423,22 +431,30 @@ pub(crate) struct DtcMemory {
     get: UdsDtcGetFn,
     snapshot_count: Option<UdsDtcSnapshotCountFn>,
     snapshot_item: Option<UdsDtcSnapshotItemFn>,
+    clear: Option<UdsDtcClearFn>,
 }
 
 impl DtcMemory {
-    /// DTC `index`'s number and status, `None` past the last DTC.
+    /// DTC `index`'s number, its three bytes, and status; `None` past the last DTC.
     pub(crate) fn get(self, index: usize) -> Option<(u32, u8)> {
         let (mut dtc, mut status) = (0, 0);
         // SAFETY: `Layers::new`: a handler with the header's signature; both
         // out-pointers are to locals.
-        unsafe { (self.get)(index, &raw mut dtc, &raw mut status) }.then_some((dtc, status))
+        unsafe { (self.get)(index, &raw mut dtc, &raw mut status) }
+            .then_some((dtc & DTC_NUMBER, status))
     }
 
-    /// Every DTC, in index order: its index, number and status.
+    /// Every DTC, in index order: its index, number and status. The indices stop short
+    /// of `UDS_DTC_ALL`, which names every DTC to the clear.
     pub(crate) fn dtcs(self) -> impl Iterator<Item = (usize, u32, u8)> {
-        (0..).map_while(move |index| {
+        (0..UDS_DTC_ALL).map_while(move |index| {
             self.get(index).map(|(dtc, status)| (index, dtc, status))
         })
+    }
+
+    /// The clear of the layer that keeps the memory, so its indices are the memory's.
+    pub(crate) fn clear(self) -> Option<Handler<UdsDtcClearFn>> {
+        self.clear.map(Handler)
     }
 
     /// The number of identifiers in DTC `index`'s snapshot record, zero where it holds
@@ -462,12 +478,19 @@ impl DtcMemory {
         // SAFETY: `Layers::new`: a handler with the header's signature; the out-pointers
         // are to locals.
         let found = unsafe { read(index, item, &raw mut did, &raw mut data, &raw mut len) };
-        if !found || data.is_null() {
+        if !found {
             return None;
         }
-        // SAFETY: the header's contract: `data` points to `len` readable bytes that stay
-        // valid until the server's next call into the layer, after `with` returns.
-        let data = unsafe { core::slice::from_raw_parts(data, len) };
+        let data: &[u8] = if len == 0 {
+            &[]
+        } else if data.is_null() {
+            return None;
+        } else {
+            // SAFETY: the header's contract: `data` points to `len` readable bytes that
+            // stay valid until the server's next call into the layer, after `with`
+            // returns.
+            unsafe { core::slice::from_raw_parts(data, len) }
+        };
         Some(with(did, data))
     }
 }

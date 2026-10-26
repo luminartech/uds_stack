@@ -149,12 +149,14 @@ pub enum TableError {
     #[error("{0}: its access names a level that is not a requestSeed sub-function")]
     Access(AccessOf),
     /// An entry lacks a handler it needs: a DID neither read nor written, a routine
-    /// with no step, a level without its seed or key, or a download without its
-    /// block or finish. A zero-filled table entry is one.
+    /// with no step, a level without its seed or key, a download without its block or
+    /// finish, or a layer's DTC snapshot or clear without its `get`, or a snapshot
+    /// count without its items or the reverse. A zero-filled table entry is one.
     #[error("{0}: a handler it needs is missing")]
     NoHandler(AccessOf),
-    /// An identifier listed twice, in one layer or two, or a DID the server answers
-    /// itself ([`ACTIVE_SESSION_DID`]): only the first entry would ever be served.
+    /// An identifier listed twice, in one layer or two, a DID the server answers
+    /// itself ([`ACTIVE_SESSION_DID`]), or a DTC memory after the first: only the first
+    /// entry would ever be served.
     #[error("{0}: listed twice, so only its first entry is served")]
     Duplicate(AccessOf),
     /// A security level that would lock out before any key is tried.
@@ -177,6 +179,8 @@ pub enum AccessOf {
     Transfer(usize),
     /// A security level, by its requestSeed value.
     Level(u8),
+    /// A layer's DTC memory, by the layer's index.
+    DtcMemory(usize),
 }
 
 impl fmt::Display for AccessOf {
@@ -186,6 +190,7 @@ impl fmt::Display for AccessOf {
             Self::Routine(rid) => write!(f, "routine {rid:#06X}"),
             Self::Transfer(layer) => write!(f, "layer {layer}'s download"),
             Self::Level(level) => write!(f, "security level {level:#04X}"),
+            Self::DtcMemory(layer) => write!(f, "layer {layer}'s DTC memory"),
         }
     }
 }
@@ -261,7 +266,8 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
     /// Checks the layers once, before the server starts: every record within the
     /// policy's limits, every security level a requestSeed sub-function allowing at
     /// least one attempt and at most `LEVELS` of them, every access naming such a level
-    /// or none, every entry with the handlers it needs, and no identifier twice.
+    /// or none, every entry with the handlers it needs, no identifier twice, and at most
+    /// one DTC memory, its snapshot and clear in its own layer.
     ///
     /// The server serves tables that fail this without undefined behavior, failing
     /// closed: a record past a limit is answered `generalReject` (0x10), an invalid
@@ -333,6 +339,25 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
         {
             return Err(TableError::NoHandler(AccessOf::Transfer(index)));
         }
+        // A memory's snapshot and clear are its own, so they need its `get`, and a
+        // snapshot needs both its count and its items.
+        if let Some(index) = layers.dtc_hooks().position(|d| {
+            let snapshot = d.snapshot_count.is_some() || d.snapshot_item.is_some();
+            let memory = snapshot || d.clear.is_some();
+            (memory && d.get.is_none())
+                || (snapshot && (d.snapshot_count.is_none() || d.snapshot_item.is_none()))
+        }) {
+            return Err(TableError::NoHandler(AccessOf::DtcMemory(index)));
+        }
+        if let Some(index) = layers
+            .dtc_hooks()
+            .enumerate()
+            .filter(|(_, d)| d.get.is_some())
+            .nth(1)
+            .map(|(index, _)| index)
+        {
+            return Err(TableError::Duplicate(AccessOf::DtcMemory(index)));
+        }
         let dids =
             || core::iter::once(ACTIVE_SESSION_DID).chain(layers.dids().map(|e| e.did));
         if let Some(did) = first_duplicate(dids) {
@@ -399,7 +424,8 @@ fn reset_hooks(layer: &UdsLayer) -> &UdsTransitionHooks {
 /// Makes the transitions whose responses the server has sent since the last call: each
 /// layer's session execute, the last layer's first, for a session the server entered,
 /// then each layer's reset execute for a reset it confirmed. Entering a session where
-/// `ControlDTCSetting` and `CommunicationControl` are not served resumes their state.
+/// `ControlDTCSetting` and `CommunicationControl` are not served resumes their state, as
+/// does a reset whose execute returns, which leaves the server in the default session.
 ///
 /// Called between polls of the server, before each one, so the response has left the
 /// socket a poll before its transition is made. The session's execute runs as well when
@@ -411,6 +437,7 @@ pub fn execute_deferred(layers: &Layers) {
     }
     if let Some(kind) = take(&DEFERRED_RESET) {
         layers.execute(reset_hooks, kind);
+        resume_outside_their_sessions(layers, u8::from(Session::DefaultSession));
     }
 }
 
