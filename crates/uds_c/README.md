@@ -89,10 +89,14 @@ uds_server! {
 }
 ```
 
-The server is built in place as a `static`, with `uds_c::doip::transport`. At
-start-up the firmware calls `App::validate()`, `uds_c::doip::start_discovery` and arms
-the server's run future; on every pass of its loop it calls
-`uds_c::execute_deferred(&LAYERS)` and then `uds_c::doip::poll_run`.
+The server is built in place in a `uds_c::Firmware` `static`, with
+`uds_c::doip::transport`. A `static` needs its run future's type named, which takes the
+nightly `type_alias_impl_trait` feature in the firmware's crate; this crate itself builds
+on stable. At start-up the firmware calls `App::validate()` and `Firmware::arm`, whose
+closures start discovery with `uds_c::doip::start_discovery` and build the run future; on
+every pass of its loop it calls `Firmware::poll`, which runs
+`uds_c::execute_deferred(&LAYERS)` and then `uds_c::doip::poll_run`. Both calls are
+`unsafe`: the firmware promises to make them from that loop alone.
 
 ## Status
 

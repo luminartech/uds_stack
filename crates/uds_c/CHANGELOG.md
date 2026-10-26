@@ -36,5 +36,8 @@ pre-1.0 crates).
     (ISO 14229-1:2020 10.2).
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
     and transport over them with `doip::poll_run` to drive the server.
+  - `Firmware`, the server and its run future in one `static` for firmware that polls
+    from one execution context: `arm` at start-up, then `poll` on each pass of its loop,
+    both `unsafe` on that promise; `arm` again where a transport error stopped it.
   - The `time-driver` feature and `time_driver!`, `embassy-time`'s clock over
     `uds_now_ms`.
