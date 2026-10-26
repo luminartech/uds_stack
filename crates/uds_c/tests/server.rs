@@ -260,7 +260,7 @@ fn a_pending_prepare_is_called_until_it_settles() {
 }
 
 /// When `tS3_Server` returns the server to the default session, every layer executes it,
-/// with no request or response.
+/// with no request or response, and DTC setting and communication control resume.
 #[test]
 fn the_default_session_is_executed_on_s3_expiry() {
     let _lock = lock();
@@ -274,9 +274,36 @@ fn the_default_session_is_executed_on_s3_expiry() {
     ecu.tick();
     assert_eq!(
         calls(),
-        [Call::Session("oem", 0x01), Call::Session("platform", 0x01)]
+        [
+            Call::Session("oem", 0x01),
+            Call::Session("platform", 0x01),
+            Call::DtcSetting(0x01),
+            Call::CommControl(0x00, 0x03)
+        ]
     );
     assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x01]);
+}
+
+/// Clause 10.2 Figure 7: entering a session where `ControlDTCSetting` and
+/// `CommunicationControl` are served leaves their state as it is; entering the default
+/// session, where they are not, turns DTC status updates on and enables every
+/// communication type.
+#[test]
+fn dtc_setting_and_communication_control_resume_in_the_default_session() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    assert_eq!(ecu.request(&[0x10, 0x03])[..2], [0x50, 0x03]);
+    ecu.tick();
+    assert_eq!(ecu.request(&[0x85, 0x02]), [0xC5, 0x02]);
+    calls();
+    assert_eq!(ecu.request(&[0x10, 0x03])[..2], [0x50, 0x03]);
+    ecu.tick();
+    assert!(!calls().contains(&Call::DtcSetting(0x01)));
+    assert_eq!(ecu.request(&[0x10, 0x01])[..2], [0x50, 0x01]);
+    ecu.tick();
+    let resumed = calls();
+    assert!(resumed.ends_with(&[Call::DtcSetting(0x01), Call::CommControl(0x00, 0x03)]));
 }
 
 /// After `attempt_limit` wrong keys the level is locked for its delay: the last wrong key

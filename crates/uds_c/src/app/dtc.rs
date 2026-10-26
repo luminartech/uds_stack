@@ -201,7 +201,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ControlDtcSetting
         P::LAYERS.dtc_setting().is_some()
     }
 
-    /// `on` (0x01) and `off` (0x02), outside the default session.
+    /// `on` (0x01) and `off` (0x02), in the extended and programming sessions.
     fn access(&self, setting: DtcSettingType) -> Option<Access> {
         matches!(u8::from(setting), 0x01 | 0x02).then(outside_default)
     }

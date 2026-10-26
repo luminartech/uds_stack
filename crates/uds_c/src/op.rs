@@ -34,6 +34,17 @@ impl<F: FnMut(u8) -> u8> Drop for OpCall<F> {
     }
 }
 
+/// Calls `call` once with INITIAL, for a call made outside a request, which cannot wait:
+/// a response-pending answer is cancelled at once with CANCEL. Returns the code it
+/// answered.
+pub fn once(mut call: impl FnMut(u8) -> u8) -> u8 {
+    let status = call(INITIAL);
+    if status == RESPONSE_PENDING {
+        let _ = call(CANCEL);
+    }
+    status
+}
+
 /// Calls `call` with INITIAL, then with PENDING on each later poll while it
 /// answers response-pending; resolves to the code it settles on. Dropped
 /// while pending, it calls `call` once more with CANCEL.
@@ -141,6 +152,20 @@ mod tests {
             let mut call = pin!(settle(|s| handler.call(s)));
             assert_eq!(poll(call.as_mut()), Poll::Pending);
         }
+        assert_eq!(handler.calls(), [INITIAL, CANCEL]);
+    }
+
+    #[test]
+    fn a_call_made_once_answers_what_the_handler_answers() {
+        let mut handler = Handler::new(0, 0x22);
+        assert_eq!(once(|s| handler.call(s)), 0x22);
+        assert_eq!(handler.calls(), [INITIAL]);
+    }
+
+    #[test]
+    fn a_call_made_once_cancels_a_pending_answer_at_once() {
+        let mut handler = Handler::new(5, POSITIVE_RESPONSE);
+        assert_eq!(once(|s| handler.call(s)), RESPONSE_PENDING);
         assert_eq!(handler.calls(), [INITIAL, CANCEL]);
     }
 

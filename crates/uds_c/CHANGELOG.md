@@ -31,7 +31,9 @@ pre-1.0 crates).
     of `uds_services::dtc_status` to C (`uds_dtc_status_after_test_result` and its
     companions) for the memory to apply.
   - `execute_deferred`, which makes a reset or session change once its response has
-    gone out.
+    gone out, and on entering a session where `ControlDTCSetting` and
+    `CommunicationControl` are not served resumes their state through their handlers
+    (ISO 14229-1:2020 10.2).
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
     and transport over them with `doip::poll_run` to drive the server.
   - The `time-driver` feature and `time_driver!`, `embassy-time`'s clock over
