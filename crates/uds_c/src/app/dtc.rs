@@ -1,5 +1,6 @@
-//! The DTC services over the first layer that serves each: `ReadDTCInformation` (0x19),
-//! `ClearDiagnosticInformation` (0x14) and `ControlDTCSetting` (0x85).
+//! The DTC services: `ReadDTCInformation` (0x19) and `ClearDiagnosticInformation` (0x14)
+//! over the first layer that keeps a DTC memory, and `ControlDTCSetting` (0x85) over the
+//! first layer that serves it.
 
 use uds_services::NegativeResponseCode as Nrc;
 use uds_services::{
@@ -30,6 +31,10 @@ const SNAPSHOT_RECORD: DtcSnapshotRecordNumber = DtcSnapshotRecordNumber::new(0x
 
 /// `DTCSnapshotRecordNumber` 0xFF: every record the DTC holds.
 const ALL_SNAPSHOT_RECORDS: u8 = 0xFF;
+
+/// `DTCSnapshotRecordNumberOfIdentifiers` 0x00, which ISO 14229-1 gives a record of more
+/// identifiers than the byte counts.
+const UNDEFINED_IDENTIFIERS: u8 = 0x00;
 
 /// `UDS_DTC_ALL`: a clear of every DTC.
 pub const UDS_DTC_ALL: usize = usize::MAX;
@@ -77,7 +82,7 @@ fn report(
             let mask = mask & AVAILABILITY;
             let count = memory
                 .dtcs()
-                .filter(|&(_, _, status)| DtcStatusMask::from(status).intersects(mask))
+                .filter(|&(_, _, status)| matches(DtcStatusMask::from(status), mask))
                 .count();
             let _ = AVAILABILITY.encode(out);
             let _ = out.write_all(&[u8::from(FORMAT)]);
@@ -109,11 +114,17 @@ fn list(memory: DtcMemory, out: &mut ResponseSink<'_>, mask: Option<DtcStatusMas
     let _ = AVAILABILITY.encode(out);
     for (_, dtc, status) in memory.dtcs() {
         let status = DtcStatusMask::from(status);
-        if mask.is_none_or(|mask| status.intersects(mask)) {
+        if mask.is_none_or(|mask| matches(status, mask)) {
             let _ = record(dtc).encode(out);
             let _ = (status & AVAILABILITY).encode(out);
         }
     }
+}
+
+/// Whether `status` matches `mask`: some bit is set in both. An empty mask matches
+/// nothing, where `DtcStatusMask::intersects` would match everything.
+fn matches(status: DtcStatusMask, mask: DtcStatusMask) -> bool {
+    (status & mask).bits() != 0
 }
 
 /// The DTC and its status, then its snapshot record where it holds one: the record
@@ -139,12 +150,14 @@ fn snapshot(
     let items = memory.snapshot_count(index);
     if items > 0 {
         let _ = SNAPSHOT_RECORD.encode(out);
-        let _ = out.write_all(&[u8::try_from(items).unwrap_or(u8::MAX)]);
+        let _ = out.write_all(&[u8::try_from(items).unwrap_or(UNDEFINED_IDENTIFIERS)]);
         for item in 0..items {
-            let _ = memory.snapshot_item(index, item, |did, data| {
-                let _ = out.write_all(&did.to_be_bytes());
-                let _ = out.write_all(data);
-            });
+            memory
+                .snapshot_item(index, item, |did, data| {
+                    let _ = out.write_all(&did.to_be_bytes());
+                    let _ = out.write_all(data);
+                })
+                .ok_or(Nrc::GeneralReject)?;
         }
     }
     Ok(())
@@ -161,16 +174,19 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ClearDiagnosticInforma
 {
     const MAY_RESPOND_PENDING: bool = true;
 
-    /// Where a layer serves it.
+    /// Where the layer that keeps the DTC memory clears it.
     fn serves(&self) -> bool {
-        P::LAYERS.dtc_clear().is_some()
+        P::LAYERS.dtc_memory().and_then(DtcMemory::clear).is_some()
     }
 
     /// Clears every DTC for the all-groups `groupOfDTC`, or the one DTC it names; any
     /// other group, and a `memorySelection` (the handler clears from the one memory it
     /// has), is `requestOutOfRange` (0x31), ISO 14229-1:2020 Figure 28.
     async fn clear(&mut self, group: DtcRecord, memory: Option<u8>) -> Result<(), Nrc> {
-        let Some(clear) = P::LAYERS.dtc_clear() else {
+        let Some((dtcs, clear)) = P::LAYERS
+            .dtc_memory()
+            .and_then(|dtcs| Some((dtcs, dtcs.clear()?)))
+        else {
             return Err(Nrc::ServiceNotSupported);
         };
         if memory.is_some() {
@@ -180,9 +196,8 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ClearDiagnosticInforma
             UDS_DTC_ALL
         } else {
             let wanted = group.to_u32();
-            P::LAYERS
-                .dtc_memory()
-                .and_then(|memory| memory.dtcs().find(|&(_, dtc, _)| dtc == wanted))
+            dtcs.dtcs()
+                .find(|&(_, dtc, _)| dtc == wanted)
                 .map(|(index, _, _)| index)
                 .ok_or(Nrc::RequestOutOfRange)?
         };

@@ -236,7 +236,8 @@ uint8_t uds_dtc_status_at_operation_cycle_start(uint8_t status);
 
 /**
  * @brief DTC `index`'s number and status; false past the last DTC, which ends
- *        the DTCs the server reads from index 0 up.
+ *        the DTCs the server reads from index 0 up. The number is the DTC's
+ *        three bytes, 0x00HHMMLL: the server ignores the top byte.
  */
 typedef bool (*UdsDtcGetFn)(size_t index, uint32_t *dtc, uint8_t *status);
 
@@ -246,7 +247,11 @@ typedef size_t (*UdsDtcSnapshotCountFn)(size_t index);
 /**
  * @brief Identifier `item` of DTC `index`'s snapshot record and its data:
  *        `*data` points to `*len` bytes that stay valid until the server's next
- *        call into the layer. False where there is no such item.
+ *        call into the layer, and may be NULL where `*len` is 0. False where
+ *        there is no such item, which, for an
+ *        item below UdsDtcSnapshotCountFn's count, answers the snapshot
+ *        request with generalReject (0x10). A record longer than the response
+ *        buffer is answered with responseTooLong (0x14).
  */
 typedef bool (*UdsDtcSnapshotItemFn)(size_t index, size_t item, uint16_t *did, uint8_t const **data, size_t *len);
 
@@ -254,25 +259,29 @@ typedef bool (*UdsDtcSnapshotItemFn)(size_t index, size_t item, uint16_t *did, u
 #define UDS_DTC_ALL (SIZE_MAX)
 
 /**
- * @brief Clears DTC `index`, or every DTC for UDS_DTC_ALL: the server has
- *        matched the request's groupOfDTC to the memory, answering
- *        requestOutOfRange for one it does not hold, or a memorySelection,
- *        without this being called.
+ * @brief Clears DTC `index`, or every DTC for UDS_DTC_ALL, setting each
+ *        status to uds_dtc_status_cleared(): the server has matched the
+ *        request's groupOfDTC to the memory, answering requestOutOfRange for
+ *        one it does not hold, or a memorySelection, without this being called.
  */
 typedef UdsNrc (*UdsDtcClearFn)(UdsOpStatus op, size_t index);
 
 /**
  * @brief Turns DTC status updates on (0x01) or off (0x02). Entering a session
  *        where ControlDTCSetting is not served (any but the extended and
- *        programming sessions) calls it once more with 0x01 and UDS_OP_INITIAL, between polls of the server
- *        (ISO 14229-1 10.2): it cannot wait, so a response-pending
- *        answer is cancelled at once.
+ *        programming sessions), or a reset whose execute returns, calls it
+ *        once more with 0x01 and UDS_OP_INITIAL, between polls of the server
+ *        (ISO 14229-1 10.2): it cannot wait, so a response-pending answer is
+ *        cancelled at once.
  */
 typedef UdsNrc (*UdsDtcSettingFn)(UdsOpStatus op, uint8_t setting_type);
 
 /**
  * @brief A layer's DTC memory and handlers; NULL: not served by this layer.
- *        The first layer whose `get` is set keeps the memory 0x19 reads.
+ *        One layer keeps the memory 0x19 reads, with `get`, and its
+ *        `snapshot_*` and `clear` serve 0x19 04 and 0x14; the server's start
+ *        refuses a second memory, or those hooks without `get`. `setting` is
+ *        the first layer's that sets it.
  */
 typedef struct
 {
@@ -288,9 +297,10 @@ typedef struct
 /**
  * @brief Enables or disables reception and transmission of `communication_type`.
  *        Entering a session where CommunicationControl is not served (any but
- *        the extended and programming sessions) calls it once more with enableRxAndTx (0x00) for
- *        every communication type (0x03) and UDS_OP_INITIAL, ISO 14229-1 10.2:
- *        it cannot wait, so a response-pending answer is cancelled at once.
+ *        the extended and programming sessions), or a reset whose execute
+ *        returns, calls it once more with enableRxAndTx (0x00) for every
+ *        communication type (0x03) and UDS_OP_INITIAL, ISO 14229-1 10.2: it
+ *        cannot wait, so a response-pending answer is cancelled at once.
  */
 typedef UdsNrc (*UdsCommControlFn)(UdsOpStatus op, uint8_t control_type, uint8_t communication_type);
 

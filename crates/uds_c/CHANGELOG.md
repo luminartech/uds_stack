@@ -24,16 +24,16 @@ pre-1.0 crates).
     lends it, and the operation-status protocol of handlers that pend or are canceled.
     `uds_record_copy_16_be`, `uds_record_copy_32_be` and `uds_record_copy_64_be`
     copy an integer big-endian.
-  - The DTC services over a DTC memory a layer keeps (`UdsDtcHooks`): the server
+  - The DTC services over the one DTC memory a layer keeps (`UdsDtcHooks`): the server
     reads each DTC's number, status and snapshot record and encodes the
     `ReadDTCInformation` reports itself, matches a `ClearDiagnosticInformation` group
-    to a DTC before the clear handler runs, and exports the Annex D status transitions
+    to a DTC before the memory's clear handler runs, and exports the Annex D status transitions
     of `uds_services::dtc_status` to C (`uds_dtc_status_after_test_result` and its
     companions) for the memory to apply.
   - `execute_deferred`, which makes a reset or session change once its response has
     gone out, and on entering a session where `ControlDTCSetting` and
-    `CommunicationControl` are not served resumes their state through their handlers
-    (ISO 14229-1:2020 10.2).
+    `CommunicationControl` are not served, or after a reset whose execute returns,
+    resumes their state through their handlers (ISO 14229-1:2020 10.2).
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
     and transport over them with `doip::poll_run` to drive the server.
   - `Firmware`, the server and its run future in one `static` for firmware that polls

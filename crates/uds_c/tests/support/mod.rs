@@ -174,9 +174,21 @@ unsafe extern "C" fn write_ok(_op: u8, _data: *const u8, _len: usize) -> u8 {
     0x00
 }
 
-/// The platform layer's DTC memory: two DTCs and their statuses, the first holding a
-/// snapshot record of [`SNAPSHOT`]'s identifiers.
-pub const DTCS: [(u32, u8); 2] = [(0xEF_0100, 0x09), (0xEF_0200, 0x50)];
+/// The platform layer's DTC memory: four DTCs and their statuses. The first holds a
+/// snapshot record of [`SNAPSHOT`]'s identifiers and sets `warningIndicatorRequested`,
+/// which the availability mask leaves out; the second's number carries a fourth byte,
+/// which no DTC number has; the third counts a snapshot identifier it cannot give; the
+/// fourth holds [`MANY_IDENTIFIERS`] empty identifiers, 0x0200 up, more than the count
+/// byte counts.
+pub const DTCS: [(u32, u8); 4] = [
+    (0xEF_0100, 0x89),
+    (0x01EF_0200, 0x50),
+    (0xEF_0300, 0x00),
+    (0xEF_0400, 0x00),
+];
+
+/// The identifiers in the fourth DTC's snapshot record.
+pub const MANY_IDENTIFIERS: usize = 256;
 
 /// The first DTC's snapshot record: each identifier and its data.
 pub static SNAPSHOT: [(u16, &[u8]); 2] = [(0x0100, &[0xAA]), (0x0101, &[0x01, 0x02])];
@@ -194,7 +206,12 @@ unsafe extern "C" fn dtc_get(index: usize, dtc: *mut u32, status: *mut u8) -> bo
 }
 
 unsafe extern "C" fn dtc_snapshot_count(index: usize) -> usize {
-    if index == 0 { SNAPSHOT.len() } else { 0 }
+    match index {
+        0 => SNAPSHOT.len(),
+        2 => 1,
+        3 => MANY_IDENTIFIERS,
+        _ => 0,
+    }
 }
 
 unsafe extern "C" fn dtc_snapshot_item(
@@ -204,6 +221,19 @@ unsafe extern "C" fn dtc_snapshot_item(
     data: *mut *const u8,
     len: *mut usize,
 ) -> bool {
+    if index == 3 && item < MANY_IDENTIFIERS {
+        let Ok(item) = u16::try_from(item) else {
+            return false;
+        };
+        // SAFETY: the server passes valid out-pointers (uds_c.h); an empty item's data
+        // may be NULL.
+        unsafe {
+            did.write(0x0200 | item);
+            data.write(core::ptr::null());
+            len.write(0);
+        }
+        return true;
+    }
     let Some(&(id, bytes)) = SNAPSHOT.get(item).filter(|_| index == 0) else {
         return false;
     };
@@ -412,6 +442,8 @@ pub struct Bench;
 
 impl Policy for Bench {
     const LAYERS: &'static Layers = &LAYERS;
+    /// Room in the response for the snapshot of [`MANY_IDENTIFIERS`].
+    const MAX_DTCS: usize = 160;
     const SESSIONS: Sessions = Sessions::NONE
         .with(Session::DefaultSession)
         .with(Session::ProgrammingSession)

@@ -41,7 +41,13 @@ fn a_hard_reset_executes_after_its_response() {
     ecu.tick();
     assert_eq!(
         calls(),
-        [Call::Reset("oem", 0x01), Call::Reset("platform", 0x01)]
+        [
+            Call::Reset("oem", 0x01),
+            Call::Reset("platform", 0x01),
+            Call::DtcSetting(0x01),
+            Call::CommControl(0x00, 0x03)
+        ],
+        "a reset whose execute returns leaves the default session, which resumes both"
     );
 }
 
@@ -168,7 +174,8 @@ fn a_routine_answers_the_status_it_copied() {
 
 /// The server encodes each report from the layer's DTC memory, against the
 /// availability mask 0x7F: the count and the list of DTCs a status mask matches, every
-/// DTC, the DTCs holding a snapshot, and one DTC's snapshot record.
+/// DTC, the DTCs holding a snapshot, and one DTC's snapshot record. A DTC number's
+/// fourth byte, and a status bit outside the mask, are not reported.
 #[test]
 fn the_dtc_reports_are_encoded_from_the_memory() {
     let _lock = lock();
@@ -183,14 +190,23 @@ fn the_dtc_reports_are_encoded_from_the_memory() {
         [0x59, 0x02, 0x7F, 0xEF, 0x01, 0x00, 0x09]
     );
     assert_eq!(
+        ecu.request(&[0x19, 0x01, 0x80]),
+        [0x59, 0x01, 0x7F, 0x01, 0x00, 0x00]
+    );
+    assert_eq!(ecu.request(&[0x19, 0x02, 0x80]), [0x59, 0x02, 0x7F]);
+    assert_eq!(
         ecu.request(&[0x19, 0x0A]),
         [
-            0x59, 0x0A, 0x7F, 0xEF, 0x01, 0x00, 0x09, 0xEF, 0x02, 0x00, 0x50
+            0x59, 0x0A, 0x7F, 0xEF, 0x01, 0x00, 0x09, 0xEF, 0x02, 0x00, 0x50, 0xEF, 0x03,
+            0x00, 0x00, 0xEF, 0x04, 0x00, 0x00
         ]
     );
     assert_eq!(
         ecu.request(&[0x19, 0x03]),
-        [0x59, 0x03, 0xEF, 0x01, 0x00, 0x01]
+        [
+            0x59, 0x03, 0xEF, 0x01, 0x00, 0x01, 0xEF, 0x03, 0x00, 0x01, 0xEF, 0x04, 0x00,
+            0x01
+        ]
     );
     assert_eq!(
         ecu.request(&[0x19, 0x04, 0xEF, 0x01, 0x00, 0x01]),
@@ -204,7 +220,10 @@ fn the_dtc_reports_are_encoded_from_the_memory() {
 
 /// A snapshot request for a DTC without one answers the DTC and its status alone; a DTC
 /// the memory does not hold, or a record number other than its one record or all of
-/// them, is requestOutOfRange.
+/// them, is requestOutOfRange; a record the memory cannot give in full is generalReject,
+/// not a response whose identifier count overstates it; a record of more identifiers
+/// than the count byte counts gives the count 0x00, and an empty item its identifier
+/// alone.
 #[test]
 fn a_snapshot_request_names_a_held_dtc_and_record() {
     let _lock = lock();
@@ -215,9 +234,17 @@ fn a_snapshot_request_names_a_held_dtc_and_record() {
         [0x59, 0x04, 0xEF, 0x02, 0x00, 0x50]
     );
     assert_eq!(
-        ecu.request(&[0x19, 0x04, 0xEF, 0x03, 0x00, 0x01]),
+        ecu.request(&[0x19, 0x04, 0xEF, 0x05, 0x00, 0x01]),
         [0x7F, 0x19, 0x31]
     );
+    assert_eq!(
+        ecu.request(&[0x19, 0x04, 0xEF, 0x03, 0x00, 0x01]),
+        [0x7F, 0x19, 0x10]
+    );
+    let many = ecu.request(&[0x19, 0x04, 0xEF, 0x04, 0x00, 0x01]);
+    assert_eq!(many[..8], [0x59, 0x04, 0xEF, 0x04, 0x00, 0x00, 0x01, 0x00]);
+    let identifiers: Vec<u8> = (0x0200..0x0300_u16).flat_map(u16::to_be_bytes).collect();
+    assert_eq!(many[8..], identifiers[..]);
     assert_eq!(
         ecu.request(&[0x19, 0x04, 0xEF, 0x01, 0x00, 0x02]),
         [0x7F, 0x19, 0x31]
@@ -285,9 +312,9 @@ fn the_default_session_is_executed_on_s3_expiry() {
 }
 
 /// Clause 10.2 Figure 7: entering a session where `ControlDTCSetting` and
-/// `CommunicationControl` are served leaves their state as it is; entering the default
-/// session, where they are not, turns DTC status updates on and enables every
-/// communication type.
+/// `CommunicationControl` are served, the extended or the programming one, leaves their
+/// state as it is; entering the default session, where they are not, turns DTC status
+/// updates on and enables every communication type.
 #[test]
 fn dtc_setting_and_communication_control_resume_in_the_default_session() {
     let _lock = lock();
@@ -297,13 +324,30 @@ fn dtc_setting_and_communication_control_resume_in_the_default_session() {
     ecu.tick();
     assert_eq!(ecu.request(&[0x85, 0x02]), [0xC5, 0x02]);
     calls();
-    assert_eq!(ecu.request(&[0x10, 0x03])[..2], [0x50, 0x03]);
-    ecu.tick();
-    assert!(!calls().contains(&Call::DtcSetting(0x01)));
+    for session in [0x03, 0x02] {
+        assert_eq!(ecu.request(&[0x10, session])[..2], [0x50, session]);
+        ecu.tick();
+        assert_eq!(
+            calls(),
+            [
+                Call::Prepare(0x00, session),
+                Call::Session("oem", session),
+                Call::Session("platform", session)
+            ]
+        );
+    }
     assert_eq!(ecu.request(&[0x10, 0x01])[..2], [0x50, 0x01]);
     ecu.tick();
-    let resumed = calls();
-    assert!(resumed.ends_with(&[Call::DtcSetting(0x01), Call::CommControl(0x00, 0x03)]));
+    assert_eq!(
+        calls(),
+        [
+            Call::Prepare(0x00, 0x01),
+            Call::Session("oem", 0x01),
+            Call::Session("platform", 0x01),
+            Call::DtcSetting(0x01),
+            Call::CommControl(0x00, 0x03)
+        ]
+    );
 }
 
 /// After `attempt_limit` wrong keys the level is locked for its delay: the last wrong key
@@ -342,7 +386,7 @@ fn a_clear_reaches_its_handler_by_index() {
     assert_eq!(calls(), [Call::DtcClear(uds_c::UDS_DTC_ALL)]);
     assert_eq!(ecu.request(&[0x14, 0xEF, 0x02, 0x00]), [0x54]);
     assert_eq!(calls(), [Call::DtcClear(1)]);
-    assert_eq!(ecu.request(&[0x14, 0xEF, 0x03, 0x00]), [0x7F, 0x14, 0x31]);
+    assert_eq!(ecu.request(&[0x14, 0xEF, 0x05, 0x00]), [0x7F, 0x14, 0x31]);
     assert_eq!(calls(), []);
     assert_eq!(
         ecu.request(&[0x14, 0xFF, 0xFF, 0xFF, 0x01]),
@@ -616,6 +660,84 @@ fn the_active_session_did_in_a_table_is_refused() {
     assert_eq!(
         TableApp::<Shadow>::validate(),
         Err(TableError::Duplicate(AccessOf::Did(ACTIVE_SESSION_DID)))
+    );
+}
+
+unsafe extern "C" fn get_nothing(_index: usize, _dtc: *mut u32, _status: *mut u8) -> bool {
+    false
+}
+
+unsafe extern "C" fn count_nothing(_index: usize) -> usize {
+    0
+}
+
+unsafe extern "C" fn clear_nothing(_op: u8, _index: usize) -> u8 {
+    0x00
+}
+
+/// A layer whose only hooks are the DTC ones `dtc` gives.
+const fn layer_of_dtc(dtc: uds_c::UdsDtcHooks) -> UdsLayer {
+    UdsLayer {
+        dtc,
+        ..layer_of(&[])
+    }
+}
+
+const NO_DTC_HOOKS: uds_c::UdsDtcHooks = uds_c::UdsDtcHooks {
+    get: None,
+    snapshot_count: None,
+    snapshot_item: None,
+    clear: None,
+    setting: None,
+};
+
+/// A DTC clear, or a snapshot, in a layer that keeps no DTC memory would clear or read
+/// indices of another layer's memory, and a snapshot count without its items could not
+/// be given: each is refused at start-up.
+#[test]
+fn dtc_hooks_without_their_memory_are_refused() {
+    static CLEAR_ONLY: UdsLayer = layer_of_dtc(uds_c::UdsDtcHooks {
+        clear: Some(clear_nothing),
+        ..NO_DTC_HOOKS
+    });
+    static MEMORY: UdsLayer = layer_of_dtc(uds_c::UdsDtcHooks {
+        get: Some(get_nothing),
+        ..NO_DTC_HOOKS
+    });
+    static COUNT_ONLY: UdsLayer = layer_of_dtc(uds_c::UdsDtcHooks {
+        get: Some(get_nothing),
+        snapshot_count: Some(count_nothing),
+        ..NO_DTC_HOOKS
+    });
+    validated_only!(Split, CLEAR_ONLY, MEMORY);
+    validated_only!(Counted, COUNT_ONLY);
+    assert_eq!(
+        TableApp::<Split>::validate(),
+        Err(TableError::NoHandler(AccessOf::DtcMemory(0)))
+    );
+    assert_eq!(
+        TableApp::<Counted>::validate(),
+        Err(TableError::NoHandler(AccessOf::DtcMemory(0)))
+    );
+}
+
+/// A second layer's DTC memory, which the server would never read, is refused at
+/// start-up.
+#[test]
+fn a_second_dtc_memory_is_refused() {
+    static FIRST: UdsLayer = layer_of_dtc(uds_c::UdsDtcHooks {
+        get: Some(get_nothing),
+        ..NO_DTC_HOOKS
+    });
+    static SECOND: UdsLayer = layer_of_dtc(uds_c::UdsDtcHooks {
+        get: Some(get_nothing),
+        clear: Some(clear_nothing),
+        ..NO_DTC_HOOKS
+    });
+    validated_only!(TwoMemories, FIRST, SECOND);
+    assert_eq!(
+        TableApp::<TwoMemories>::validate(),
+        Err(TableError::Duplicate(AccessOf::DtcMemory(1)))
     );
 }
 
