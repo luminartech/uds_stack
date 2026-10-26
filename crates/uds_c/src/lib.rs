@@ -29,7 +29,8 @@
 //!   [`uds_record_copy_16_be`], [`uds_record_copy_32_be`] and [`uds_record_copy_64_be`]
 //!   copy an integer big-endian, the byte order of UDS records.
 //! - [`execute_deferred`], which makes a reset or session change once its response
-//!   has gone out, called between polls.
+//!   has gone out, called between polls, and resumes `ControlDTCSetting` and
+//!   `CommunicationControl` state on entering a session where they are not served.
 //! - [`nal`], `edge-nal` sockets over the C socket calls, and [`doip`], the entity
 //!   and transport they carry, with [`doip::poll_run`] to drive the server.
 //! - With the `time-driver` feature, `time_driver!`, `embassy-time`'s clock over

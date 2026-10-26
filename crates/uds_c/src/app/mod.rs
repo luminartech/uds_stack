@@ -398,7 +398,8 @@ fn reset_hooks(layer: &UdsLayer) -> &UdsTransitionHooks {
 
 /// Makes the transitions whose responses the server has sent since the last call: each
 /// layer's session execute, the last layer's first, for a session the server entered,
-/// then each layer's reset execute for a reset it confirmed.
+/// then each layer's reset execute for a reset it confirmed. Entering a session where
+/// `ControlDTCSetting` and `CommunicationControl` are not served resumes their state.
 ///
 /// Called between polls of the server, before each one, so the response has left the
 /// socket a poll before its transition is made. The session's execute runs as well when
@@ -406,9 +407,37 @@ fn reset_hooks(layer: &UdsLayer) -> &UdsTransitionHooks {
 pub fn execute_deferred(layers: &Layers) {
     if let Some(session) = take(&DEFERRED_SESSION) {
         layers.execute(session_hooks, session);
+        resume_outside_their_sessions(layers, session);
     }
     if let Some(kind) = take(&DEFERRED_RESET) {
         layers.execute(reset_hooks, kind);
+    }
+}
+
+/// `DTCSettingType` `on` (ISO 14229-1:2020 Table 252).
+const DTC_SETTING_ON: u8 = 0x01;
+/// `controlType` `enableRxAndTx` (Table 54).
+const ENABLE_RX_AND_TX: u8 = 0x00;
+/// `communicationType` for normal and network-management messages on every network
+/// (Table B.1).
+const ALL_COMMUNICATION: u8 = 0x03;
+
+/// Clause 10.2 Figure 7, ``UDSSVC_ARCH_0038``: entering a session where
+/// `ControlDTCSetting` and `CommunicationControl` are not served ([`outside_default`])
+/// resumes their state, so the handlers that serve them turn DTC status updates on and
+/// enable every communication type. Each is called once: the resume cannot wait, and
+/// its result answers no request.
+fn resume_outside_their_sessions(layers: &Layers, session: u8) {
+    let served_there = Session::try_from(session)
+        .is_ok_and(|session| outside_default().sessions().contains(session));
+    if served_there {
+        return;
+    }
+    if let Some(setting) = layers.dtc_setting() {
+        let _ = op::once(|op| setting.call(op, DTC_SETTING_ON));
+    }
+    if let Some(control) = layers.comm_control() {
+        let _ = op::once(|op| control.call(op, ENABLE_RX_AND_TX, ALL_COMMUNICATION));
     }
 }
 

@@ -261,7 +261,13 @@ typedef bool (*UdsDtcSnapshotItemFn)(size_t index, size_t item, uint16_t *did, u
  */
 typedef UdsNrc (*UdsDtcClearFn)(UdsOpStatus op, size_t index);
 
-/** @brief Turns DTC status updates on (0x01) or off (0x02). */
+/**
+ * @brief Turns DTC status updates on (0x01) or off (0x02). Entering a session
+ *        where ControlDTCSetting is not served (any but the extended and
+ *        programming sessions) calls it once more with 0x01 and UDS_OP_INITIAL, between polls of the server
+ *        (ISO 14229-1 10.2): it cannot wait, so a response-pending
+ *        answer is cancelled at once.
+ */
 typedef UdsNrc (*UdsDtcSettingFn)(UdsOpStatus op, uint8_t setting_type);
 
 /**
@@ -279,7 +285,13 @@ typedef struct
 
 /* CommunicationControl (0x28) */
 
-/** @brief Enables or disables reception and transmission of `communication_type`. */
+/**
+ * @brief Enables or disables reception and transmission of `communication_type`.
+ *        Entering a session where CommunicationControl is not served (any but
+ *        the extended and programming sessions) calls it once more with enableRxAndTx (0x00) for
+ *        every communication type (0x03) and UDS_OP_INITIAL, ISO 14229-1 10.2:
+ *        it cannot wait, so a response-pending answer is cancelled at once.
+ */
 typedef UdsNrc (*UdsCommControlFn)(UdsOpStatus op, uint8_t control_type, uint8_t communication_type);
 
 /* RequestDownload (0x34), TransferData (0x36), RequestTransferExit (0x37) */

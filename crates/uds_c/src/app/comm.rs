@@ -18,7 +18,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> CommunicationControl
         P::LAYERS.comm_control().is_some()
     }
 
-    /// `enableRxAndTx` to `disableRxAndTx`, outside the default session; the enhanced
+    /// `enableRxAndTx` to `disableRxAndTx`, in the extended and programming sessions; the enhanced
     /// address forms are not served.
     fn access(&self, control_type: CommunicationControlType) -> Option<Access> {
         (u8::from(control_type) <= 0x03).then(outside_default)
