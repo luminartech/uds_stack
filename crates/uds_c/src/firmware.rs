@@ -1,0 +1,261 @@
+//! The server and its run future in one `static`, for firmware that polls the server from
+//! one execution context: what every firmware built on this crate otherwise writes for
+//! itself around [`doip::poll_run`] and [`execute_deferred`].
+//!
+//! The firmware still names the run future's type, which only `type_alias_impl_trait`
+//! can do for a `static`; the rest, the cells, arming and the poll, is here.
+
+#![allow(
+    unsafe_code,
+    reason = "a static's cells, reached through the unsafe calls' single-context contract"
+)]
+
+use core::cell::UnsafeCell;
+use core::fmt;
+use core::future::Future;
+use core::pin::Pin;
+
+use uds_services::Stopped;
+
+use crate::doip::{self, RunError};
+use crate::{Layers, execute_deferred};
+
+/// A server and the run future [`Self::poll`] drives, in one `static`.
+///
+/// Placing the whole of it, its server included, where the firmware wants it, with
+/// `#[link_section]` say, keeps the server off a small stack: [`Self::new`] is a
+/// `const fn`, so it is initialised data rather than built at run time.
+///
+/// # Safety
+///
+/// [`Self::arm`] and [`Self::poll`] share one contract, which is what makes a `static`
+/// of it sound:
+///
+/// - Every call is made from one execution context, the one that polls the server, and
+///   none is made while another is under way: from a handler the server calls, say, or
+///   from an interrupt.
+/// - The server was built in that context, or is a `static`'s constant initializer, so
+///   an `S` that is not `Send` never reaches it from another thread.
+/// - Each `run` closure moves the server reference it is given into the future it
+///   returns and nowhere else, so that reference ends with the future.
+pub struct Firmware<S, F> {
+    server: UnsafeCell<S>,
+    run: UnsafeCell<Option<F>>,
+}
+
+// SAFETY: every access to the cells is through `arm` or `poll`, whose contract confines
+// them to one execution context and never re-enters one, so the cells are never reached
+// from two threads, nor twice at once. Neither `S` nor `F` need be `Send`: the contract
+// has the server built in that context or constant, and `F` is built there.
+unsafe impl<S, F> Sync for Firmware<S, F> {}
+
+impl<S, F> fmt::Debug for Firmware<S, F> {
+    /// Opaque: reading the cells here would race the context that polls them.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Firmware").finish_non_exhaustive()
+    }
+}
+
+impl<S, F> Firmware<S, F> {
+    /// `server`, not yet armed.
+    #[must_use]
+    pub const fn new(server: S) -> Self {
+        Self {
+            server: UnsafeCell::new(server),
+            run: UnsafeCell::new(None),
+        }
+    }
+
+    /// Arms the server where it has no run future, at start-up or after a transport
+    /// error stopped it: `start` prepares it, starting its discovery say, then `run`
+    /// builds the future [`Self::poll`] drives. Returns `false`, calling neither, where
+    /// it is armed already.
+    ///
+    /// # Safety
+    ///
+    /// The contract in [`Firmware`]'s `# Safety`.
+    pub unsafe fn arm(
+        &'static self,
+        start: impl FnOnce(&mut S),
+        run: impl FnOnce(&'static mut S) -> F,
+    ) -> bool {
+        // SAFETY: the contract makes this call the only one under way, so nothing else
+        // reaches the slot.
+        let slot = unsafe { &mut *self.run.get() };
+        if slot.is_some() {
+            return false;
+        }
+        // SAFETY: no run future, so, by the contract on `run`, no reference to the
+        // server survives, and this call is the only one under way.
+        let server = unsafe { &mut *self.server.get() };
+        start(server);
+        *slot = Some(run(server));
+        true
+    }
+
+    /// One pass of the firmware's loop: the transitions confirmed responses leave to make,
+    /// [`execute_deferred`] for `layers`, then one poll of the run future,
+    /// [`doip::poll_run`], which `run` builds again once a confirmed reset has stopped it.
+    ///
+    /// # Errors
+    ///
+    /// [`RunError::NotStarted`] before [`Self::arm`] or after a transport error;
+    /// [`RunError::Stopped`] for the transport error the server stopped on.
+    ///
+    /// # Safety
+    ///
+    /// The contract in [`Firmware`]'s `# Safety`.
+    pub unsafe fn poll<E>(
+        &'static self,
+        layers: &Layers,
+        run: impl FnOnce(&'static mut S) -> F,
+    ) -> Result<(), RunError<E>>
+    where
+        F: Future<Output = Result<Stopped, E>>,
+    {
+        execute_deferred(layers);
+        // SAFETY: the contract makes this the only reference to the slot; it is behind
+        // `&'static self`, so the future in it is never moved or freed, and only
+        // dropped in place.
+        let slot = unsafe { Pin::new_unchecked(&mut *self.run.get()) };
+        doip::poll_run(slot, || {
+            // SAFETY: `poll_run` drops the finished future before it calls this, and by
+            // the contract on `run` that future held the only reference to the server.
+            run(unsafe { &mut *self.server.get() })
+        })
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::arithmetic_side_effects,
+    reason = "test harness: a few polls of a counted run future"
+)]
+mod tests {
+    use core::task::{Context, Poll};
+
+    use uds_protocol::ResetType;
+
+    use super::*;
+
+    static NO_LAYERS: [&crate::UdsLayer; 0] = [];
+    // SAFETY: no layer, so no handler.
+    static LAYERS: Layers = unsafe { Layers::new(&NO_LAYERS) };
+
+    /// A server that records its starts, its runs and their polls.
+    #[derive(Debug)]
+    struct Server {
+        starts: u32,
+        runs: u32,
+        polls: u32,
+    }
+
+    /// The server's run future: pending `pending` polls, then stopped on a reset, or on a
+    /// transport error where it `fails`.
+    #[derive(Debug)]
+    struct Run {
+        server: &'static mut Server,
+        pending: u32,
+        fails: bool,
+    }
+
+    impl Future for Run {
+        type Output = Result<Stopped, ()>;
+
+        fn poll(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+            self.server.polls += 1;
+            if self.pending > 0 {
+                self.pending -= 1;
+                Poll::Pending
+            } else if self.fails {
+                Poll::Ready(Err(()))
+            } else {
+                Poll::Ready(Ok(Stopped::Reset(ResetType::HardReset)))
+            }
+        }
+    }
+
+    /// Builds a run future, keeping the server reference in it alone.
+    fn run(pending: u32, fails: bool) -> impl FnOnce(&'static mut Server) -> Run {
+        move |server| {
+            server.runs += 1;
+            Run {
+                server,
+                pending,
+                fails,
+            }
+        }
+    }
+
+    fn start(server: &mut Server) {
+        server.starts += 1;
+    }
+
+    const fn server() -> Server {
+        Server {
+            starts: 0,
+            runs: 0,
+            polls: 0,
+        }
+    }
+
+    /// The server's counters, read where no run future is armed.
+    fn counters(firmware: &'static Firmware<Server, Run>) -> (u32, u32, u32) {
+        // SAFETY: each test's static is reached from that test's thread alone, and no
+        // run future is armed, so nothing else references the server.
+        let server = unsafe { &*firmware.server.get() };
+        (server.starts, server.runs, server.polls)
+    }
+
+    #[test]
+    fn a_poll_before_arming_reports_it_not_started() {
+        static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
+        // SAFETY: each test's static is reached from that test's thread alone, and each
+        // `run` keeps the server reference in its future.
+        let polled = unsafe { FIRMWARE.poll(&LAYERS, run(0, false)) };
+        assert!(matches!(polled, Err(RunError::NotStarted)));
+    }
+
+    #[test]
+    fn arming_twice_starts_the_server_once() {
+        static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
+        // SAFETY: as above.
+        unsafe {
+            assert!(FIRMWARE.arm(start, run(5, false)));
+            assert!(!FIRMWARE.arm(start, run(5, false)));
+            assert!(FIRMWARE.poll(&LAYERS, run(5, false)).is_ok());
+        }
+        // SAFETY: as above; this read invalidates the armed run future's reference
+        // for writes, which is sound only because the future is never polled again.
+        let server = unsafe { &*FIRMWARE.server.get() };
+        assert_eq!((server.starts, server.runs, server.polls), (1, 1, 1));
+    }
+
+    #[test]
+    fn a_reset_builds_the_run_again_and_a_transport_error_unarms_it() {
+        static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
+        // SAFETY: as above.
+        unsafe {
+            assert!(FIRMWARE.arm(start, run(1, false)));
+            assert!(FIRMWARE.poll(&LAYERS, run(0, true)).is_ok());
+            // The first run stops on a reset, and the second is built, failing when
+            // polled.
+            assert!(FIRMWARE.poll(&LAYERS, run(0, true)).is_ok());
+            assert!(matches!(
+                FIRMWARE.poll(&LAYERS, run(0, true)),
+                Err(RunError::Stopped(()))
+            ));
+            assert!(matches!(
+                FIRMWARE.poll(&LAYERS, run(0, true)),
+                Err(RunError::NotStarted)
+            ));
+        }
+        assert_eq!(counters(&FIRMWARE), (1, 2, 3));
+        // Unarmed by the error, so arming starts the server again.
+        // SAFETY: as above.
+        unsafe {
+            assert!(FIRMWARE.arm(start, run(0, false)));
+            assert!(FIRMWARE.poll(&LAYERS, run(0, false)).is_ok());
+        }
+    }
+}

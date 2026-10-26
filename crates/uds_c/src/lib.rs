@@ -120,15 +120,20 @@
 //! # fn main() {}
 //! ```
 //!
-//! At start-up the firmware checks the tables with [`TableApp::validate`], starts
-//! discovery with [`doip::start_discovery`] and arms the server's run future. On each
-//! pass of its loop it calls [`execute_deferred`], then [`doip::poll_run`]. The crate's
-//! integration tests do all of this over a simulated C side.
+//! The firmware keeps the server in a [`Firmware`] `static`, naming its run future's type
+//! with the nightly `type_alias_impl_trait` feature, in its own crate. At start-up it
+//! checks the tables with [`TableApp::validate`] and calls [`Firmware::arm`], whose
+//! closures start discovery with [`doip::start_discovery`] and build the run future; on
+//! each pass of its loop it calls [`Firmware::poll`], which runs [`execute_deferred`] and
+//! then [`doip::poll_run`]. The crate's integration tests serve the tables over a
+//! simulated C side through [`doip::poll_run`] directly, and `Firmware`'s own tests cover
+//! the arming and the poll.
 
 #![no_std]
 
 mod app;
 mod dtc_status;
+mod firmware;
 mod layer;
 mod op;
 mod record;
@@ -148,6 +153,7 @@ pub use dtc_status::{
     uds_dtc_status_after_test_result, uds_dtc_status_at_operation_cycle_start,
     uds_dtc_status_cleared,
 };
+pub use firmware::Firmware;
 pub use layer::{
     Layers, UdsAccess, UdsCommControlFn, UdsDidEntry, UdsDidReadFn, UdsDidWriteFn,
     UdsDtcClearFn, UdsDtcGetFn, UdsDtcHooks, UdsDtcSettingFn, UdsDtcSnapshotCountFn,
