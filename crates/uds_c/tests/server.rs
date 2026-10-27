@@ -207,7 +207,7 @@ fn a_routine_answers_the_status_it_copied() {
     assert_eq!(ecu.request(&[0x31, 0x02, 0x02, 0x01]), [0x7F, 0x31, 0x12]);
 }
 
-/// The server encodes each report from the layer's DTC memory, against the
+/// The server encodes each report from the layer's DTC memory, against the default
 /// availability mask 0x7F: the count and the list of DTCs a status mask matches, every
 /// DTC, the DTCs holding a snapshot, and one DTC's snapshot record. A DTC number's
 /// fourth byte, and a status bit outside the mask, are not reported.
@@ -251,6 +251,23 @@ fn the_dtc_reports_are_encoded_from_the_memory() {
         ]
     );
     assert_eq!(calls(), []);
+}
+
+/// A policy that declares `warningIndicatorRequested` available reports it: the mask
+/// 0x80 finds the DTC that sets it, whose status is reported whole.
+#[test]
+fn a_declared_availability_mask_reports_its_bits() {
+    let _lock = lock();
+    let mut ecu = Ecu::start_warning();
+    ecu.activate();
+    assert_eq!(
+        ecu.request(&[0x19, 0x01, 0x80]),
+        [0x59, 0x01, 0xFF, 0x01, 0x00, 0x01]
+    );
+    assert_eq!(
+        ecu.request(&[0x19, 0x02, 0x80]),
+        [0x59, 0x02, 0xFF, 0xEF, 0x01, 0x00, 0x89]
+    );
 }
 
 /// A snapshot request for a DTC without one answers the DTC and its status alone; a DTC

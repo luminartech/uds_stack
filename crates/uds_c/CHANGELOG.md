@@ -26,7 +26,8 @@ pre-1.0 crates).
     copy an integer big-endian.
   - The DTC services over the one DTC memory a layer keeps (`UdsDtcHooks`): the server
     reads each DTC's number, status and snapshot record and encodes the
-    `ReadDTCInformation` reports itself, matches a `ClearDiagnosticInformation` group
+    `ReadDTCInformation` reports itself, against the availability mask
+    `Policy::DTC_AVAILABILITY` declares, matches a `ClearDiagnosticInformation` group
     to a DTC before the memory's clear handler runs, and exports the Annex D status transitions
     of `uds_services::dtc_status` to C (`uds_dtc_status_after_test_result` and its
     companions) for the memory to apply.

@@ -19,8 +19,8 @@ use core::sync::atomic::{AtomicU16, Ordering};
 use uds_services::NegativeResponseCode as Nrc;
 use uds_services::{
     Access, AfterReset, DiagnosticSessionControl, DiagnosticSessionType as Session,
-    EcuReset, ResetType, SecurityLevel, SessionTiming, SessionTransition, Sessions,
-    TesterPresent, UdsServiceType,
+    DtcStatusMask, EcuReset, ResetType, SecurityLevel, SessionTiming, SessionTransition,
+    Sessions, TesterPresent, UdsServiceType, dtc_status,
 };
 
 use crate::layer::{DtcMemory, Layers, UdsLayer, UdsSecurityLevel, UdsTransitionHooks};
@@ -65,6 +65,12 @@ pub trait Policy: 'static {
     const MAX_DTCS: usize = 64;
     /// The longest `TransferData` block.
     const MAX_BLOCK_LEN: usize = 1_024;
+
+    /// The `DTCStatusAvailabilityMask` the DTC reports carry: the status bits the DTC
+    /// memory supports, the only ones a report matches or returns (ISO 14229-1:2020
+    /// D.2). The bits the status transitions maintain, [`dtc_status::MAINTAINED`], by
+    /// default; a memory that also sets `warningIndicatorRequested` declares its bit.
+    const DTC_AVAILABILITY: DtcStatusMask = dtc_status::MAINTAINED;
 
     /// The `P2Server_max` and `P2*Server_max` that `session` advertises and, while it is
     /// in force, the server keeps.

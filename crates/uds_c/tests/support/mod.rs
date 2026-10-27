@@ -34,8 +34,9 @@ use uds_c::{
 };
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
-    Access, Address, DiagnosticSessionType as Session, P2StarServerMax, ResetType, Server,
-    ServerParams, ServiceSet, SessionTiming, Sessions, Stopped, UdsTransport, uds_server,
+    Access, Address, DiagnosticSessionType as Session, DtcStatusMask, P2StarServerMax,
+    ResetType, Server, ServerParams, ServiceSet, SessionTiming, Sessions, Stopped,
+    UdsTransport, uds_server,
 };
 
 /// The tester's logical address.
@@ -499,6 +500,34 @@ uds_server! {
     serves = App::serves,
 }
 
+/// [`Bench`], its DTC memory declaring `warningIndicatorRequested` available as well.
+#[derive(Debug)]
+struct Warning;
+
+impl Policy for Warning {
+    const LAYERS: &'static Layers = &LAYERS;
+    const MAX_DTCS: usize = Bench::MAX_DTCS;
+    const SESSIONS: Sessions = Bench::SESSIONS;
+    const DTC_AVAILABILITY: DtcStatusMask = DtcStatusMask::all_flags();
+
+    fn timing(session: Session) -> SessionTiming {
+        Bench::timing(session)
+    }
+}
+
+type WarningApp = TableApp<Warning>;
+
+uds_server! {
+    WarningApp: DiagnosticSessionControl, EcuReset, TesterPresent, SecurityAccess,
+         ReadDataByIdentifier, WriteDataByIdentifier, RoutineControl, ReadDtcInformation,
+         ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer;
+    transport = Transport,
+    peers = 1,
+    services = WarningServices,
+    server = WarningServer,
+    serves = WarningApp::serves,
+}
+
 static BARE_DIDS: [UdsDidEntry; 1] = [UdsDidEntry {
     did: 0xF190,
     read_sessions: 0x07,
@@ -589,6 +618,13 @@ impl Ecu {
     pub fn start() -> Self {
         assert_eq!(App::validate(), Ok(()));
         Self::serve::<BenchServices>(App::new(), &LAYERS)
+    }
+
+    /// The server of [`Warning`], the bench's layers reporting every status bit, started
+    /// as [`Ecu::start`] starts the bench's.
+    pub fn start_warning() -> Self {
+        assert_eq!(WarningApp::validate(), Ok(()));
+        Self::serve::<WarningServices>(WarningApp::new(), &LAYERS)
     }
 
     /// The server of [`Bare`], one DID and no other handler, started as [`Ecu::start`]
