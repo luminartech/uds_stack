@@ -457,9 +457,10 @@ fn reset_hooks(layer: &UdsLayer) -> &UdsTransitionHooks {
 /// does a reset that restarts the server whose execute returns, which leaves it in the
 /// default session.
 ///
-/// Called between polls of the server, before each one, so the response has left the
-/// socket a poll before its transition is made. The session's execute runs as well when
-/// `tS3_Server` returns the server to the default session, with no response.
+/// Called between polls of the server, before each one, so a transition is made a poll
+/// after `uds_tcp_write` took its response, which the firmware's stack then sends. The
+/// session's execute runs as well when `tS3_Server` returns the server to the default
+/// session, with no response.
 pub fn execute_deferred(layers: &Layers) {
     if let Some(session) = take(&DEFERRED_SESSION) {
         layers.execute(session_hooks, session);
