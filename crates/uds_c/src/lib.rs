@@ -162,8 +162,8 @@ pub use layer::{
     UdsDtcClearFn, UdsDtcGetFn, UdsDtcHooks, UdsDtcSettingFn, UdsDtcSnapshotCountFn,
     UdsDtcSnapshotItemFn, UdsKeyFn, UdsLayer, UdsRidEntry, UdsRoutineFn, UdsSecurityLevel,
     UdsSeedFn, UdsTransferBeginFn, UdsTransferBlockFn, UdsTransferFinishFn,
-    UdsTransferHooks, UdsTransitionCheckFn, UdsTransitionExecuteFn, UdsTransitionHooks,
-    UdsTransitionPrepareFn,
+    UdsTransferHooks, UdsTransitionAbandonFn, UdsTransitionCheckFn, UdsTransitionExecuteFn,
+    UdsTransitionHooks, UdsTransitionPrepareFn,
 };
 pub use record::{
     uds_record_copy, uds_record_copy_16_be, uds_record_copy_32_be, uds_record_copy_64_be,
