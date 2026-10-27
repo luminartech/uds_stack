@@ -2,13 +2,13 @@
 //! firmware would assemble it.
 //!
 //! The socket calls run over in-memory buffers with one TCP connection the test drives;
-//! each connection the test opens is handed out under a socket index of its own. Two
-//! layers serve: a platform layer with the VIN, a slow DID, a routine, a security level,
-//! a DTC memory of [`DTCS`], communication control and download handlers, and records of
-//! the transitions it executes, and an OEM layer that adds a writable DID, can refuse a
-//! reset, and prepares session changes as [`PREPARE`] says. A second server,
-//! [`Ecu::start_bare`], serves a layer of one DID and no other handler. Tests share these
-//! statics, so each holds [`lock`].
+//! each connection the test opens is handed out under a socket index of its own. Two layers
+//! serve: a platform layer with the VIN, a slow DID, a routine, a security level and one
+//! whose seed handler copies nothing, a DTC memory of [`DTCS`], communication control and
+//! download handlers, and records of the transitions it executes, and an OEM layer that
+//! adds a writable DID, can refuse a reset, and prepares session changes as [`PREPARE`]
+//! says. A second server, [`Ecu::start_bare`], serves a layer of one DID and no other
+//! handler. Tests share these statics, so each holds [`lock`].
 
 #![allow(unsafe_code, reason = "implements the C functions uds_c calls")]
 
@@ -161,6 +161,11 @@ unsafe extern "C" fn routine_start(_op: u8, option: *const u8, option_len: usize
 
 unsafe extern "C" fn seed(_op: u8, _option: *const u8, _option_len: usize) -> u8 {
     answer(uds_record_copy_16_be(0, 0x1234))
+}
+
+/// A seed handler that answers positive having copied nothing.
+unsafe extern "C" fn seed_none(_op: u8, _option: *const u8, _option_len: usize) -> u8 {
+    0x00
 }
 
 /// The right key is the seed plus one.
@@ -345,15 +350,26 @@ static PLATFORM_RIDS: [UdsRidEntry; 1] = [UdsRidEntry {
     results: None,
 }];
 
-static PLATFORM_LEVELS: [UdsSecurityLevel; 1] = [UdsSecurityLevel {
-    level: 0x01,
-    sessions: 0x04,
-    attempt_limit: 3,
-    seed_len: 2,
-    delay_ms: 10_000,
-    seed: Some(seed),
-    key: Some(key),
-}];
+static PLATFORM_LEVELS: [UdsSecurityLevel; 2] = [
+    UdsSecurityLevel {
+        level: 0x01,
+        sessions: 0x04,
+        attempt_limit: 3,
+        seed_len: 2,
+        delay_ms: 10_000,
+        seed: Some(seed),
+        key: Some(key),
+    },
+    UdsSecurityLevel {
+        level: 0x03,
+        sessions: 0x04,
+        attempt_limit: 3,
+        seed_len: 2,
+        delay_ms: 10_000,
+        seed: Some(seed_none),
+        key: Some(key),
+    },
+];
 
 static OEM_DIDS: [UdsDidEntry; 1] = [UdsDidEntry {
     did: 0x0200,

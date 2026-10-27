@@ -159,6 +159,17 @@ fn a_security_level_unlocks_with_the_handler_verdict() {
     assert_eq!(ecu.request(&[0x2E, 0x02, 0x00, 1, 2]), [0x6E, 0x02, 0x00]);
 }
 
+/// A seed handler that leaves the seed all zero, which would read as already unlocked, is
+/// answered conditionsNotCorrect.
+#[test]
+fn a_seed_left_all_zero_is_refused() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    assert_eq!(ecu.request(&[0x10, 0x03])[..2], [0x50, 0x03]);
+    assert_eq!(ecu.request(&[0x27, 0x03]), [0x7F, 0x27, 0x22]);
+}
+
 /// A routine answers as many status bytes as its handler copied.
 #[test]
 fn a_routine_answers_the_status_it_copied() {
