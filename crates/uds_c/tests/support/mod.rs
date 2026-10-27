@@ -14,9 +14,11 @@
 
 pub mod sim;
 
+use core::alloc::Layout;
 use core::future::Future;
 use core::pin::Pin;
-use core::ptr::null;
+use core::ptr::{self, null};
+use std::alloc;
 use std::boxed::Box;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::vec::Vec;
@@ -28,9 +30,9 @@ use simple_doip::service::{EntityConfig, TesterAddress};
 use simple_doip::{EntityId, LogicalAddress};
 use uds_c::doip::{self, RunError};
 use uds_c::{
-    Layers, Policy, TableApp, UdsAccess, UdsDidEntry, UdsDtcHooks, UdsLayer, UdsRidEntry,
-    UdsSecurityLevel, UdsTransferHooks, UdsTransitionHooks, execute_deferred,
-    uds_record_copy, uds_record_copy_16_be,
+    Firmware, Layers, Policy, TableApp, TableError, UdsAccess, UdsDidEntry, UdsDtcHooks,
+    UdsLayer, UdsRidEntry, UdsSecurityLevel, UdsTransferHooks, UdsTransitionHooks,
+    Validated, uds_record_copy, uds_record_copy_16_be,
 };
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
@@ -634,80 +636,84 @@ const TESTER_ADDRESS: TesterAddress = match TesterAddress::new(LogicalAddress(TE
     Err(_) => panic!("invalid tester address"),
 };
 
-type Run =
-    Pin<Box<dyn Future<Output = Result<Stopped, <Transport as UdsTransport>::Error>>>>;
+type Error = <Transport as UdsTransport>::Error;
 
-/// A server armed as firmware arms it, polled as firmware polls it.
+type Run = Pin<Box<dyn Future<Output = Result<Stopped, Error>>>>;
+
+/// A server in a [`Firmware`], armed as firmware arms it, polled as firmware polls it.
 pub struct Ecu {
-    layers: &'static Layers,
-    run: Option<Run>,
-    /// The next run future, borrowing the server.
-    rearm: Box<dyn Fn() -> Run>,
-    /// Frees the server, once no run future borrows it.
+    /// One pass of the firmware's loop.
+    poll: Box<dyn FnMut() -> Result<(), RunError<Error>>>,
+    /// Frees the firmware.
     free: Option<Box<dyn FnOnce()>>,
 }
 
 impl Ecu {
     /// The bench server, with discovery started and its run future armed.
     pub fn start() -> Self {
-        assert!(App::validate().is_ok());
-        Self::serve::<BenchServices>(App::new(), &LAYERS)
+        Self::serve::<BenchServices>(App::new(), &LAYERS, App::validate())
     }
 
     /// The server of [`Warning`], the bench's layers reporting every status bit, started
     /// as [`Ecu::start`] starts the bench's.
     pub fn start_warning() -> Self {
-        assert!(WarningApp::validate().is_ok());
-        Self::serve::<WarningServices>(WarningApp::new(), &LAYERS)
+        Self::serve::<WarningServices>(WarningApp::new(), &LAYERS, WarningApp::validate())
     }
 
     /// The server of [`Bare`], one DID and no other handler, started as [`Ecu::start`]
     /// starts the bench's.
     pub fn start_bare() -> Self {
-        assert!(BareApp::validate().is_ok());
-        Self::serve::<BareServices>(BareApp::new(), &BARE_LAYERS)
+        Self::serve::<BareServices>(BareApp::new(), &BARE_LAYERS, BareApp::validate())
     }
 
-    fn serve<A: ServiceSet + 'static>(app: A::App, layers: &'static Layers) -> Self {
-        let server: *mut Server<A, Transport, 1> = Box::into_raw(Box::new(Server::new(
-            app,
-            doip::transport(ENTITY, EntityConfig::new([TESTER_ADDRESS]), bench_reloads()),
-            Address(ECU),
-            PARAMS,
-        )));
-        // SAFETY: just allocated, and nothing else refers to it yet.
-        let transport = unsafe { &mut *server }.transport_mut().unwrap();
-        let eid = EntityId::new([0x02, 0, 0, 0, 0, 0x01]).unwrap();
-        doip::start_discovery(
-            transport,
-            FixedIdentity::new(eid, DiagnosticPowerModeCode::Ready),
-        )
-        .unwrap();
-        // SAFETY: the server lives until `Ecu` is dropped, which drops the run future
-        // first, and `poll_run` drops a finished future before arming the next, so no
-        // two run futures borrow it at once.
-        let rearm = Box::new(move || -> Run { Box::pin(unsafe { &mut *server }.run()) });
-        // SAFETY: from `Box::into_raw` above, called once no run future borrows it.
-        let free = Box::new(move || drop(unsafe { Box::from_raw(server) }));
+    fn serve<A: ServiceSet + 'static>(
+        app: A::App,
+        layers: &'static Layers,
+        validated: Result<Validated, TableError>,
+    ) -> Self {
+        let raw: *mut Firmware<Server<A, Transport, 1>, Run> =
+            Box::into_raw(Box::new(Firmware::new(Server::new(
+                app,
+                doip::transport(
+                    ENTITY,
+                    EntityConfig::new([TESTER_ADDRESS]),
+                    bench_reloads(),
+                ),
+                Address(ECU),
+                PARAMS,
+            ))));
+        // SAFETY: from `Box::into_raw` above, freed only by `free`, once nothing polls it.
+        let firmware = unsafe { &*raw };
+        // SAFETY: every test that serves holds `lock`, so one thread arms and polls each
+        // firmware, and `run` keeps the server reference in the future alone.
+        let armed = unsafe { firmware.arm(validated.unwrap(), start_discovery, run) };
+        assert!(armed);
+        // SAFETY: as for `arm`.
+        let poll = Box::new(move || unsafe { firmware.poll(layers, run) });
+        let layout = Layout::new::<Firmware<Server<A, Transport, 1>, Run>>();
+        // SAFETY: from `Box::into_raw` above, with the box's layout; `Ecu` drops `poll`,
+        // the last user of the reference, first. Dropped and freed through `raw` rather
+        // than a `Box`, whose unique access the run future's drop, reading the server
+        // through its own reference, would conflict with.
+        let free = Box::new(move || unsafe {
+            ptr::drop_in_place(raw);
+            alloc::dealloc(raw.cast(), layout);
+        });
         Self {
-            layers,
-            run: Some(rearm()),
-            rearm,
+            poll,
             free: Some(free),
         }
     }
 
-    /// One pass of the firmware's loop: deferred transitions, then one poll, which the
-    /// server must survive.
+    /// One pass of the firmware's loop, which the server must survive.
     pub fn tick(&mut self) {
         let polled = self.poll();
         assert!(polled.is_ok(), "the server stopped: {polled:?}");
     }
 
     /// One pass of the firmware's loop, with what the poll returned.
-    pub fn poll(&mut self) -> Result<(), RunError<<Transport as UdsTransport>::Error>> {
-        execute_deferred(self.layers);
-        doip::poll_run(Pin::new(&mut self.run), &self.rearm)
+    pub fn poll(&mut self) -> Result<(), RunError<Error>> {
+        (self.poll)()
     }
 
     /// Polls, a millisecond apart, until the ECU has sent `count` frames: the frames it
@@ -761,11 +767,36 @@ impl Ecu {
 
 impl Drop for Ecu {
     fn drop(&mut self) {
-        self.run = None;
+        self.poll = Box::new(|| Err(RunError::NotStarted));
         if let Some(free) = self.free.take() {
             free();
         }
     }
+}
+
+/// Starts the server's discovery, as firmware does when it arms the server.
+fn start_discovery<A: ServiceSet>(server: &mut Server<A, Transport, 1>) {
+    let eid = EntityId::new([0x02, 0, 0, 0, 0, 0x01]).unwrap();
+    doip::start_discovery(
+        server.transport_mut().unwrap(),
+        FixedIdentity::new(eid, DiagnosticPowerModeCode::Ready),
+    )
+    .unwrap();
+}
+
+/// The server's run future, holding the server reference alone.
+fn run<A: ServiceSet + 'static>(server: &'static mut Server<A, Transport, 1>) -> Run {
+    Box::pin(server.run())
+}
+
+/// A firmware never armed, of a server that never runs.
+static IDLE: Firmware<(), core::future::Ready<Result<Stopped, ()>>> = Firmware::new(());
+
+/// A poll of [`IDLE`]: the transitions confirmed responses left to make, for [`LAYERS`],
+/// then no run future to poll.
+pub fn poll_unarmed() -> Result<(), RunError<()>> {
+    // SAFETY: polled under `lock` alone, and never armed.
+    unsafe { IDLE.poll(&LAYERS, |()| core::future::ready(Err(()))) }
 }
 
 /// An ECU for one test, the shared state reset: holds the lock for the test's run.
@@ -773,18 +804,12 @@ pub fn lock() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
     let guard = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     MockDriver::get().reset();
-    execute_deferred(&LAYERS);
+    let _ = poll_unarmed();
     sim::reset();
     *REFUSE_RESET.lock().unwrap_or_else(PoisonError::into_inner) = false;
     *PREPARE.lock().unwrap_or_else(PoisonError::into_inner) = Prepare::Ready;
     calls();
     guard
-}
-
-/// The poll of a server never armed.
-pub fn poll_unarmed() -> Result<(), RunError<()>> {
-    let mut run: Option<core::future::Ready<Result<Stopped, ()>>> = None;
-    doip::poll_run(Pin::new(&mut run), || core::future::ready(Err(())))
 }
 
 /// A `DoIP` frame of `payload_type` around `payload`.

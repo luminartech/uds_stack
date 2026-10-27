@@ -30,11 +30,12 @@
 //!   companions export.
 //!   [`uds_record_copy_16_be`], [`uds_record_copy_32_be`] and [`uds_record_copy_64_be`]
 //!   copy an integer big-endian, the byte order of UDS records.
-//! - [`execute_deferred`], which makes a reset or session change once `uds_tcp_write` has
-//!   taken its response, called between polls, and resumes `ControlDTCSetting` and
-//!   `CommunicationControl` state on entering a session where they are not served.
+//! - [`Firmware`], the server and its run future in one `static`, the one way to drive the
+//!   server: each poll first makes the resets and session changes whose responses
+//!   `uds_tcp_write` has taken, and resumes `ControlDTCSetting` and `CommunicationControl`
+//!   state on entering a session where they are not served.
 //! - [`nal`], `edge-nal` sockets over the C socket calls, and [`doip`], the entity
-//!   and transport they carry, with [`doip::poll_run`] to drive the server.
+//!   and transport they carry.
 //! - With the `time-driver` feature, `time_driver!`, `embassy-time`'s clock over
 //!   `uds_now_ms`. Without it, the image links an `embassy-time` driver of its own: the
 //!   security delays read `embassy_time::Instant::now`.
@@ -128,9 +129,8 @@
 //! checks the tables with [`TableApp::validate`] and hands the [`Validated`] proof it
 //! returns to [`Firmware::arm`], whose closures start discovery with
 //! [`doip::start_discovery`] and build the run future; on each pass of its loop it calls
-//! [`Firmware::poll`], which runs [`execute_deferred`] and then [`doip::poll_run`]. The
-//! crate's integration tests serve the tables over a simulated C side through
-//! [`doip::poll_run`] directly, and `Firmware`'s own tests cover the arming and the poll.
+//! [`Firmware::poll`]. The crate's integration tests drive the server the same way, over
+//! a simulated C side.
 
 #![no_std]
 
@@ -150,7 +150,7 @@ pub mod clock;
 
 pub use app::{
     ACTIVE_SESSION_DID, AccessOf, Did, Policy, Rid, TableApp, TableError, UDS_DTC_ALL,
-    Validated, execute_deferred, record_len,
+    Validated, record_len,
 };
 pub use dtc_status::{
     uds_dtc_status_after_test_result, uds_dtc_status_at_operation_cycle_start,

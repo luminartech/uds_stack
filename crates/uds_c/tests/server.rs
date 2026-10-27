@@ -674,6 +674,7 @@ fn a_failed_accept_stops_the_server() {
 /// A server never armed is not polled.
 #[test]
 fn an_unarmed_server_is_not_started() {
+    let _lock = lock();
     assert_eq!(poll_unarmed(), Err(RunError::NotStarted));
 }
 
