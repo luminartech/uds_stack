@@ -108,6 +108,8 @@ pub struct Script {
     pub restarts: usize,
     /// Whether closing fails.
     failing_close: bool,
+    /// The longest message the peer accepts, where it advertises one.
+    outbound_max: Option<usize>,
 }
 
 impl Script {
@@ -138,6 +140,7 @@ impl Script {
             closes: 0,
             restarts: 0,
             failing_close: false,
+            outbound_max: None,
         }
     }
 
@@ -150,6 +153,12 @@ impl Script {
     /// The same, failing to close.
     pub fn failing_close(mut self) -> Self {
         self.failing_close = true;
+        self
+    }
+
+    /// The same, advertising a peer that accepts messages of `len` bytes at most.
+    pub fn bounded(mut self, len: usize) -> Self {
+        self.outbound_max = Some(len);
         self
     }
 
@@ -346,7 +355,7 @@ impl UdsTransport for Script {
         })
     }
     fn outbound_max(&self) -> Option<usize> {
-        None
+        self.outbound_max
     }
     fn channel_timing(&self) -> Reloads {
         self.reloads

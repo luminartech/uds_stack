@@ -499,7 +499,8 @@ Protocol state
    request's completion report, ``confirmed`` is called, and a ``Restart`` returns the
    protocol state to the power-up one through Figure 7 key 4, re-arms start-up, and ends
    ``run`` with ``Stopped``. No request is served between a restart's response and its
-   confirmation (10.3.1).
+   confirmation (10.3.1). A reset accepted but not made is told to ``abandon`` instead, as
+   ``UDSSVC_ARCH_0046`` has it for a session change.
 
 .. arch:: The security access sequence is a state machine this crate owns
    :id: UDSSVC_ARCH_0037
@@ -842,15 +843,19 @@ Protocol state
    response follow; a negative response code refuses the change and is sent as every
    handler's code is, under ``UDSSVC_ARCH_0009``. The session is entered, and
    ``on_transition`` called, only on the positive response's confirmation
-   (``UDSSVC_ARCH_0038``), so where that confirmation fails, or the link closes first, a
-   prepared server stays in the session it was in. A link closed while ``prepare`` runs
-   drops its future, and nothing is sent.
+   (``UDSSVC_ARCH_0038``). A change ``prepare`` accepted that is not made, because the
+   response is refused after all, its confirmation fails, the link closes first,
+   ``tS3_Server`` expires first, the transport fails or the step is dropped, is told to
+   ``abandon`` instead, and the server stays in the session it was in. A ``prepare`` still
+   running when the link closes, the transport fails or the step is dropped has its future
+   dropped: nothing is sent, and nothing is abandoned.
 
    .. code-block:: rust
 
       impl DiagnosticSessionControl for Ecu {
           const MAY_RESPOND_PENDING: bool = true;
-          // supports, supported_from, timing, leaves_running_software, on_transition
+          // supports, supported_from, timing, leaves_running_software, abandon,
+          // on_transition
 
           async fn prepare(
               &mut self,
@@ -868,9 +873,12 @@ Protocol state
    told to wait meanwhile. A client's own ceiling on response-pending messages bounds how
    long that wait can be. ``prepare`` is required rather than defaulted, as
    ``UDSSVC_ARCH_0012`` and ``UDSSVC_ARCH_0033`` have it: a server that needs nothing
-   returns a ready future, and one that leaves the stage out fails to compile. ``prepare``
-   is told the active session, as ``supported_from`` is, so a preparation that depends on
-   the pair needs no session of its own.
+   returns a ready future, and one that leaves the stage out fails to compile. ``abandon``
+   is a notification with nothing to answer, so it does nothing by default: without it,
+   what ``prepare`` changed would outlive a change that never happened, since
+   ``on_transition`` reports only a session entered. ``prepare`` is told the active
+   session, as ``supported_from`` is, so a preparation that depends on the pair needs no
+   session of its own.
 
 Identifiers
 -----------

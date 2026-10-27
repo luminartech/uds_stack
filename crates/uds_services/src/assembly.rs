@@ -363,6 +363,24 @@ macro_rules! __uds_reset_hook {
     ($self:ident, $kind:ident, $svc:ident) => {};
 }
 
+/// `ServiceSet::abandoned`'s call into the application, for one listed service: only
+/// `DiagnosticSessionControl` and `EcuReset` accept a change before their response.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_abandon_hook {
+    ($self:ident, $state:ident, $effect:ident, DiagnosticSessionControl) => {
+        if let $crate::Effect::Session(session) = $effect {
+            $crate::pipeline::abandon_session($self, $state, session);
+        }
+    };
+    ($self:ident, $state:ident, $effect:ident, EcuReset) => {
+        if let $crate::Effect::Reset { kind, .. } = $effect {
+            <<Self as $crate::ServiceSet>::App as $crate::EcuReset>::abandon($self, kind);
+        }
+    };
+    ($self:ident, $state:ident, $effect:ident, $svc:ident) => {};
+}
+
 /// The `P2` pair of the session in force, for one listed service: only
 /// `DiagnosticSessionControl` states one, and any other listed service emits nothing.
 #[doc(hidden)]
@@ -1159,6 +1177,19 @@ macro_rules! uds_server {
                             $( $crate::__uds_session_hook!(app, entered, $svc); )+
                         }
                     }
+                }
+
+                #[allow(
+                    unused_variables,
+                    reason = "only an assembly with DiagnosticSessionControl or EcuReset \
+                              reads them"
+                )]
+                fn abandoned(
+                    app: &mut $ty,
+                    state: &Self::State,
+                    effect: $crate::Effect,
+                ) {
+                    $( $crate::__uds_abandon_hook!(app, state, effect, $svc); )+
                 }
 
                 #[allow(
