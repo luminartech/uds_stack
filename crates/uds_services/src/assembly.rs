@@ -1068,7 +1068,6 @@ macro_rules! uds_server {
                                 $crate::Sessions::ALL,
                             ))
                         };
-                        #[allow(unused_variables, reason = "used only by some assemblies")]
                         let supports = |service: $crate::UdsServiceType| {
                             <Self as $crate::ServiceSet>::supports(service)
                                 $( && {
