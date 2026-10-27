@@ -64,7 +64,8 @@ impl<'a> Record<'a> {
 }
 
 /// `uds_record_copy`: copies `len` bytes from `src` into the record of the request being
-/// served, at byte `offset`. Returns false, copying nothing, outside a handler that
+/// served, at byte `offset`; a copy of none leaves the record's filled length as it is.
+/// Returns false, copying nothing, outside a handler that
 /// answers with a record, for a NULL `src`, or for a copy past the record's bound.
 ///
 /// # Safety
@@ -91,10 +92,12 @@ pub unsafe extern "C" fn uds_record_copy(
     // `len` readable bytes by the caller's contract. `ptr::copy` admits a source inside
     // the record.
     unsafe { ptr::copy(src, buf.add(offset), len) };
-    LENT_FILLED.store(
-        LENT_FILLED.load(Ordering::Relaxed).max(end),
-        Ordering::Relaxed,
-    );
+    if len > 0 {
+        LENT_FILLED.store(
+            LENT_FILLED.load(Ordering::Relaxed).max(end),
+            Ordering::Relaxed,
+        );
+    }
     true
 }
 
@@ -195,6 +198,17 @@ mod tests {
             "past the bound"
         );
         assert!(!uds_record_copy_16_be(0, 0), "outside a handler");
+    }
+
+    #[test]
+    fn a_copy_of_no_bytes_fills_nothing() {
+        let _serial = serial();
+        let mut buf = [0_u8; 4];
+        let mut record = Record::new(&mut buf);
+        assert!(record.lend(|| copy(3, &[])));
+        assert_eq!(record.filled(), [0_u8; 0]);
+        assert!(record.lend(|| copy(0, &[1])));
+        assert_eq!(record.filled(), [1]);
     }
 
     #[test]
