@@ -46,7 +46,7 @@ pre-1.0 crates).
   fn prepare(
       &mut self,
       _session: DiagnosticSessionType,
-  ) -> impl Future<Output = Result<(), NegativeResponseCode>> {
+  ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>> {
       core::future::ready(Ok(()))
   }
   ```
