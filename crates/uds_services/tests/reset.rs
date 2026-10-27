@@ -269,6 +269,35 @@ fn a_continuing_reset_is_confirmed_and_serving_continues() {
     assert_eq!(s.transport().sent_bytes(3).first(), Some(&0x50));
 }
 
+/// `transport_mut` is `None` from a session change's or a reset's response until its
+/// confirmation.
+#[test]
+fn the_transport_is_refused_while_a_response_awaits_its_confirmation() {
+    let mut s = EcuServer::new(
+        Ecu::default(),
+        script(&steps(&[ind(&[0x11, 0x04]), conf(SResult::Ok)])),
+        ECU,
+        PARAMS,
+    );
+    assert!(s.transport_mut().is_some());
+    let mut refused = Vec::new();
+    for _ in 0..6 {
+        assert_eq!(step(&mut s), None);
+        refused.push((s.transport().sent_count, s.transport_mut().is_none()));
+    }
+    assert_eq!(
+        refused,
+        [
+            (1, true),
+            (1, false),
+            (2, true),
+            (2, false),
+            (3, true),
+            (3, false)
+        ]
+    );
+}
+
 /// ``UDSS_LLR_0085`` acts on a successful transmission only: a reset whose confirmation
 /// fails runs nothing, and the server serves on in its session.
 #[test]

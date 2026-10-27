@@ -116,11 +116,15 @@ fn main() -> ! {
         .with_vin(vin)
         .with_gid(gid);
     let server = SERVER.take();
-    server.transport_mut().entity_mut().start_discovery(
-        stub::Datagrams,
-        identity,
-        core::hint::black_box(0),
-    );
+    let Some(Ok(())) = server.transport_mut().map(|transport| {
+        transport.entity_mut().start_discovery(
+            stub::Datagrams,
+            identity,
+            core::hint::black_box(0),
+        )
+    }) else {
+        halt()
+    };
     core::hint::black_box(&CLIENT_TRANSPORT_SIZE);
     let _ = embassy_futures::block_on(server.run());
     halt()
