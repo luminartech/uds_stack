@@ -11,6 +11,9 @@ pre-1.0 crates).
 
 ### Added
 
+- `SecurityAccess::seed_len`: the length of a level's seed, which the all-zero seed
+  answering a `requestSeed` for the unlocked level has too. It defaults to
+  `MAX_SEED_LEN`, the length every level's zero seed had before.
 - `dtc_status`: the ISO 14229-1:2020 Annex D.2 status transitions a DTC memory makes,
   `cleared`, `after_test_result` and `at_operation_cycle_start`, as pure `const fn`s,
   and `MAINTAINED`, the `DTCStatusAvailabilityMask` of a memory that makes only these

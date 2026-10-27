@@ -144,7 +144,7 @@ fn the_programming_session_is_entered_from_the_extended_session_only() {
 }
 
 /// A seed answers the level's length; a wrong key is invalidKey, the right one unlocks
-/// the writes its level guards.
+/// the writes its level guards, and the level's zero seed, unlocked, has its length too.
 #[test]
 fn a_security_level_unlocks_with_the_handler_verdict() {
     let _lock = lock();
@@ -157,6 +157,7 @@ fn a_security_level_unlocks_with_the_handler_verdict() {
     assert_eq!(ecu.request(&[0x27, 0x01]), [0x67, 0x01, 0x12, 0x34]);
     assert_eq!(ecu.request(&[0x27, 0x02, 0x12, 0x35]), [0x67, 0x02]);
     assert_eq!(ecu.request(&[0x2E, 0x02, 0x00, 1, 2]), [0x6E, 0x02, 0x00]);
+    assert_eq!(ecu.request(&[0x27, 0x01]), [0x67, 0x01, 0x00, 0x00]);
 }
 
 /// A seed handler that leaves the seed all zero, which would read as already unlocked, is
