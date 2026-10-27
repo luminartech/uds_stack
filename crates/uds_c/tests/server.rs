@@ -680,7 +680,7 @@ fn an_unarmed_server_is_not_started() {
 /// The bench layers pass validation.
 #[test]
 fn the_bench_layers_validate() {
-    assert_eq!(App::validate(), Ok(()));
+    assert!(App::validate().is_ok());
 }
 
 unsafe extern "C" fn read_nothing(_op: u8) -> u8 {

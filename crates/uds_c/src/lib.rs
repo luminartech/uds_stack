@@ -19,7 +19,7 @@
 //!
 //! - [`UdsLayer`] and its tables, read in the order a [`Layers`] lists them, so an
 //!   earlier layer's entry wins. [`TableApp::validate`] refuses tables the server
-//!   cannot serve safely, once, at start-up.
+//!   cannot serve safely, once, at start-up, and [`Firmware::arm`] takes its proof.
 //! - [`TableApp`], the application: every service `uds_services` stages, each one
 //!   looked up in the layers and answered by the handler the entry names.
 //! - [`uds_record_copy`], through which a handler answers: the server owns every
@@ -125,12 +125,12 @@
 //!
 //! The firmware keeps the server in a [`Firmware`] `static`, naming its run future's type
 //! with the nightly `type_alias_impl_trait` feature, in its own crate. At start-up it
-//! checks the tables with [`TableApp::validate`] and calls [`Firmware::arm`], whose
-//! closures start discovery with [`doip::start_discovery`] and build the run future; on
-//! each pass of its loop it calls [`Firmware::poll`], which runs [`execute_deferred`] and
-//! then [`doip::poll_run`]. The crate's integration tests serve the tables over a
-//! simulated C side through [`doip::poll_run`] directly, and `Firmware`'s own tests cover
-//! the arming and the poll.
+//! checks the tables with [`TableApp::validate`] and hands the [`Validated`] proof it
+//! returns to [`Firmware::arm`], whose closures start discovery with
+//! [`doip::start_discovery`] and build the run future; on each pass of its loop it calls
+//! [`Firmware::poll`], which runs [`execute_deferred`] and then [`doip::poll_run`]. The
+//! crate's integration tests serve the tables over a simulated C side through
+//! [`doip::poll_run`] directly, and `Firmware`'s own tests cover the arming and the poll.
 
 #![no_std]
 
@@ -150,7 +150,7 @@ pub mod clock;
 
 pub use app::{
     ACTIVE_SESSION_DID, AccessOf, Did, Policy, Rid, TableApp, TableError, UDS_DTC_ALL,
-    execute_deferred, record_len,
+    Validated, execute_deferred, record_len,
 };
 pub use dtc_status::{
     uds_dtc_status_after_test_result, uds_dtc_status_at_operation_cycle_start,
