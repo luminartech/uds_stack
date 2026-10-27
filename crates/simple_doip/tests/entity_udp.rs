@@ -14,7 +14,7 @@ use std::pin::pin;
 use embassy_time::Duration;
 use embedded_io_async::ErrorKind;
 use simple_doip::entity::{
-    Discovery, Entity, EntityAddress, FixedIdentity, VehicleIdentity,
+    AlreadyStarted, Discovery, Entity, EntityAddress, FixedIdentity, VehicleIdentity,
 };
 use simple_doip::messages::{
     DiagnosticPowerModeCode, EntityStatusNodeType, EntityStatusResponse,
@@ -278,7 +278,9 @@ fn discovery_started_later_announces_from_its_start() {
         Entity::new_discovery_later(&stack, address, the_tester());
 
     assert_eq!(run_for(&mut entity, &udp, 2000), []);
-    entity.start_discovery(udp.socket(), identity(), SEED);
+    entity
+        .start_discovery(udp.socket(), identity(), SEED)
+        .unwrap();
     let sent = run_for(&mut entity, &udp, 2000);
 
     let times: Vec<u64> = sent.iter().map(|(at, ..)| *at).collect();
@@ -292,6 +294,27 @@ fn discovery_started_later_announces_from_its_start() {
         assert_eq!(*to, broadcast());
         assert_eq!(identification(frame).logical_address, ENTITY);
     }
+}
+
+/// Discovery starts once: a second `start_discovery` is refused, and the entity does
+/// not announce again.
+#[test]
+fn discovery_starts_once() {
+    let _clock = clock();
+    let (stack, udp) = (MockStack::new(4096), MockUdp::new());
+    let address = EntityAddress::new(ENTITY, LogicalAddress(0xE400)).unwrap();
+    let mut entity: Entity<'_, _, 1, 4096, 1, Option<Discovery<MockUdpSocket, _>>> =
+        Entity::new_discovery_later(&stack, address, the_tester());
+    entity
+        .start_discovery(udp.socket(), identity(), SEED)
+        .unwrap();
+    assert_eq!(run_for(&mut entity, &udp, 2000).len(), 3);
+
+    assert_eq!(
+        entity.start_discovery(udp.socket(), identity(), SEED),
+        Err(AlreadyStarted)
+    );
+    assert_eq!(run_for(&mut entity, &udp, 2000), []);
 }
 
 /// Table 12: `A_DoIP_Announce_Wait` is random, so entities seeded differently do not
