@@ -47,11 +47,6 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ReadDtcInformation
     const REPORTS: &'static [DtcReportKind] =
         &[DtcReportKind::Count, DtcReportKind::DtcList];
 
-    /// Where a layer keeps a DTC memory.
-    fn serves(&self) -> bool {
-        P::LAYERS.dtc_memory().is_some()
-    }
-
     fn access(&self, report: ReadDtcInfoReportType) -> Option<Access> {
         REPORT_TYPES.contains(&u8::from(report)).then(everywhere)
     }
@@ -174,11 +169,6 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ClearDiagnosticInforma
 {
     const MAY_RESPOND_PENDING: bool = true;
 
-    /// Where the layer that keeps the DTC memory clears it.
-    fn serves(&self) -> bool {
-        P::LAYERS.dtc_memory().and_then(DtcMemory::clear).is_some()
-    }
-
     /// Clears every DTC for the all-groups `groupOfDTC`, or the one DTC it names; any
     /// other group, and a `memorySelection` (the handler clears from the one memory it
     /// has), is `requestOutOfRange` (0x31), ISO 14229-1:2020 Figure 28.
@@ -210,11 +200,6 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ControlDtcSetting
 {
     const MAY_RESPOND_PENDING: bool = true;
     const MAX_OPTION_RECORD_LEN: usize = 3;
-
-    /// Where a layer serves it.
-    fn serves(&self) -> bool {
-        P::LAYERS.dtc_setting().is_some()
-    }
 
     /// `on` (0x01) and `off` (0x02), in the extended and programming sessions.
     fn access(&self, setting: DtcSettingType) -> Option<Access> {

@@ -86,6 +86,7 @@ uds_server! {
     peers = 1,
     services = EcuServices,
     server = EcuServer,
+    serves = App::serves,
 }
 ```
 

@@ -472,6 +472,7 @@ uds_server! {
     peers = 1,
     services = BenchServices,
     server = BenchServer,
+    serves = App::serves,
 }
 
 static BARE_DIDS: [UdsDidEntry; 1] = [UdsDidEntry {
@@ -530,6 +531,7 @@ uds_server! {
     peers = 1,
     services = BareServices,
     server = BareServer,
+    serves = BareApp::serves,
 }
 
 const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 10);
