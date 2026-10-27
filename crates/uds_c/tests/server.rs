@@ -51,6 +51,29 @@ fn a_hard_reset_executes_after_its_response() {
     );
 }
 
+/// enableRapidPowerShutDown keeps the server running: its response carries the
+/// powerDownTime and closes the connection, as every reset's does (ISO 14229-5:2022
+/// REQ 7.11), every layer executes it on the next pass, and the session, DTC setting and
+/// communication control are kept for the next connection.
+#[test]
+fn a_rapid_power_shutdown_keeps_the_server_running() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    assert_eq!(ecu.request(&[0x10, 0x03])[..2], [0x50, 0x03]);
+    ecu.tick();
+    calls();
+    assert_eq!(ecu.request(&[0x11, 0x04]), [0x51, 0x04, 0xFF]);
+    assert_eq!(sim::closed(), Some(Closed::Graceful));
+    ecu.tick();
+    assert_eq!(
+        calls(),
+        [Call::Reset("oem", 0x04), Call::Reset("platform", 0x04)]
+    );
+    ecu.activate();
+    assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x03]);
+}
+
 /// A layer's check refuses a reset with its code, and nothing is executed.
 #[test]
 fn a_refused_reset_is_answered_with_the_check_code() {
