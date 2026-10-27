@@ -18,7 +18,7 @@ use core::pin::Pin;
 use uds_services::Stopped;
 
 use crate::doip::{self, RunError};
-use crate::{Layers, execute_deferred};
+use crate::{Layers, Validated, execute_deferred};
 
 /// A server and the run future [`Self::poll`] drives, in one `static`.
 ///
@@ -69,13 +69,17 @@ impl<S, F> Firmware<S, F> {
     /// Arms the server where it has no run future, at start-up or after a transport
     /// error stopped it: `start` prepares it, starting its discovery say, then `run`
     /// builds the future [`Self::poll`] drives. Returns `false`, calling neither, where
-    /// it is armed already.
+    /// it is armed already. The [`Validated`] it takes is what [`TableApp::validate`]
+    /// returned for the server's tables.
     ///
     /// # Safety
     ///
     /// The contract in [`Firmware`]'s `# Safety`.
+    ///
+    /// [`TableApp::validate`]: crate::TableApp::validate
     pub unsafe fn arm(
         &'static self,
+        _: Validated,
         start: impl FnOnce(&mut S),
         run: impl FnOnce(&'static mut S) -> F,
     ) -> bool {
@@ -129,18 +133,41 @@ impl<S, F> Firmware<S, F> {
 #[cfg(test)]
 #[allow(
     clippy::arithmetic_side_effects,
-    reason = "test harness: a few polls of a counted run future"
+    clippy::expect_used,
+    reason = "test harness: a few polls of a counted run future, over tables with nothing \
+              to refuse"
 )]
 mod tests {
     use core::task::{Context, Poll};
 
     use uds_protocol::ResetType;
+    use uds_services::{DiagnosticSessionType, P2StarServerMax, SessionTiming, Sessions};
 
     use super::*;
+    use crate::{Policy, TableApp};
 
     static NO_LAYERS: [&crate::UdsLayer; 0] = [];
     // SAFETY: no layer, so no handler.
     static LAYERS: Layers = unsafe { Layers::new(&NO_LAYERS) };
+
+    /// A policy over [`LAYERS`].
+    struct Empty;
+
+    impl Policy for Empty {
+        const LAYERS: &'static Layers = &LAYERS;
+        const SESSIONS: Sessions = Sessions::ALL;
+
+        fn timing(_session: DiagnosticSessionType) -> SessionTiming {
+            SessionTiming {
+                p2_server_max_ms: 50,
+                p2_star_server_max: P2StarServerMax::from_tens_of_millis(500),
+            }
+        }
+    }
+
+    fn validated() -> Validated {
+        TableApp::<Empty>::validate().expect("no tables, so nothing to refuse")
+    }
 
     /// A server that records its starts, its runs and their polls.
     #[derive(Debug)]
@@ -221,8 +248,8 @@ mod tests {
         static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
         // SAFETY: as above.
         unsafe {
-            assert!(FIRMWARE.arm(start, run(5, false)));
-            assert!(!FIRMWARE.arm(start, run(5, false)));
+            assert!(FIRMWARE.arm(validated(), start, run(5, false)));
+            assert!(!FIRMWARE.arm(validated(), start, run(5, false)));
             assert!(FIRMWARE.poll(&LAYERS, run(5, false)).is_ok());
         }
         // SAFETY: as above; this read invalidates the armed run future's reference
@@ -236,7 +263,7 @@ mod tests {
         static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
         // SAFETY: as above.
         unsafe {
-            assert!(FIRMWARE.arm(start, run(1, false)));
+            assert!(FIRMWARE.arm(validated(), start, run(1, false)));
             assert!(FIRMWARE.poll(&LAYERS, run(0, true)).is_ok());
             // The first run stops on a reset, and the second is built, failing when
             // polled.
@@ -254,7 +281,7 @@ mod tests {
         // Unarmed by the error, so arming starts the server again.
         // SAFETY: as above.
         unsafe {
-            assert!(FIRMWARE.arm(start, run(0, false)));
+            assert!(FIRMWARE.arm(validated(), start, run(0, false)));
             assert!(FIRMWARE.poll(&LAYERS, run(0, false)).is_ok());
         }
     }

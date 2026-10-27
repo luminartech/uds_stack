@@ -17,7 +17,7 @@ pre-1.0 crates).
     a `Layers` lists them.
   - `TableApp<P: Policy>`, an application implementing every `uds_services` service
     trait over the layers, built as a `const`, with `TableApp::validate` to refuse
-    tables at start-up; `Policy` states the sessions, their timing and the limits.
+    tables at start-up, whose `Validated` proof `Firmware::arm` takes; `Policy` states the sessions, their timing and the limits.
     A DTC, communication control or download service that no layer serves is
     `serviceNotSupported` (0x11).
   - Resets and session changes through every layer's `UdsTransitionHooks`: check and

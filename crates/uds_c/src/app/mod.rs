@@ -175,6 +175,12 @@ pub enum TableError {
     },
 }
 
+/// Proof that [`TableApp::validate`] accepted the tables, which
+/// [`Firmware::arm`](crate::Firmware::arm) takes, so a server is armed only over tables
+/// checked at start-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Validated(());
+
 /// The entry a [`TableError`] names.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,7 +327,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
     /// # Errors
     ///
     /// The first entry the server cannot serve safely, as a [`TableError`].
-    pub fn validate() -> Result<(), TableError> {
+    pub fn validate() -> Result<Validated, TableError> {
         let layers = P::LAYERS;
         if let Some(e) = layers.dids().find(|e| usize::from(e.len) > P::MAX_DID_LEN) {
             return Err(TableError::DidTooLong { did: e.did });
@@ -419,7 +425,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
         if let Some(level) = first_duplicate(|| layers.security_levels().map(|e| e.level)) {
             return Err(TableError::Duplicate(AccessOf::Level(level)));
         }
-        Ok(())
+        Ok(Validated(()))
     }
 
     /// The record of `len` bytes a handler answers into, where `len` is within the

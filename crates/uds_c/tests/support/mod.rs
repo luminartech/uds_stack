@@ -650,21 +650,21 @@ pub struct Ecu {
 impl Ecu {
     /// The bench server, with discovery started and its run future armed.
     pub fn start() -> Self {
-        assert_eq!(App::validate(), Ok(()));
+        assert!(App::validate().is_ok());
         Self::serve::<BenchServices>(App::new(), &LAYERS)
     }
 
     /// The server of [`Warning`], the bench's layers reporting every status bit, started
     /// as [`Ecu::start`] starts the bench's.
     pub fn start_warning() -> Self {
-        assert_eq!(WarningApp::validate(), Ok(()));
+        assert!(WarningApp::validate().is_ok());
         Self::serve::<WarningServices>(WarningApp::new(), &LAYERS)
     }
 
     /// The server of [`Bare`], one DID and no other handler, started as [`Ecu::start`]
     /// starts the bench's.
     pub fn start_bare() -> Self {
-        assert_eq!(BareApp::validate(), Ok(()));
+        assert!(BareApp::validate().is_ok());
         Self::serve::<BareServices>(BareApp::new(), &BARE_LAYERS)
     }
 
