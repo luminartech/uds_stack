@@ -89,7 +89,9 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> SecurityAccess
         }
     }
 
-    /// Answers the level's `seed_len` bytes, zero where the handler copied nothing.
+    /// Answers the level's `seed_len` bytes, zero where the handler copied nothing. A seed
+    /// left all zero, the value clause 10.4.1 reserves for an unlocked level, is
+    /// `conditionsNotCorrect` (0x22).
     async fn seed(
         &mut self,
         level: SecurityLevel,
@@ -103,6 +105,9 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> SecurityAccess
         };
         let mut answer = self.answer(len, P::MAX_SEED_LEN)?;
         settled(op::settle(|op| answer.lend(|| seed.call(op, record))).await)?;
+        if answer.all().iter().all(|&byte| byte == 0) {
+            return Err(Nrc::ConditionsNotCorrect);
+        }
         let _ = out.write_all(answer.all());
         Ok(())
     }

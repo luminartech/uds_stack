@@ -164,7 +164,11 @@ typedef struct
 
 /* SecurityAccess (0x27) */
 
-/** @brief Copies the seed, the level's `seed_len` bytes, for a requestSeed. */
+/**
+ * @brief Copies the seed, the level's `seed_len` bytes, for a requestSeed. A
+ *        seed left all zero, the value reserved for an unlocked level, is
+ *        answered UDS_NRC_CONDITIONS_NOT_CORRECT.
+ */
 typedef UdsNrc (*UdsSeedFn)(UdsOpStatus op, uint8_t const *option, size_t option_len);
 
 /**
