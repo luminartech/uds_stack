@@ -114,14 +114,16 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     }
 
     /// The transport, to configure it between events: before the first step, say, once
-    /// the target knows what it could not know when it built the server.
+    /// the target knows what it could not know when it built the server. `None` while a
+    /// session change or a reset awaits its response's confirmation, on which it takes
+    /// effect.
     ///
-    /// A response's confirmation can arrive in a later step than the response, and a
-    /// session change or a reset takes effect only on it. While a response awaits its
-    /// confirmation, do not replace the transport or close its connections, or the
+    /// Do not take the transport's events through it: an event taken there, a
+    /// confirmation or a request, never reaches the server. Nor replace the transport or
+    /// close its connections while any response awaits its confirmation, or the
     /// server's record of what it awaits no longer matches the transport's.
-    pub fn transport_mut(&mut self) -> &mut T {
-        &mut self.transport
+    pub fn transport_mut(&mut self) -> Option<&mut T> {
+        self.pending.is_none().then_some(&mut self.transport)
     }
 
     /// Run [`ServiceSet::start_up`] on the first step, and again on the first step after a
