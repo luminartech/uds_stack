@@ -171,6 +171,11 @@ pub enum Error<E> {
     Accept(E),
 }
 
+/// Why [`Entity::start_discovery`] refused: the entity's discovery has started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the entity's discovery has started")]
+pub struct AlreadyStarted;
+
 /// A `DoIP` entity: the `TCP_DATA` sockets of ISO 13400-2:2019 12.6, behind
 /// [`DiagnosticEntity`].
 ///
@@ -495,9 +500,8 @@ impl<
     /// builds: the announcements start at the next [`DiagnosticEntity::next_event`], so
     /// call this once the interface has a valid address (REQ 8.DoIP-050).
     ///
-    /// Call it once per entity. A second call replaces the socket and identity and
-    /// announces again, but keeps every `TCP_DATA` socket, which a new address discards
-    /// (REQ 7.DoIP-030): for a new address, build a new entity.
+    /// Discovery starts once per entity. A new address discards every `TCP_DATA` socket
+    /// (REQ 7.DoIP-030), so an entity built as a `static` is not re-addressed.
     ///
     /// # Arguments
     ///
@@ -507,8 +511,22 @@ impl<
     /// * `identity` - what the entity announces itself as.
     /// * `seed` - a seed for the random waits of `A_DoIP_Announce_Wait`, from the
     ///   target's random number generator, as [`Entity::with_discovery`] takes it.
-    pub fn start_discovery(&mut self, socket: U, identity: I, seed: u32) {
+    ///
+    /// # Errors
+    ///
+    /// [`AlreadyStarted`] where discovery has started: the entity keeps it, and drops
+    /// `socket` and `identity`.
+    pub fn start_discovery(
+        &mut self,
+        socket: U,
+        identity: I,
+        seed: u32,
+    ) -> Result<(), AlreadyStarted> {
+        if self.discovery.is_some() {
+            return Err(AlreadyStarted);
+        }
         self.discovery = Some(Discovery::new(socket, identity, seed));
+        Ok(())
     }
 }
 

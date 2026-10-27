@@ -17,9 +17,10 @@ changed rather than what was announced at the time.
 
 - `Entity::new_discovery_later`, a `const fn` constructor for an entity whose type has
   `Option<Discovery<U, I>>` as its discovery, built with none, and
-  `Entity::start_discovery`, which starts it. A target whose stack cannot hold an
-  entity builds it as a `static`'s initializer and starts discovery once the interface
-  has a valid address and the identity is known.
+  `Entity::start_discovery`, which starts it once and refuses a second call with
+  `AlreadyStarted`. A target whose stack cannot hold an entity builds it as a `static`'s
+  initializer and starts discovery once the interface has a valid address and the
+  identity is known.
 
 ### Changed
 
