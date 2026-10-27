@@ -759,7 +759,7 @@ mod declining {
     use uds_services::{
         Access, Address, Ai, CommunicationControl, CommunicationControlType,
         CommunicationType, Mtype, Received, ResponseSink, ServiceSet, SubnetNumber, TaType,
-        TesterPresent, uds_server,
+        TesterPresent, UdsServiceType, uds_server,
     };
 
     use super::FakeTransport;
@@ -772,11 +772,12 @@ mod declining {
         fn on_tester_present(&mut self) {}
     }
 
+    fn serves(_ecu: &Ecu, service: UdsServiceType) -> bool {
+        !matches!(service, UdsServiceType::CommunicationControl)
+    }
+
     impl CommunicationControl for Ecu {
         const MAY_RESPOND_PENDING: bool = false;
-        fn serves(&self) -> bool {
-            false
-        }
         fn access(&self, _x: CommunicationControlType) -> Option<Access> {
             None
         }
@@ -797,6 +798,7 @@ mod declining {
         peers = 1,
         services = DecliningServices,
         server = DecliningServer,
+        serves = serves,
     }
 
     /// A listed service the application declines settles 0x11, ahead of Table 23's 0x7F

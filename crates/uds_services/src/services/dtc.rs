@@ -89,17 +89,6 @@ pub trait ReadDtcInformation {
     /// [`MAX_DTCS`](Self::MAX_DTCS) does not bound it.
     const REPORTS: &'static [DtcReportKind];
 
-    /// Whether this server serves this service at all, for an application that learns
-    /// it only at run time, from tables it is given, say. `true` by default.
-    ///
-    /// ISO 14229-1:2020 8.7.2 Figure 5, ``UDSSVC_ARCH_0006``: `false` settles every
-    /// request for it `serviceNotSupported` (0x11), as for a service the assembly does
-    /// not list, before any other check and without anything else here being asked.
-    #[must_use]
-    fn serves(&self) -> bool {
-        true
-    }
-
     /// Where `report` is available and which levels unlock it, or `None` where this
     /// server does not support it.
     ///
@@ -154,17 +143,6 @@ pub trait ReadDtcInformation {
 pub trait ClearDiagnosticInformation {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
-
-    /// Whether this server serves this service at all, for an application that learns
-    /// it only at run time, from tables it is given, say. `true` by default.
-    ///
-    /// ISO 14229-1:2020 8.7.2 Figure 5, ``UDSSVC_ARCH_0006``: `false` settles every
-    /// request for it `serviceNotSupported` (0x11), as for a service the assembly does
-    /// not list, before any other check and without anything else here being asked.
-    #[must_use]
-    fn serves(&self) -> bool {
-        true
-    }
 
     /// Clear the DTCs `group` selects, optionally restricted to one memory.
     ///

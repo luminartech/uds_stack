@@ -482,37 +482,6 @@ macro_rules! __uds_sub_function_access {
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
-/// Whether the application serves one listed service, for `pipeline::begin_with`'s
-/// support check: an early `return false` where the service's trait declines it. Only the
-/// services whose traits carry a `serves` emit one.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __uds_serves {
-    (@declines $self:ident, $service:ident, $svc:ident) => {
-        if $crate::__uds_sids!($svc).contains(&$service)
-            && !<<Self as $crate::ServiceSet>::App as $crate::$svc>::serves($self)
-        {
-            return false;
-        }
-    };
-    ($self:ident, $service:ident, ReadDtcInformation) => {
-        $crate::__uds_serves!(@declines $self, $service, ReadDtcInformation);
-    };
-    ($self:ident, $service:ident, ClearDiagnosticInformation) => {
-        $crate::__uds_serves!(@declines $self, $service, ClearDiagnosticInformation);
-    };
-    ($self:ident, $service:ident, CommunicationControl) => {
-        $crate::__uds_serves!(@declines $self, $service, CommunicationControl);
-    };
-    ($self:ident, $service:ident, ControlDtcSetting) => {
-        $crate::__uds_serves!(@declines $self, $service, ControlDtcSetting);
-    };
-    ($self:ident, $service:ident, DataTransfer) => {
-        $crate::__uds_serves!(@declines $self, $service, DataTransfer);
-    };
-    ($self:ident, $service:ident, $svc:ident) => {};
-}
-
 /// The checks one listed service asks of the raw request between Table 23 and its decode,
 /// for `pipeline::begin_with`'s `ahead`: only `DataTransfer` has any.
 #[doc(hidden)]
@@ -708,6 +677,13 @@ macro_rules! __uds_assert {
 /// through: the macro emits `type Name = Server<Assembly, Transport, N>`. Both are private
 /// to the invoking module. The application type may come from any crate, so one
 /// application shared by firmware, a simulator and tests is assembled in each.
+///
+/// `serves = f`, optional, names a `fn(&App, UdsServiceType) -> bool` asked for every
+/// listed service, for an application that learns only at run time which it serves, from
+/// tables it is given, say. `false` declines the service: ISO 14229-1:2020 8.7.2 Figure 5,
+/// ``UDSSVC_ARCH_0006``, settles every request for it `serviceNotSupported` (0x11), as for
+/// a service the list does not name, before any other check and without its trait being
+/// asked. Without it, every listed service is served.
 ///
 /// `peers = 1` is the only count that compiles: the driver keeps one slot for a
 /// `DiagnosticSessionControl` or `ECUReset` response awaiting its confirmation, and a
@@ -1007,7 +983,8 @@ macro_rules! uds_server {
         transport = $transport:ty,
         peers = $peers:expr,
         services = $services:ident,
-        server = $server:ident $(,)?
+        server = $server:ident
+        $(, serves = $serves:expr)? $(,)?
     ) => {
         /// The assembled services of this application, on which `uds_server!`
         /// implements `ServiceSet`. Never a value: it names the assembly in types.
@@ -1090,11 +1067,12 @@ macro_rules! uds_server {
                         };
                         #[allow(unused_variables, reason = "used only by some assemblies")]
                         let supports = |service: $crate::UdsServiceType| {
-                            if !<Self as $crate::ServiceSet>::supports(service) {
-                                return false;
-                            }
-                            $( $crate::__uds_serves!(app, service, $svc); )+
-                            true
+                            <Self as $crate::ServiceSet>::supports(service)
+                                $( && {
+                                    let serves: fn(&$ty, $crate::UdsServiceType) -> bool =
+                                        $serves;
+                                    serves(app, service)
+                                } )?
                         };
                         #[allow(unused_variables, reason = "used only by some assemblies")]
                         let ahead = |service: $crate::UdsServiceType,
