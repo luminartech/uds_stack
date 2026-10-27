@@ -14,6 +14,7 @@ use uds_services::{
     Reloads, ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink,
     Stepped, TaType, Timestamp, TransportEvent, UdsTransport, uds_server,
 };
+use uds_session::TransportError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {
@@ -956,6 +957,8 @@ struct Preparing {
     prepared: u8,
     /// Every `prepare`'s requested and active session, oldest first.
     asked: [Option<(S, S)>; 2],
+    /// Every `abandon`'s session and active one, oldest first.
+    abandoned: [Option<(S, S)>; 2],
     /// Every `on_transition`, oldest first.
     transitions: [Option<(SessionTransition, S)>; 2],
 }
@@ -991,6 +994,11 @@ impl uds_services::DiagnosticSessionControl for Preparing {
         }
         self.prepared = self.prepared.saturating_add(1);
         Ok(())
+    }
+    fn abandon(&mut self, s: S, active: S) {
+        if let Some(slot) = self.abandoned.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some((s, active));
+        }
     }
     fn on_transition(&mut self, t: SessionTransition, entered: S, _r: bool) {
         if let Some(slot) = self.transitions.iter_mut().find(|slot| slot.is_none()) {
@@ -1146,6 +1154,11 @@ fn a_close_while_preparing_sends_nothing_and_enters_no_session() {
     assert_eq!(t.addressed(0).1, ENTERED);
     let app = server.services();
     assert_eq!(app.prepared, 1, "the dropped prepare completed");
+    assert_eq!(
+        app.abandoned,
+        [None, None],
+        "the dropped prepare was abandoned"
+    );
     assert_eq!(app.transitions, [INTO_EXTENDED, None]);
 }
 
@@ -1253,4 +1266,164 @@ fn prepare_is_told_the_active_session() {
             Some((S::DefaultSession, S::ExtendedDiagnosticSession)),
         ]
     );
+}
+
+/// The extended session, abandoned from the default one.
+const ABANDONED: Option<(S, S)> = Some((S::ExtendedDiagnosticSession, S::DefaultSession));
+
+/// A prepared session change whose positive response fails to be confirmed is
+/// abandoned, and the server stays in the default session: the next `10 03` enters the
+/// extended one.
+#[test]
+fn a_failed_confirmation_abandons_the_prepared_change() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Transport(TransportError(1))),
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!((t.addressed(0).1, t.addressed(1).1), (ENTERED, ENTERED));
+    let app = server.services();
+    assert_eq!(app.abandoned, [ABANDONED, None]);
+    assert_eq!(app.transitions, [INTO_EXTENDED, None]);
+}
+
+/// A prepared session change whose client's link closes before the positive response
+/// is confirmed, which the transport then confirms failed, is abandoned.
+#[test]
+fn a_close_before_the_confirmation_abandons_the_prepared_change() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Close(TESTER),
+            Step::Conf(response_to(TESTER), SResult::Transport(TransportError(1))),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 3, "the script was not consumed");
+    assert_eq!(t.addressed(0).1, ENTERED);
+    let app = server.services();
+    assert_eq!(app.abandoned, [ABANDONED, None]);
+    assert_eq!(app.transitions, [None, None]);
+}
+
+/// A positive response refused after `prepare` accepted the change, here for a peer
+/// that cannot take it, answers `responseTooLong` and abandons the change.
+#[test]
+fn a_positive_response_refused_after_prepare_abandons_the_change() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ])
+        .bounded(4),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 2, "the script was not consumed");
+    assert_eq!(t.addressed(0).1, &[0x7F, 0x10, 0x14]);
+    let app = server.services();
+    assert_eq!(app.abandoned, [ABANDONED, None]);
+    assert_eq!(app.transitions, [None, None]);
+}
+
+/// A transport failing as the positive response is handed over ends the step with its
+/// error, and the change `prepare` accepted is abandoned.
+#[test]
+fn a_transport_error_after_prepare_abandons_the_change() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[Step::Ind(request_from(TESTER), EXTENDED)]).refusing(0),
+        ECU,
+        PARAMS,
+    );
+    assert_eq!(block_on(server.step()), Err(()));
+    let app = server.services();
+    assert_eq!(app.prepared, 1);
+    assert_eq!(app.abandoned, [ABANDONED, None]);
+    assert_eq!(app.transitions, [None, None]);
+}
+
+/// A transport failing while `prepare` runs drops it unfinished: the step ends with the
+/// error, and nothing is abandoned.
+#[test]
+fn a_transport_error_while_preparing_abandons_nothing() {
+    let mut server = PreparingSrv::new(
+        Preparing {
+            pends: 1,
+            ..Preparing::default()
+        },
+        Script::new(&[Step::Ind(request_from(TESTER), EXTENDED)]),
+        ECU,
+        PARAMS,
+    );
+    assert_eq!(block_on(server.step()), Err(()));
+    let app = server.services();
+    assert_eq!(app.prepared, 0, "the dropped prepare completed");
+    assert_eq!(app.abandoned, [None, None]);
+}
+
+/// A step dropped once `prepare` has accepted the change, while its positive response
+/// is handed over, abandons the change.
+#[test]
+fn a_step_dropped_after_prepare_abandons_the_change() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[Step::Ind(request_from(TESTER), EXTENDED)]).stalling(0),
+        ECU,
+        PARAMS,
+    );
+    {
+        let waker = core::task::Waker::noop();
+        let mut cx = core::task::Context::from_waker(waker);
+        let mut step = core::pin::pin!(server.step());
+        assert!(step.as_mut().poll(&mut cx).is_pending());
+    }
+    assert_eq!(server.transport().addressed(0).1, ENTERED);
+    let app = server.services();
+    assert_eq!(app.abandoned, [ABANDONED, None]);
+    assert_eq!(app.transitions, [None, None]);
+}
+
+/// A step dropped at the transport's next event while the positive response awaits its
+/// confirmation abandons nothing: the next step takes the confirmation and enters the
+/// session.
+#[test]
+fn a_step_dropped_awaiting_the_next_event_abandons_nothing() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Pend,
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
+    {
+        let waker = core::task::Waker::noop();
+        let mut cx = core::task::Context::from_waker(waker);
+        let mut step = core::pin::pin!(server.step());
+        assert!(step.as_mut().poll(&mut cx).is_pending());
+    }
+    assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
+    let app = server.services();
+    assert_eq!(app.abandoned, [None, None]);
+    assert_eq!(app.transitions, [INTO_EXTENDED, None]);
 }

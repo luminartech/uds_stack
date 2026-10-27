@@ -28,6 +28,9 @@ pre-1.0 crates).
   the limit. `Some(0)` accepts none; `None`, the default, accepts every one, as before.
   The failed request's channel is reset, as after a timeout. Functionally addressed
   requests are not under it.
+- `EcuReset::abandon`, called in place of `confirmed` where a reset `reset` accepted is
+  not made: its response is refused after all, its confirmation fails, the link closes
+  first, the transport fails or `Server::step` is dropped. It does nothing by default.
 
 ### Changed
 
@@ -36,9 +39,10 @@ pre-1.0 crates).
   before its positive response: `Ok` lets the response follow, and a code refuses the
   change, such as `conditionsNotCorrect` (0x22). `prepare` is told the requested and the
   active session. The session is still entered, and `on_transition` called, only on the
-  positive response's confirmation. `MAY_RESPOND_PENDING` says whether the server answers
-  response-pending while `prepare` runs. Migrate: add both to each implementation, where
-  the server needs no preparation as
+  positive response's confirmation; where a change `prepare` accepted is not made, the
+  new `abandon`, which does nothing by default, is called instead. `MAY_RESPOND_PENDING`
+  says whether the server answers response-pending while `prepare` runs. Migrate: add
+  both to each implementation, where the server needs no preparation as
 
   ```rust
   const MAY_RESPOND_PENDING: bool = false;

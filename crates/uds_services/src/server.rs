@@ -42,6 +42,13 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     /// The response awaiting its confirmation, if any: a `DiagnosticSessionControl`
     /// response or an `ECUReset` one.
     pending: Option<Pending>,
+    /// The change a handler accepted, a session it prepared or a reset, from the
+    /// handler's end until its response is submitted, its completion reported or the
+    /// change abandoned.
+    unmade: Option<Effect>,
+    /// Whether the step in progress, if any, awaits the transport's next event between
+    /// requests, the one await it is dropped at with the server serving on.
+    idle: bool,
     /// The parameters the server was built with, against which each session's `P2` pair is
     /// checked in debug builds.
     params: ServerParams,
@@ -97,6 +104,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             transport,
             own,
             pending: None,
+            unmade: None,
+            idle: true,
             params,
             started: false,
         }
@@ -161,12 +170,15 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// returns a pair the [`ServerParams`] response-pending lead does not fit
     /// ([`ServerParams::lead_fits`]), on the first request that pair would time.
     pub async fn step(&mut self) -> Result<Stepped, T::Error> {
-        let Some(stopped) = self.handle().await? else {
+        let step = Stepping(self);
+        let handled = step.0.handle().await;
+        step.0.idle = handled.is_ok();
+        let Some(stopped) = handled? else {
             return Ok(Stepped::Continue);
         };
         // Annex I transition 1 owes start-up again after a restart.
-        self.started = false;
-        self.transport.restarting().await;
+        step.0.started = false;
+        step.0.transport.restarting().await;
         Ok(Stepped::Stopped(stopped))
     }
 
@@ -179,10 +191,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             response,
         } = self.store.split();
         let deadline = self.session.next_deadline();
-        let ev = self
-            .transport
-            .next_event(&mut in_flight[..], deadline)
-            .await?;
+        let ev = between_requests(&mut self.transport, &mut self.idle, in_flight, deadline);
+        let ev = ev.await?;
         // Sampled here, not earlier: `outbound_max` and `now` take `&self`, but a live
         // `next_event` future refuses even shared access, so both have to be read after
         // that await returns. A timestamp accompanies every input handed to uds_session.
@@ -269,6 +279,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             )
             .await?
         };
+        self.unmade = Some(served.effect()).filter(|e| *e != Effect::None);
         // Recorded mid-handler, applied now that `&mut services`/`&mut state` are free.
         stopped = stopped.or(apply::<A>(
             &mut self.services,
@@ -292,7 +303,35 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             &mut sink,
         )
         .await?;
+        self.hand_over(serving.reply_to, deferred);
         Ok(stopped.or(apply::<A>(&mut self.services, &mut self.state, deferred)))
+    }
+
+    /// Stop tracking [`Self::unmade`] where its response was submitted to `reply_to` or
+    /// its completion recorded in `deferred`, from which on it is confirmed or abandoned.
+    /// One lost is left for [`Stepping`] to abandon.
+    fn hand_over(&mut self, reply_to: Ai, deferred: Deferred) {
+        let submitted = self
+            .pending
+            .is_some_and(|p| p.ai == reply_to && Some(p.effect) == self.unmade);
+        if submitted || deferred.confirmed == self.unmade {
+            self.unmade = None;
+        }
+    }
+
+    /// Abandon what [`Stepping`] finds unmade: [`Self::unmade`] and, where the step
+    /// ended anywhere but between requests, the change awaiting its confirmation.
+    #[cold]
+    #[inline(never)]
+    fn abandon_unmade(&mut self) {
+        let unconfirmed = if self.idle {
+            None
+        } else {
+            self.pending.take().map(|p| p.effect)
+        };
+        for effect in [self.unmade.take(), unconfirmed].into_iter().flatten() {
+            A::abandoned(&mut self.services, &self.state, effect);
+        }
     }
 
     /// ``UDSS_LLR_0074`` — end the request `ai` with no response, and apply what its
@@ -348,6 +387,25 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     }
 }
 
+/// [`Server::step`]'s drop guard (``UDSSVC_ARCH_0046``): abandons what the step leaves
+/// unmade, whether it returns, fails or is dropped. That is the change a handler accepted
+/// whose response was neither submitted nor completed and, where the step ends anywhere
+/// but between requests, the change whose response awaits its confirmation, which an
+/// ended instance never takes.
+struct Stepping<'s, A: ServiceSet, T: UdsTransport, const PEERS: usize>(
+    &'s mut Server<A, T, PEERS>,
+);
+
+impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Drop
+    for Stepping<'_, A, T, PEERS>
+{
+    fn drop(&mut self) {
+        if self.0.unmade.is_some() || (!self.0.idle && self.0.pending.is_some()) {
+            self.0.abandon_unmade();
+        }
+    }
+}
+
 /// What one [`Server::step`] ended with.
 #[must_use = "a `Stepped::Stopped` asks the caller to act on a restart before stepping again"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,6 +426,20 @@ pub enum Stopped {
     /// server may be stepped again, which runs start-up again, or taken apart with
     /// [`Server::into_parts`].
     Reset(ResetType),
+}
+
+/// The transport's next event, awaited with `idle` set: the one await [`Server::step`] is
+/// dropped at with the server serving on.
+async fn between_requests<'b, T: UdsTransport>(
+    transport: &mut T,
+    idle: &mut bool,
+    buffer: &'b mut [u8],
+    deadline: Option<Timestamp>,
+) -> Result<TransportEvent<'b>, T::Error> {
+    *idle = true;
+    let event = transport.next_event(buffer, deadline).await;
+    *idle = false;
+    event
 }
 
 /// Load the `P2` pair of the session in force into the session layer, so the request about
@@ -452,23 +524,33 @@ struct Deferred {
     timed_out: bool,
     /// A response with an effect was confirmed sent, or its suppression completed.
     confirmed: Option<Effect>,
+    /// A response with an effect failed, or its session was overtaken by a timeout.
+    abandoned: Option<Effect>,
 }
 
 impl Deferred {
     const NONE: Self = Self {
         timed_out: false,
         confirmed: None,
+        abandoned: None,
     };
 
     /// Both records, in arrival order: `self` was recorded first.
     ///
-    /// A later timeout clears an earlier session confirmation, since [`apply`] runs the
+    /// A later timeout abandons an earlier session confirmation, since [`apply`] runs the
     /// timeout first and the session layer has expired the session. A confirmed reset is
     /// kept: its response was sent, and both end in the default session. A later
     /// confirmation after an earlier timeout keeps both; of two confirmations the later
     /// wins.
+    // Out of line: inlined at each of its many call sites, it adds over a kilobyte of
+    // text to the embedded probe.
+    #[inline(never)]
     fn merge(self, later: Self) -> Self {
+        let overtaken = self
+            .confirmed
+            .filter(|e| later.timed_out && matches!(e, Effect::Session(_)));
         Self {
+            abandoned: later.abandoned.or(self.abandoned).or(overtaken),
             timed_out: self.timed_out || later.timed_out,
             confirmed: if later.timed_out {
                 // A confirmed reset happened whatever expired after it: its response was
@@ -550,6 +632,8 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
                     *pending = None;
                     if result == SResult::Ok {
                         found.deferred.confirmed = Some(p.effect);
+                    } else {
+                        found.deferred.abandoned = Some(p.effect);
                     }
                 }
             }
@@ -568,15 +652,17 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
     Ok(found)
 }
 
-/// Act on what a drain recorded: the timeout, then the confirmation. The only caller of
-/// the session hooks, so the protocol state's session is written only here: when
-/// `tS3_Server` times out, and when the response that selected a session or accepted a
-/// restarting reset is confirmed or its completion is reported (``UDSSVC_ARCH_0002``,
-/// ``UDSSVC_ARCH_0038``, ``UDSSVC_ARCH_0045``). Returns `Some` where that reset restarts.
+/// Act on what a drain recorded: the timeout, then the abandoned change, then the
+/// confirmation. The only caller of the session hooks, so the protocol state's session is
+/// written only here: when `tS3_Server` times out, and when the response that selected a
+/// session or accepted a restarting reset is confirmed or its completion is reported
+/// (``UDSSVC_ARCH_0002``, ``UDSSVC_ARCH_0038``, ``UDSSVC_ARCH_0045``). Returns `Some`
+/// where that reset restarts.
 ///
 /// That fixed order is the arrival order: within one drain ``UDSS_LLR_0081`` puts the
-/// expiry snapshots ahead of the input's own outputs, and across drains
-/// [`Deferred::merge`] drops a session confirmation that a later timeout overtook.
+/// expiry snapshots ahead of the input's own outputs, across drains [`Deferred::merge`]
+/// abandons a session confirmation that a later timeout overtook, and a change abandoned
+/// writes no session.
 fn apply<A: ServiceSet>(
     services: &mut A::App,
     state: &mut A::State,
@@ -584,6 +670,9 @@ fn apply<A: ServiceSet>(
 ) -> Option<Stopped> {
     if d.timed_out {
         A::session_timed_out(services, state);
+    }
+    if let Some(effect) = d.abandoned {
+        A::abandoned(services, state, effect);
     }
     match d.confirmed {
         Some(Effect::Session(selected)) => {
@@ -999,6 +1088,7 @@ async fn complete<T: UdsTransport, const PEERS: usize>(
     Ok(d.deferred.merge(Deferred {
         timed_out: false,
         confirmed: (effect != Effect::None).then_some(effect),
+        abandoned: None,
     }))
 }
 
@@ -1217,23 +1307,27 @@ mod tests {
 
     const TIMEOUT: Deferred = Deferred {
         timed_out: true,
-        confirmed: None,
+        ..Deferred::NONE
     };
 
     const fn confirm(session: S) -> Deferred {
         Deferred {
-            timed_out: false,
             confirmed: Some(Effect::Session(session)),
+            ..Deferred::NONE
         }
     }
 
     /// A confirmation recorded mid-handler and then overtaken by a `tS3_Server` expiry
-    /// is dropped.
+    /// is abandoned.
     #[test]
-    fn a_later_timeout_clears_an_earlier_confirmation() {
+    fn a_later_timeout_abandons_an_earlier_confirmation() {
         let merged = confirm(S::ExtendedDiagnosticSession).merge(TIMEOUT);
         assert!(merged.timed_out);
         assert_eq!(merged.confirmed, None);
+        assert_eq!(
+            merged.abandoned,
+            Some(Effect::Session(S::ExtendedDiagnosticSession))
+        );
     }
 
     /// A confirmation after a timeout keeps both, and `apply`'s fixed order is then

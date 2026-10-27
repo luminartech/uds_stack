@@ -80,6 +80,18 @@ pub fn restart(state: &mut State) -> Option<Entered> {
     entered
 }
 
+/// Tell `services` the session change to `session` it prepared is not made, from the
+/// session `state` is in. Read through here for the reason [`transition`] writes through
+/// here.
+#[doc(hidden)]
+pub fn abandon_session<A: DiagnosticSessionControl>(
+    services: &mut A,
+    state: &State,
+    session: DiagnosticSessionType,
+) {
+    services.abandon(session, state.session());
+}
+
 /// The `P2` pair of the session `state` is in, as `services` states it. Read through here
 /// for the reason [`transition`] writes through here: `State`'s accessors stay
 /// crate-private.
