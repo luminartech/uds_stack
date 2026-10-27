@@ -31,8 +31,8 @@ pre-1.0 crates).
     to a DTC before the memory's clear handler runs, and exports the Annex D status transitions
     of `uds_services::dtc_status` to C (`uds_dtc_status_after_test_result` and its
     companions) for the memory to apply.
-  - `execute_deferred`, which makes a reset or session change once its response has
-    gone out, and on entering a session where `ControlDTCSetting` and
+  - `execute_deferred`, which makes a reset or session change once `uds_tcp_write` has
+    taken its response, and on entering a session where `ControlDTCSetting` and
     `CommunicationControl` are not served, or after a reset that restarts the server
     whose execute returns, resumes their state through their handlers (ISO 14229-1:2020
     10.2). `enableRapidPowerShutDown` and `disableRapidPowerShutDown` keep the server

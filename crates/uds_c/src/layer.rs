@@ -169,7 +169,7 @@ pub struct UdsTransitionHooks {
     pub check: Option<UdsTransitionCheckFn>,
     /// Brings the system to where the transition can be made.
     pub prepare: Option<UdsTransitionPrepareFn>,
-    /// Makes the transition, once its response has gone out.
+    /// Makes the transition, once `uds_tcp_write` has taken its response.
     pub execute: Option<UdsTransitionExecuteFn>,
 }
 

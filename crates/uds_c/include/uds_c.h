@@ -348,9 +348,10 @@ typedef UdsNrc (*UdsTransitionCheckFn)(uint8_t sub_function);
 typedef UdsNrc (*UdsTransitionPrepareFn)(UdsOpStatus op, uint8_t sub_function);
 
 /**
- * @brief Makes the transition, once its positive response has gone out. A session's
- *        also runs, with UDS_DSC_DEFAULT_SESSION, when the server returns to the
- *        default session without a request: on tS3_Server expiry, or after a reset.
+ * @brief Makes the transition, once uds_tcp_write has taken its positive
+ *        response. A session's also runs, with UDS_DSC_DEFAULT_SESSION, when the
+ *        server returns to the default session without a request: on
+ *        tS3_Server expiry, or after a reset.
  */
 typedef void (*UdsTransitionExecuteFn)(uint8_t sub_function);
 
@@ -432,7 +433,12 @@ bool uds_tcp_readable(int32_t sock);
 int32_t uds_tcp_read(int32_t sock, uint8_t *buf, size_t cap);
 
 /**
- * @brief Queues bytes to send.
+ * @brief Hands bytes to the firmware's TCP/IP stack to send. The bytes taken
+ *        are the stack's to send without a further call from the server (with
+ *        lwIP, tcp_write and then tcp_output), so a response taken whole counts
+ *        as sent: the server confirms it, and makes the reset or session change
+ *        it answers on its next poll. An execute that must not cut the response
+ *        short, a reset's, waits for the stack to send it.
  * @param sock The connection's socket index.
  * @param buf The bytes; `len` bytes are readable, and are copied before return.
  * @param len How many bytes to send.

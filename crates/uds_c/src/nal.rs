@@ -130,7 +130,7 @@ impl Write for Half<'_> {
         write(self.0, buf).await
     }
 
-    /// Every write is already handed to the firmware's stack.
+    /// Every write is already handed to the firmware's stack, which sends it.
     fn flush(&mut self) -> impl Future<Output = Result<(), Failed>> {
         ready(Ok(()))
     }
@@ -157,7 +157,7 @@ impl Write for Socket {
         write(self.0, buf).await
     }
 
-    /// Every write is already handed to the firmware's stack.
+    /// Every write is already handed to the firmware's stack, which sends it.
     fn flush(&mut self) -> impl Future<Output = Result<(), Failed>> {
         ready(Ok(()))
     }
