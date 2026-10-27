@@ -472,26 +472,32 @@ fn reset_hooks(layer: &UdsLayer) -> &UdsTransitionHooks {
 }
 
 /// Makes the transitions whose responses the server has sent since the last call: each
-/// layer's session execute, the last layer's first, for a session the server entered,
-/// then each layer's reset execute for a reset it confirmed. Entering a session where
-/// `ControlDTCSetting` and `CommunicationControl` are not served resumes their state, as
-/// does a reset that restarts the server whose execute returns, which leaves it in the
-/// default session.
+/// layer's reset execute for a reset it confirmed, then each layer's session execute for
+/// a session it entered, the last layer's first in each. A reset that restarts the
+/// server from another session leaves both, so the default session's execute runs only
+/// once the reset's has returned. Entering a session where `ControlDTCSetting` and
+/// `CommunicationControl` are not served then resumes their state, once, as does a reset
+/// that restarts the server and returns, which leaves it in the default session.
 ///
 /// Called between polls of the server, before each one, so a transition is made a poll
 /// after `uds_tcp_write` took its response, which the firmware's stack then sends. The
 /// session's execute runs as well when `tS3_Server` returns the server to the default
 /// session, with no response.
 pub fn execute_deferred(layers: &Layers) {
-    if let Some(session) = take(&DEFERRED_SESSION) {
-        layers.execute(session_hooks, session);
-        resume_outside_their_sessions(layers, session);
-    }
-    if let Some(kind) = take(&DEFERRED_RESET) {
+    let reset = take(&DEFERRED_RESET);
+    let session = take(&DEFERRED_SESSION);
+    if let Some(kind) = reset {
         layers.execute(reset_hooks, kind);
-        if ResetType::try_from(kind).is_ok_and(|kind| after(kind) == AfterReset::Restart) {
-            resume_outside_their_sessions(layers, u8::from(Session::DefaultSession));
-        }
+    }
+    if let Some(session) = session {
+        layers.execute(session_hooks, session);
+    }
+    let restarted = reset
+        .and_then(|kind| ResetType::try_from(kind).ok())
+        .is_some_and(|kind| after(kind) == AfterReset::Restart);
+    let default = restarted.then_some(u8::from(Session::DefaultSession));
+    if let Some(entered) = session.or(default) {
+        resume_outside_their_sessions(layers, entered);
     }
 }
 

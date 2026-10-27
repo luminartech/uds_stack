@@ -38,8 +38,8 @@ pre-1.0 crates).
     taken its response, and on entering a session where `ControlDTCSetting` and
     `CommunicationControl` are not served, or after a reset that restarts the server
     whose execute returns, resumes their state through their handlers (ISO 14229-1:2020
-    10.2). `enableRapidPowerShutDown` and `disableRapidPowerShutDown` keep the server
-    running.
+    10.2), once. A reset runs before the default session it returns to.
+    `enableRapidPowerShutDown` and `disableRapidPowerShutDown` keep the server running.
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
     and transport over them with `doip::poll_run` to drive the server.
   - `Firmware`, the server and its run future in one `static` for firmware that polls

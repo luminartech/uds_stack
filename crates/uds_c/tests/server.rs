@@ -74,6 +74,32 @@ fn a_rapid_power_shutdown_keeps_the_server_running() {
     assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x03]);
 }
 
+/// A hard reset from the extended session is executed first, then the default session it
+/// returns to, and DTC setting and communication control resume once.
+#[test]
+fn a_reset_from_another_session_executes_before_the_default_session() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    assert_eq!(ecu.request(&[0x10, 0x03])[..2], [0x50, 0x03]);
+    ecu.tick();
+    assert_eq!(ecu.request(&[0x85, 0x02]), [0xC5, 0x02]);
+    calls();
+    assert_eq!(ecu.request(&[0x11, 0x01]), [0x51, 0x01]);
+    ecu.tick();
+    assert_eq!(
+        calls(),
+        [
+            Call::Reset("oem", 0x01),
+            Call::Reset("platform", 0x01),
+            Call::Session("oem", 0x01),
+            Call::Session("platform", 0x01),
+            Call::DtcSetting(0x01),
+            Call::CommControl(0x00, 0x03)
+        ]
+    );
+}
+
 /// A layer's check refuses a reset with its code, and nothing is executed.
 #[test]
 fn a_refused_reset_is_answered_with_the_check_code() {
