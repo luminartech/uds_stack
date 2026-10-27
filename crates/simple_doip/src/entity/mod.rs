@@ -420,17 +420,7 @@ impl<
         identity: I,
         seed: u32,
     ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Discovery<U, I>> {
-        Entity {
-            acceptor: self.acceptor,
-            address: self.address,
-            config: self.config,
-            connections: self.connections,
-            reserve: self.reserve,
-            arbitration: self.arbitration,
-            confirms: self.confirms,
-            turn: self.turn,
-            discovery: Discovery::new(socket, identity, seed),
-        }
+        self.replace_discovery(Discovery::new(socket, identity, seed))
     }
 
     /// The entity with discovery where `discovery` is `Some` and none where it is `None`,
@@ -447,18 +437,10 @@ impl<
         self,
         discovery: Option<(U, I, u32)>,
     ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>> {
-        Entity {
-            acceptor: self.acceptor,
-            address: self.address,
-            config: self.config,
-            connections: self.connections,
-            reserve: self.reserve,
-            arbitration: self.arbitration,
-            confirms: self.confirms,
-            turn: self.turn,
-            discovery: discovery
+        self.replace_discovery(
+            discovery
                 .map(|(socket, identity, seed)| Discovery::new(socket, identity, seed)),
-        }
+        )
     }
 }
 
@@ -571,6 +553,24 @@ impl<
             arbitration: None,
             confirms: [None; CONFIRMS],
             turn: Turn::Connection(0),
+            discovery,
+        }
+    }
+
+    /// This entity with `discovery` as its UDP side in place of its own.
+    fn replace_discovery<E: Discover>(
+        self,
+        discovery: E,
+    ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, E> {
+        Entity {
+            acceptor: self.acceptor,
+            address: self.address,
+            config: self.config,
+            connections: self.connections,
+            reserve: self.reserve,
+            arbitration: self.arbitration,
+            confirms: self.confirms,
+            turn: self.turn,
             discovery,
         }
     }
