@@ -117,11 +117,7 @@ fn main() -> ! {
         .with_gid(gid);
     let server = SERVER.take();
     let Some(Ok(())) = server.transport_mut().map(|transport| {
-        transport.entity_mut().start_discovery(
-            stub::Datagrams,
-            identity,
-            core::hint::black_box(0),
-        )
+        transport.start_discovery(stub::Datagrams, identity, core::hint::black_box(0))
     }) else {
         halt()
     };

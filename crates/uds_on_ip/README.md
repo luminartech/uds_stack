@@ -86,7 +86,11 @@ this compares to the rest of the stack.
 
 ## Feature flags
 
-None. The crate is `no_std` in every configuration, and its errors implement
+| Feature | Default | Enables |
+| --- | --- | --- |
+| `connection` | off | `DoIpTransport::start_discovery`, for `simple_doip`'s `entity::Entity`; enables `simple_doip`'s `connection` |
+
+The crate is `no_std` in every configuration, and its errors implement
 `core::error::Error`. Enable `simple_doip`'s and `uds_protocol`'s features on those
 crates directly.
 
@@ -145,10 +149,9 @@ step:
 
 ```rust
 let server = SERVER.take();
-server
-    .transport_mut()
-    .entity_mut()
-    .start_discovery(udp_socket, identity, seed);
+if let Some(transport) = server.transport_mut() {
+    transport.start_discovery(udp_socket, identity, seed)?;
+}
 ```
 
 Where the acceptor is created at run time, the entity borrows it then, so the cell

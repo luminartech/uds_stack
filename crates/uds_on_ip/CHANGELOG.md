@@ -11,8 +11,9 @@ pre-1.0 crates).
 
 ### Added
 
-- `DoIpTransport::entity_mut`, the entity by mutable reference between events: to
-  start the discovery of an entity built without it, once the interface has an address.
+- `DoIpTransport::start_discovery`, behind the new `connection` feature: starts the
+  discovery of a `simple_doip` entity built without it, once the interface has an
+  address.
   With `simple_doip`'s `Entity::new_discovery_later`, a server over a `DoIpTransport` is
   built in place as a `static`'s initializer, only where the acceptor is itself a
   `static`.

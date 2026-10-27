@@ -13,7 +13,7 @@ license = "MIT OR Apache-2.0"
 
 [target.'cfg(target_os = "none")'.dependencies]
 simple_doip = { workspace = true, features = ["connection"] }
-uds_on_ip = { path = "../../crates/uds_on_ip" }
+uds_on_ip = { path = "../../crates/uds_on_ip", features = ["connection"] }
 uds_services = { workspace = true }
 sensor-services = { path = "../sensor-services" }
 edge-nal = { workspace = true }
