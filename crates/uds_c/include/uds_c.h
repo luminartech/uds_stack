@@ -285,8 +285,8 @@ typedef UdsNrc (*UdsDtcSettingFn)(UdsOpStatus op, uint8_t setting_type);
  * @brief A layer's DTC memory and handlers; NULL: not served by this layer.
  *        One layer keeps the memory 0x19 reads, with `get`, and its
  *        `snapshot_*` and `clear` serve 0x19 04 and 0x14; the server's start
- *        refuses a second memory, or those hooks without `get`. `setting` is
- *        the first layer's that sets it.
+ *        refuses a second memory, or those hooks without `get`. One layer
+ *        serves 0x85, with `setting`: the start refuses a second.
  */
 typedef struct
 {
@@ -321,7 +321,11 @@ typedef UdsNrc (*UdsTransferBlockFn)(UdsOpStatus op, uint8_t const *data, size_t
 /** @brief Completes the download; called only after an accepted begin. */
 typedef UdsNrc (*UdsTransferFinishFn)(UdsOpStatus op);
 
-/** @brief A layer's download handlers; NULL: not served by this layer. */
+/**
+ * @brief A layer's download handlers; NULL: not served by this layer. One
+ *        layer serves downloads, with `begin`: the server's start refuses a
+ *        second.
+ */
 typedef struct
 {
     UdsAccess           access;
@@ -376,7 +380,8 @@ typedef struct
  *        The server searches its layers in the order given, so an earlier
  *        layer's entry wins; a later layer adds services but never replaces
  *        one. A DTC, communication control or download service that no layer
- *        serves is answered serviceNotSupported.
+ *        serves is answered serviceNotSupported, and the server's start
+ *        refuses one that two layers serve.
  */
 typedef struct
 {

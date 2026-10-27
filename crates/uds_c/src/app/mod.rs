@@ -163,8 +163,8 @@ pub enum TableError {
     #[error("{0}: a handler it needs is missing")]
     NoHandler(AccessOf),
     /// An identifier listed twice, in one layer or two, a DID the server answers
-    /// itself ([`ACTIVE_SESSION_DID`]), or a DTC memory after the first: only the first
-    /// entry would ever be served.
+    /// itself ([`ACTIVE_SESSION_DID`]), or a second layer's DTC memory, DTC setting,
+    /// communication control or download: only the first would ever be served.
     #[error("{0}: listed twice, so only its first entry is served")]
     Duplicate(AccessOf),
     /// A security level that would lock out before any key is tried.
@@ -189,6 +189,10 @@ pub enum AccessOf {
     Level(u8),
     /// A layer's DTC memory, by the layer's index.
     DtcMemory(usize),
+    /// A layer's DTC setting handler, by the layer's index.
+    DtcSetting(usize),
+    /// A layer's communication control handler, by the layer's index.
+    CommControl(usize),
 }
 
 impl fmt::Display for AccessOf {
@@ -199,8 +203,19 @@ impl fmt::Display for AccessOf {
             Self::Transfer(layer) => write!(f, "layer {layer}'s download"),
             Self::Level(level) => write!(f, "security level {level:#04X}"),
             Self::DtcMemory(layer) => write!(f, "layer {layer}'s DTC memory"),
+            Self::DtcSetting(layer) => write!(f, "layer {layer}'s DTC setting"),
+            Self::CommControl(layer) => write!(f, "layer {layer}'s communication control"),
         }
     }
+}
+
+/// The index of the second layer `serves` is true of.
+fn second_layer(serves: impl Iterator<Item = bool>) -> Option<usize> {
+    serves
+        .enumerate()
+        .filter(|&(_, serves)| serves)
+        .nth(1)
+        .map(|(index, _)| index)
 }
 
 /// The first value the iterators `items` makes hold twice.
@@ -295,8 +310,9 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
     /// Checks the layers once, before the server starts: every record within the
     /// policy's limits, every security level a requestSeed sub-function allowing at
     /// least one attempt and at most `LEVELS` of them, every access naming such a level
-    /// or none, every entry with the handlers it needs, no identifier twice, and at most
-    /// one DTC memory, its snapshot and clear in its own layer.
+    /// or none, every entry with the handlers it needs, no identifier twice, at most one
+    /// layer serving the DTC memory, DTC setting, communication control and downloads
+    /// each, and the memory's snapshot and clear in its own layer.
     ///
     /// The server serves tables that fail this without undefined behavior, failing
     /// closed: a record past a limit is answered `generalReject` (0x10), an invalid
@@ -378,14 +394,19 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
         }) {
             return Err(TableError::NoHandler(AccessOf::DtcMemory(index)));
         }
-        if let Some(index) = layers
-            .dtc_hooks()
-            .enumerate()
-            .filter(|(_, d)| d.get.is_some())
-            .nth(1)
-            .map(|(index, _)| index)
-        {
+        if let Some(index) = second_layer(layers.dtc_hooks().map(|d| d.get.is_some())) {
             return Err(TableError::Duplicate(AccessOf::DtcMemory(index)));
+        }
+        if let Some(index) = second_layer(layers.dtc_hooks().map(|d| d.setting.is_some())) {
+            return Err(TableError::Duplicate(AccessOf::DtcSetting(index)));
+        }
+        if let Some(index) = second_layer(layers.iter().map(|l| l.comm_control.is_some())) {
+            return Err(TableError::Duplicate(AccessOf::CommControl(index)));
+        }
+        if let Some(index) =
+            second_layer(layers.transfer_hooks().map(|t| t.begin.is_some()))
+        {
+            return Err(TableError::Duplicate(AccessOf::Transfer(index)));
         }
         let dids =
             || core::iter::once(ACTIVE_SESSION_DID).chain(layers.dids().map(|e| e.did));

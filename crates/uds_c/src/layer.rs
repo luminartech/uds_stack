@@ -294,7 +294,7 @@ impl Layers {
     }
 
     /// Every layer, in order.
-    fn iter(self) -> impl Iterator<Item = &'static UdsLayer> {
+    pub(crate) fn iter(self) -> impl Iterator<Item = &'static UdsLayer> {
         self.0.iter().copied()
     }
 
