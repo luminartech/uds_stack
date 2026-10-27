@@ -34,8 +34,8 @@ use uds_c::{
 };
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
-    Address, DiagnosticSessionType as Session, P2StarServerMax, Server, ServerParams,
-    ServiceSet, SessionTiming, Sessions, Stopped, UdsTransport, uds_server,
+    Access, Address, DiagnosticSessionType as Session, P2StarServerMax, ResetType, Server,
+    ServerParams, ServiceSet, SessionTiming, Sessions, Stopped, UdsTransport, uds_server,
 };
 
 /// The tester's logical address.
@@ -452,7 +452,7 @@ const TIMING: SessionTiming = SessionTiming {
 };
 
 /// A policy as an integrator writes one: three sessions, the programming session
-/// entered only from the extended one.
+/// entered only from the extended one, and the hard reset and enableRapidPowerShutDown.
 #[derive(Debug)]
 pub struct Bench;
 
@@ -472,6 +472,14 @@ impl Policy for Bench {
     fn supported_from(session: Session, active: Session) -> bool {
         session != Session::ProgrammingSession
             || active == Session::ExtendedDiagnosticSession
+    }
+
+    fn reset_access(kind: ResetType) -> Option<Access> {
+        matches!(
+            kind,
+            ResetType::HardReset | ResetType::EnableRapidPowerShutDown
+        )
+        .then_some(Access::new(Sessions::ALL))
     }
 }
 

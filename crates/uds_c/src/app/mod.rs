@@ -89,7 +89,9 @@ pub trait Policy: 'static {
 
     /// Where the `EcuReset` of `kind` is available and which levels unlock it, or `None`
     /// where it is not supported. Every reset admitted restarts the server once its
-    /// response is confirmed. `hardReset` in every session by default.
+    /// response is confirmed, but for `enableRapidPowerShutDown` and
+    /// `disableRapidPowerShutDown` (0x04, 0x05), which keep it serving in its session.
+    /// `hardReset` in every session by default.
     #[must_use]
     fn reset_access(kind: ResetType) -> Option<Access> {
         (kind == ResetType::HardReset).then_some(Access::new(Sessions::ALL))
@@ -446,7 +448,8 @@ fn reset_hooks(layer: &UdsLayer) -> &UdsTransitionHooks {
 /// layer's session execute, the last layer's first, for a session the server entered,
 /// then each layer's reset execute for a reset it confirmed. Entering a session where
 /// `ControlDTCSetting` and `CommunicationControl` are not served resumes their state, as
-/// does a reset whose execute returns, which leaves the server in the default session.
+/// does a reset that restarts the server whose execute returns, which leaves it in the
+/// default session.
 ///
 /// Called between polls of the server, before each one, so the response has left the
 /// socket a poll before its transition is made. The session's execute runs as well when
@@ -458,7 +461,20 @@ pub fn execute_deferred(layers: &Layers) {
     }
     if let Some(kind) = take(&DEFERRED_RESET) {
         layers.execute(reset_hooks, kind);
-        resume_outside_their_sessions(layers, u8::from(Session::DefaultSession));
+        if ResetType::try_from(kind).is_ok_and(|kind| after(kind) == AfterReset::Restart) {
+            resume_outside_their_sessions(layers, u8::from(Session::DefaultSession));
+        }
+    }
+}
+
+/// What follows the response to the reset `kind`: ISO 14229-1:2020 Table 34's rapid power
+/// shutdown sub-functions keep the server running, and every other reset restarts it.
+fn after(kind: ResetType) -> AfterReset {
+    match kind {
+        ResetType::EnableRapidPowerShutDown | ResetType::DisableRapidPowerShutDown => {
+            AfterReset::Continue
+        }
+        _ => AfterReset::Restart,
     }
 }
 
@@ -575,7 +591,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> EcuReset
 
     async fn reset(&mut self, kind: ResetType) -> Result<AfterReset, Nrc> {
         transition(P::LAYERS, reset_hooks, u8::from(kind)).await?;
-        Ok(AfterReset::Restart)
+        Ok(after(kind))
     }
 
     fn confirmed(&mut self, kind: ResetType) {
