@@ -1,7 +1,8 @@
 //! Assembly, and the const arithmetic it performs.
 //!
-//! ``UDSSVC_ARCH_0013``: a server is assembled by naming its services, and that list is
-//! what `serviceNotSupported` (0x11) is decided from.
+//! ``UDSSVC_ARCH_0013``: a server is assembled by naming its services, and that list,
+//! narrowed by the application's optional `serves`, is what `serviceNotSupported` (0x11)
+//! is decided from.
 //!
 //! Assembly is a macro because at its expansion site the types are concrete, so
 //! `<Ecu as DataTransfer>::MAX_BLOCK_LEN` is an ordinary const and folding a list of them

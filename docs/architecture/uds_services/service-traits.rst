@@ -119,7 +119,10 @@ The traits
    for, is 1. ``DoIpTransport``'s rustdoc carries the detail.
 
    A service absent from the list is not supported, and a request naming it settles with
-   ``serviceNotSupported`` (0x11) by the path in ``UDSSVC_ARCH_0006``.
+   ``serviceNotSupported`` (0x11) by the path in ``UDSSVC_ARCH_0006``. So does one the list
+   names but the assembly's optional ``serves = f`` declines, for an application that
+   learns only at run time which services it serves; ``f``'s answer for a service stays
+   constant for the server's life.
 
    Rationale: Rust cannot ask whether a type implements a trait, so a generic dispatcher
    over ``S: ServiceSet`` has no way to discover which per-service traits ``S`` implements.
