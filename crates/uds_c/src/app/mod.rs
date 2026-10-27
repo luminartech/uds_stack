@@ -20,10 +20,10 @@ use uds_services::NegativeResponseCode as Nrc;
 use uds_services::{
     Access, AfterReset, DiagnosticSessionControl, DiagnosticSessionType as Session,
     EcuReset, ResetType, SecurityLevel, SessionTiming, SessionTransition, Sessions,
-    TesterPresent,
+    TesterPresent, UdsServiceType,
 };
 
-use crate::layer::{Layers, UdsLayer, UdsSecurityLevel, UdsTransitionHooks};
+use crate::layer::{DtcMemory, Layers, UdsLayer, UdsSecurityLevel, UdsTransitionHooks};
 use crate::op;
 use crate::record::Record;
 
@@ -260,6 +260,27 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
             delay_until: [None; LEVELS],
             record: [0; RECORD],
             policy: PhantomData,
+        }
+    }
+
+    /// Whether the layers serve `service`, for `uds_server!`'s `serves = App::serves`:
+    /// the DTC reports where a layer keeps a DTC memory, clearing where that memory's
+    /// layer clears it, communication control, DTC setting and downloads where a layer
+    /// has their handlers, and every other service always. Constant, as the tables are.
+    #[must_use]
+    pub fn serves(&self, service: UdsServiceType) -> bool {
+        let layers = P::LAYERS;
+        match service {
+            UdsServiceType::ReadDtcInfo => layers.dtc_memory().is_some(),
+            UdsServiceType::ClearDiagnosticInfo => {
+                layers.dtc_memory().and_then(DtcMemory::clear).is_some()
+            }
+            UdsServiceType::CommunicationControl => layers.comm_control().is_some(),
+            UdsServiceType::ControlDtcSetting => layers.dtc_setting().is_some(),
+            UdsServiceType::RequestDownload
+            | UdsServiceType::TransferData
+            | UdsServiceType::RequestTransferExit => layers.transfer().is_some(),
+            _ => true,
         }
     }
 

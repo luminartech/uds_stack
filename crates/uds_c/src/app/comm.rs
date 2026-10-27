@@ -13,11 +13,6 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> CommunicationControl
 {
     const MAY_RESPOND_PENDING: bool = true;
 
-    /// Where a layer serves it.
-    fn serves(&self) -> bool {
-        P::LAYERS.comm_control().is_some()
-    }
-
     /// `enableRxAndTx` to `disableRxAndTx`, in the extended and programming sessions; the enhanced
     /// address forms are not served.
     fn access(&self, control_type: CommunicationControlType) -> Option<Access> {

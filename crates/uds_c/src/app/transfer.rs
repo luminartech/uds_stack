@@ -17,11 +17,6 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> DataTransfer
     const MAX_BLOCK_LEN: usize = P::MAX_BLOCK_LEN;
     const SESSIONS: Sessions = P::TRANSFER_SESSIONS;
 
-    /// Where a layer serves downloads.
-    fn serves(&self) -> bool {
-        P::LAYERS.transfer().is_some()
-    }
-
     fn format_supported(&self, _format: DataFormatIdentifier) -> bool {
         true
     }

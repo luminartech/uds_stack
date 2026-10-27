@@ -101,6 +101,7 @@
 //!     peers = 1,
 //!     services = EcuServices,
 //!     server = EcuServer,
+//!     serves = App::serves,
 //! }
 //!
 //! # const ENTITY: EntityAddress =
