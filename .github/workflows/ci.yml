@@ -350,9 +350,11 @@ jobs:
           -- -D warnings
       # Empty on a host, so the workspace's clippy job never sees its code.
       - name: Lint the embedded probe
-        run: >-
-          cargo +stable clippy -p embedded-probe --target thumbv7em-none-eabihf
-          -- -D warnings
+        run: |
+          cargo +stable clippy -p embedded-probe --target thumbv7em-none-eabihf \
+            -- -D warnings
+          cargo +stable clippy -p embedded-probe --target thumbv7em-none-eabihf \
+            --features run-time -- -D warnings
       - name: Document the embassy-net adapter
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D warnings

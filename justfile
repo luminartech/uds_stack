@@ -121,6 +121,7 @@ clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
     rustup target add {{ embedded_target }}
     cargo clippy -p embedded-probe --target {{ embedded_target }} -- -D warnings
+    cargo clippy -p embedded-probe --target {{ embedded_target }} --features run-time -- -D warnings
 
 # A broken intra-doc link renders as plain text and fails nothing else, so a renamed item
 # leaves its references silently dangling. Denied here so the rename fails instead.
@@ -149,22 +150,27 @@ embedded: && size
 
 # The probe's flash, static RAM and main's stack frame against
 # testing/embedded-probe/size-baseline.json, in the `firmware` profile on the pinned
-# toolchain; tools/check_size.py says what fails. The image's path is cargo's, so a
-# CARGO_TARGET_DIR is honoured, and llvm-size and llvm-objdump are the toolchain's own,
-# from its llvm-tools component.
-[doc("Check the embedded probe's flash and RAM against the recorded baseline")]
+# toolchain; tools/check_size.py says what fails. Then the probe with its `run-time`
+# feature, the server built in main, against size-baseline-run-time.json. The image's
+# path is cargo's, so a CARGO_TARGET_DIR is honoured, and llvm-size and llvm-objdump are
+# the toolchain's own, from its llvm-tools component.
+[doc("Check the embedded probe's flash and RAM against the recorded baselines")]
 size *args:
     #!/usr/bin/env bash
     set -euo pipefail
     rustup toolchain install {{ size_toolchain }} --profile minimal --component llvm-tools \
         --target {{ embedded_target }} --no-self-update
-    image=$(cargo +{{ size_toolchain }} build -p embedded-probe --profile firmware \
-        --target {{ embedded_target }} --message-format=json-render-diagnostics \
-        | python3 -c 'import json, sys; print([m["executable"] for m in map(json.loads, sys.stdin) if m.get("executable")][-1])')
     host=$(rustc +{{ size_toolchain }} -vV | sed -n 's/^host: //p')
     sysroot=$(rustc +{{ size_toolchain }} --print sysroot)
-    python3 tools/check_size.py --llvm-bin "$sysroot/lib/rustlib/$host/bin" \
-        {{ args }} testing/embedded-probe/size-baseline.json "$image"
+    for config in ":size-baseline" "run-time:size-baseline-run-time"; do
+        features=${config%%:*}
+        image=$(cargo +{{ size_toolchain }} build -p embedded-probe --profile firmware \
+            --target {{ embedded_target }} ${features:+--features "$features"} \
+            --message-format=json-render-diagnostics \
+            | python3 -c 'import json, sys; print([m["executable"] for m in map(json.loads, sys.stdin) if m.get("executable")][-1])')
+        python3 tools/check_size.py --llvm-bin "$sysroot/lib/rustlib/$host/bin" \
+            {{ args }} "testing/embedded-probe/${config#*:}.json" "$image"
+    done
 
 [doc("Record the embedded probe's current size as its baseline")]
 size-baseline: (size "--record")

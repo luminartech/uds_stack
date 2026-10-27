@@ -1,6 +1,9 @@
 //! The firmware: the server built in place as a `static`'s initializer, its discovery
 //! started from reset, then run; and the client transport's size, kept in the image for
 //! the size gate to read.
+//!
+//! With the `run-time` feature, the server is built in `main` and copied into its
+//! `static`, as one over an acceptor built at run time is.
 
 mod clock;
 mod stub;
@@ -11,7 +14,10 @@ use simple_doip::messages::DiagnosticPowerModeCode;
 use simple_doip::service::{EntityConfig, TesterAddress};
 use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Tester};
 use simple_doip::{EntityId, GroupId, LogicalAddress, Vin};
+#[cfg(not(feature = "run-time"))]
 use static_cell::ConstStaticCell;
+#[cfg(feature = "run-time")]
+use static_cell::StaticCell;
 use uds_on_ip::profile::bench_reloads;
 use uds_on_ip::{DoIpClientTransport, DoIpTransport};
 use uds_services::{Address, ServerParams, uds_server};
@@ -24,14 +30,12 @@ const EID: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
 const VIN: [u8; 17] = *b"WVWZZZ1JZXW000001";
 const GID: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-type SensorEntity = Entity<
-    'static,
-    stub::Acceptor,
-    1,
-    MAX_MESSAGE,
-    1,
-    Option<Discovery<stub::Datagrams, FixedIdentity>>,
->;
+#[cfg(not(feature = "run-time"))]
+type SensorDiscovery = Option<Discovery<stub::Datagrams, FixedIdentity>>;
+#[cfg(feature = "run-time")]
+type SensorDiscovery = Discovery<stub::Datagrams, FixedIdentity>;
+
+type SensorEntity = Entity<'static, stub::Acceptor, 1, MAX_MESSAGE, 1, SensorDiscovery>;
 type Transport = DoIpTransport<SensorEntity, 2>;
 
 /// The sensor's tester: one message of up to `MAX_MESSAGE` bytes, header included.
@@ -77,6 +81,7 @@ const TESTER_ADDRESS: TesterAddress = match TesterAddress::new(TESTER) {
 static ACCEPTOR: stub::Acceptor = stub::Acceptor;
 
 /// The server, built in place: its discovery waits for the identity `main` learns.
+#[cfg(not(feature = "run-time"))]
 static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
     Ecu::new(),
     DoIpTransport::new(
@@ -90,6 +95,9 @@ static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
     Address(ENTITY.0),
     PARAMS,
 ));
+
+#[cfg(feature = "run-time")]
+static SERVER: StaticCell<EcuServer> = StaticCell::new();
 
 fn halt() -> ! {
     loop {
@@ -115,12 +123,27 @@ fn main() -> ! {
     let identity = FixedIdentity::new(eid, DiagnosticPowerModeCode::Ready)
         .with_vin(vin)
         .with_gid(gid);
-    let server = SERVER.take();
-    let Some(Ok(())) = server.transport_mut().map(|transport| {
-        transport.start_discovery(stub::Datagrams, identity, core::hint::black_box(0))
-    }) else {
-        halt()
+    #[cfg(not(feature = "run-time"))]
+    let server = {
+        let server = SERVER.take();
+        let Some(Ok(())) = server.transport_mut().map(|transport| {
+            transport.start_discovery(stub::Datagrams, identity, core::hint::black_box(0))
+        }) else {
+            halt()
+        };
+        server
     };
+    #[cfg(feature = "run-time")]
+    let server = SERVER.init_with(|| {
+        let entity = Entity::new(&ACCEPTOR, ADDRESS, EntityConfig::new([TESTER_ADDRESS]))
+            .with_discovery(stub::Datagrams, identity, core::hint::black_box(0));
+        EcuServer::new(
+            Ecu::new(),
+            DoIpTransport::new(entity, bench_reloads()),
+            Address(ENTITY.0),
+            PARAMS,
+        )
+    });
     core::hint::black_box(&CLIENT_TRANSPORT_SIZE);
     let _ = embassy_futures::block_on(server.run());
     halt()

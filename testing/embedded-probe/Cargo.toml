@@ -11,6 +11,11 @@ publish = false
 description = "uds_server! over DoIpTransport over Entity, linked for bare metal, no alloc"
 license = "MIT OR Apache-2.0"
 
+# The server built at run time and copied into a `StaticCell`, as one over an acceptor
+# built at run time is: `just size` holds it to size-baseline-run-time.json.
+[features]
+run-time = []
+
 [target.'cfg(target_os = "none")'.dependencies]
 simple_doip = { workspace = true, features = ["connection"] }
 uds_on_ip = { path = "../../crates/uds_on_ip", features = ["connection"] }
