@@ -298,7 +298,11 @@ keeps the session, its timing and the response pending. As in
 #             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
 #         }
 #     }
-#     fn prepare(&mut self, _s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
+#     fn prepare(
+#         &mut self,
+#         _s: S,
+#         _active: S,
+#     ) -> impl core::future::Future<Output = Result<(), Nrc>> {
 #         core::future::ready(Ok(()))
 #     }
 #     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _relocked: bool) {}

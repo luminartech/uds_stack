@@ -852,8 +852,11 @@ Protocol state
           const MAY_RESPOND_PENDING: bool = true;
           // supports, supported_from, timing, leaves_running_software, on_transition
 
-          async fn prepare(&mut self, session: DiagnosticSessionType)
-              -> Result<(), Nrc> { .. }
+          async fn prepare(
+              &mut self,
+              session: DiagnosticSessionType,
+              active: DiagnosticSessionType,
+          ) -> Result<(), Nrc> { .. }
       }
 
    Rationale: a server must sometimes reach a state before it can honor the session its
@@ -865,7 +868,9 @@ Protocol state
    told to wait meanwhile. A client's own ceiling on response-pending messages bounds how
    long that wait can be. ``prepare`` is required rather than defaulted, as
    ``UDSSVC_ARCH_0012`` and ``UDSSVC_ARCH_0033`` have it: a server that needs nothing
-   returns a ready future, and one that leaves the stage out fails to compile.
+   returns a ready future, and one that leaves the stage out fails to compile. ``prepare``
+   is told the active session, as ``supported_from`` is, so a preparation that depends on
+   the pair needs no session of its own.
 
 Identifiers
 -----------

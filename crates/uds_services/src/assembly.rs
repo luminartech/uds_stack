@@ -533,7 +533,7 @@ macro_rules! __uds_stage {
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
         if let $crate::Request::DiagnosticSessionControl(ref r) = $req {
-            return $crate::pipeline::diagnostic_session_control($self, r, $out)
+            return $crate::pipeline::diagnostic_session_control($self, $state, r, $out)
                 .await
                 .map($crate::Effect::from);
         }

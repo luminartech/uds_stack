@@ -34,11 +34,11 @@ pre-1.0 crates).
 - **Breaking.** `DiagnosticSessionControl` has a required `prepare` and a required
   `MAY_RESPOND_PENDING`. `prepare` is awaited once a session change is admitted and
   before its positive response: `Ok` lets the response follow, and a code refuses the
-  change, such as `conditionsNotCorrect` (0x22). The session is still entered, and
-  `on_transition` called, only on the positive response's confirmation.
-  `MAY_RESPOND_PENDING` says whether the server answers response-pending while `prepare`
-  runs. Migrate: add both to each implementation, where the server needs no preparation
-  as
+  change, such as `conditionsNotCorrect` (0x22). `prepare` is told the requested and the
+  active session. The session is still entered, and `on_transition` called, only on the
+  positive response's confirmation. `MAY_RESPOND_PENDING` says whether the server answers
+  response-pending while `prepare` runs. Migrate: add both to each implementation, where
+  the server needs no preparation as
 
   ```rust
   const MAY_RESPOND_PENDING: bool = false;
@@ -46,6 +46,7 @@ pre-1.0 crates).
   fn prepare(
       &mut self,
       _session: DiagnosticSessionType,
+      _active: DiagnosticSessionType,
   ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>> {
       core::future::ready(Ok(()))
   }

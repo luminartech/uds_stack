@@ -149,6 +149,7 @@ pub trait DiagnosticSessionControl {
     /// # Arguments
     ///
     /// * `session` - the session being requested; see [`DiagnosticSessionType`].
+    /// * `active` - the session the server is in when the request arrives.
     ///
     /// # Errors
     ///
@@ -168,6 +169,7 @@ pub trait DiagnosticSessionControl {
     fn prepare(
         &mut self,
         session: DiagnosticSessionType,
+        active: DiagnosticSessionType,
     ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
 
     /// Called once the positive response is confirmed sent, or a suppressed one's
@@ -445,6 +447,7 @@ mod tests {
         fn prepare(
             &mut self,
             _s: DiagnosticSessionType,
+            _active: DiagnosticSessionType,
         ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>> {
             core::future::ready(Ok(()))
         }

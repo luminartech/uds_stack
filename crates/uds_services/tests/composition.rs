@@ -278,6 +278,7 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     fn prepare(
         &mut self,
         _s: DiagnosticSessionType,
+        _active: DiagnosticSessionType,
     ) -> impl core::future::Future<Output = Result<(), Nrc>> {
         core::future::ready(Ok(()))
     }

@@ -71,7 +71,11 @@ impl uds_services::DiagnosticSessionControl for Ecu {
             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
-    fn prepare(&mut self, _s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
+    fn prepare(
+        &mut self,
+        _s: S,
+        _active: S,
+    ) -> impl core::future::Future<Output = Result<(), Nrc>> {
         core::future::ready(Ok(()))
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
@@ -651,7 +655,11 @@ impl uds_services::DiagnosticSessionControl for Timed {
             },
         }
     }
-    fn prepare(&mut self, _s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
+    fn prepare(
+        &mut self,
+        _s: S,
+        _active: S,
+    ) -> impl core::future::Future<Output = Result<(), Nrc>> {
         core::future::ready(Ok(()))
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
@@ -946,6 +954,8 @@ struct Preparing {
     refusals: u8,
     /// How many `prepare`s completed `Ok`.
     prepared: u8,
+    /// Every `prepare`'s requested and active session, oldest first.
+    asked: [Option<(S, S)>; 2],
     /// Every `on_transition`, oldest first.
     transitions: [Option<(SessionTransition, S)>; 2],
 }
@@ -970,7 +980,10 @@ impl uds_services::DiagnosticSessionControl for Preparing {
             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
-    async fn prepare(&mut self, _s: S) -> Result<(), Nrc> {
+    async fn prepare(&mut self, s: S, active: S) -> Result<(), Nrc> {
+        if let Some(slot) = self.asked.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some((s, active));
+        }
         PendN(core::mem::take(&mut self.pends)).await;
         if self.refusals > 0 {
             self.refusals = self.refusals.saturating_sub(1);
@@ -1013,8 +1026,12 @@ impl uds_services::DiagnosticSessionControl for Unannounced {
     fn timing(&self, s: S) -> SessionTiming {
         self.0.timing(s)
     }
-    fn prepare(&mut self, s: S) -> impl core::future::Future<Output = Result<(), Nrc>> {
-        self.0.prepare(s)
+    fn prepare(
+        &mut self,
+        s: S,
+        active: S,
+    ) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        self.0.prepare(s, active)
     }
     fn on_transition(&mut self, t: SessionTransition, entered: S, r: bool) {
         self.0.on_transition(t, entered, r);
@@ -1211,4 +1228,29 @@ fn a_slow_prepare_that_may_not_pend_gets_no_response_pending() {
     assert_eq!(t.sent_count, 1);
     assert_eq!(t.addressed(0).1, ENTERED);
     assert_eq!(server.services().0.transitions, [INTO_EXTENDED, None]);
+}
+
+/// `prepare` is told the session in force as well as the one requested.
+#[test]
+fn prepare_is_told_the_active_session() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+            Step::Ind(request_from(TESTER), &[0x10, 0x01]),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    assert_eq!(server.transport().cursor, 4, "the script was not consumed");
+    assert_eq!(
+        server.services().asked,
+        [
+            Some((S::ExtendedDiagnosticSession, S::DefaultSession)),
+            Some((S::DefaultSession, S::ExtendedDiagnosticSession)),
+        ]
+    );
 }
