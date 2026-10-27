@@ -194,10 +194,11 @@ typedef struct
  *
  * A layer keeps a DTC memory: each DTC's number, its status byte and one
  * snapshot record of identifiers. The server encodes the 0x19 reports from it
- * (0x01, 0x02, 0x03, 0x04 and 0x0A), reporting the status bits below as its
- * DTCStatusAvailabilityMask, and the memory updates each status with the
- * transitions below, so it applies ISO 14229-1 Annex D rather than restating
- * it. */
+ * (0x01, 0x02, 0x03, 0x04 and 0x0A), reporting as its
+ * DTCStatusAvailabilityMask the bits its Rust Policy declares, by default the
+ * status bits below; a memory that sets warningIndicatorRequested (0x80)
+ * declares that bit too. The memory updates each status with the transitions
+ * below, so it applies ISO 14229-1 Annex D rather than restating it. */
 
 /* A DTC's status bits (ISO 14229-1:2020 Annex D.2), those the transitions
  * maintain. */
