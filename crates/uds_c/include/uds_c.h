@@ -368,7 +368,9 @@ typedef void (*UdsTransitionAbandonFn)(uint8_t active_session, uint8_t sub_funct
  * @brief Makes the transition, once uds_tcp_write has taken its positive
  *        response. A session's also runs, with UDS_DSC_DEFAULT_SESSION, when the
  *        server returns to the default session without a request: on
- *        tS3_Server expiry, or after a reset.
+ *        tS3_Server expiry, or after a reset that restarts the server from
+ *        another session, once every layer's execute of that reset has
+ *        returned.
  */
 typedef void (*UdsTransitionExecuteFn)(uint8_t sub_function);
 
