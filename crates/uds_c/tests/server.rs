@@ -793,6 +793,67 @@ fn a_second_dtc_memory_is_refused() {
     );
 }
 
+unsafe extern "C" fn set_nothing(_op: u8, _setting_type: u8) -> u8 {
+    0x00
+}
+
+unsafe extern "C" fn control_nothing(_op: u8, _control: u8, _communication: u8) -> u8 {
+    0x00
+}
+
+unsafe extern "C" fn begin_nothing(_op: u8, _address: u32, _size: u32, _format: u8) -> u8 {
+    0x00
+}
+
+unsafe extern "C" fn block_nothing(_op: u8, _data: *const u8, _len: usize) -> u8 {
+    0x00
+}
+
+unsafe extern "C" fn finish_nothing(_op: u8) -> u8 {
+    0x00
+}
+
+/// A second layer's DTC setting, communication control or download, which the server
+/// would never call, is refused at start-up.
+#[test]
+fn a_service_a_second_layer_serves_is_refused() {
+    static SETTING: UdsLayer = layer_of_dtc(uds_c::UdsDtcHooks {
+        setting: Some(set_nothing),
+        ..NO_DTC_HOOKS
+    });
+    static CONTROL: UdsLayer = UdsLayer {
+        comm_control: Some(control_nothing),
+        ..layer_of(&[])
+    };
+    static DOWNLOAD: UdsLayer = UdsLayer {
+        transfer: uds_c::UdsTransferHooks {
+            access: UdsAccess {
+                sessions: 0x02,
+                security_level: 0,
+            },
+            begin: Some(begin_nothing),
+            block: Some(block_nothing),
+            finish: Some(finish_nothing),
+        },
+        ..layer_of(&[])
+    };
+    validated_only!(TwoSettings, SETTING, CONTROL, SETTING);
+    validated_only!(TwoControls, CONTROL, CONTROL);
+    validated_only!(TwoDownloads, DOWNLOAD, SETTING, DOWNLOAD);
+    assert_eq!(
+        TableApp::<TwoSettings>::validate(),
+        Err(TableError::Duplicate(AccessOf::DtcSetting(2)))
+    );
+    assert_eq!(
+        TableApp::<TwoControls>::validate(),
+        Err(TableError::Duplicate(AccessOf::CommControl(1)))
+    );
+    assert_eq!(
+        TableApp::<TwoDownloads>::validate(),
+        Err(TableError::Duplicate(AccessOf::Transfer(2)))
+    );
+}
+
 unsafe extern "C" fn seed_nothing(_op: u8, _option: *const u8, _option_len: usize) -> u8 {
     0x00
 }
