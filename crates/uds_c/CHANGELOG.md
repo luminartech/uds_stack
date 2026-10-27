@@ -20,6 +20,9 @@ pre-1.0 crates).
     tables at start-up; `Policy` states the sessions, their timing and the limits.
     A DTC, communication control or download service that no layer serves is
     `serviceNotSupported` (0x11).
+  - Resets and session changes through every layer's `UdsTransitionHooks`: check and
+    prepare before the positive response, execute after it, and abandon for a change
+    prepared but not made; each hook is told the active session.
   - `uds_record_copy`, through which a handler answers into the record the server
     lends it, and the operation-status protocol of handlers that pend or are canceled.
     `uds_record_copy_16_be`, `uds_record_copy_32_be` and `uds_record_copy_64_be`

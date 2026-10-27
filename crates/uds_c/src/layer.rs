@@ -58,11 +58,16 @@ pub type UdsTransferBlockFn =
 /// `UdsTransferFinishFn`.
 pub type UdsTransferFinishFn = unsafe extern "C" fn(op: u8) -> u8;
 /// `UdsTransitionCheckFn`.
-pub type UdsTransitionCheckFn = unsafe extern "C" fn(sub_function: u8) -> u8;
+pub type UdsTransitionCheckFn =
+    unsafe extern "C" fn(active_session: u8, sub_function: u8) -> u8;
 /// `UdsTransitionPrepareFn`.
-pub type UdsTransitionPrepareFn = unsafe extern "C" fn(op: u8, sub_function: u8) -> u8;
+pub type UdsTransitionPrepareFn =
+    unsafe extern "C" fn(op: u8, active_session: u8, sub_function: u8) -> u8;
 /// `UdsTransitionExecuteFn`.
 pub type UdsTransitionExecuteFn = unsafe extern "C" fn(sub_function: u8);
+/// `UdsTransitionAbandonFn`.
+pub type UdsTransitionAbandonFn =
+    unsafe extern "C" fn(active_session: u8, sub_function: u8);
 
 /// `UdsAccess`: the sessions an operation is available in, as `UDS_SESSION_MASK_*`
 /// bits, and the security level, by its requestSeed value, that unlocks it, 0 for none.
@@ -161,7 +166,8 @@ pub struct UdsTransferHooks {
     pub finish: Option<UdsTransferFinishFn>,
 }
 
-/// `UdsTransitionHooks`: a layer's say in one service's transitions.
+/// `UdsTransitionHooks`: a layer's say in one service's transitions. A `None` hook
+/// behaves as an empty one, a check or prepare answering positive at once.
 #[repr(C)]
 #[derive(Debug)]
 pub struct UdsTransitionHooks {
@@ -171,6 +177,8 @@ pub struct UdsTransitionHooks {
     pub prepare: Option<UdsTransitionPrepareFn>,
     /// Makes the transition, once `uds_tcp_write` has taken its response.
     pub execute: Option<UdsTransitionExecuteFn>,
+    /// Undoes the prepare of a transition that is not made.
+    pub abandon: Option<UdsTransitionAbandonFn>,
 }
 
 /// `UdsLayer`: one layer of services, a table per identifier-based service and handlers
@@ -218,10 +226,10 @@ const _: () = {
     );
     assert!(size_of::<UdsDtcHooks>() == 20);
     assert!(size_of::<UdsTransferHooks>() == 16);
-    assert!(size_of::<UdsTransitionHooks>() == 12);
-    assert!(size_of::<UdsLayer>() == 88);
+    assert!(size_of::<UdsTransitionHooks>() == 16);
+    assert!(size_of::<UdsLayer>() == 96);
     assert!(offset_of!(UdsLayer, dtc) == 24 && offset_of!(UdsLayer, transfer) == 48);
-    assert!(offset_of!(UdsLayer, session) == 64 && offset_of!(UdsLayer, reset) == 76);
+    assert!(offset_of!(UdsLayer, session) == 64 && offset_of!(UdsLayer, reset) == 80);
 };
 
 /// `UDS_SESSION_MASK_*`: each session's bit in an access mask.
@@ -393,7 +401,7 @@ impl Layers {
         self.first(|l| Some(&l.transfer).filter(|t| t.begin.is_some()))
     }
 
-    /// Every layer's check of the transition to `sub_function`, in order.
+    /// Every layer's check of the transition, in order.
     pub(crate) fn checks(
         self,
         hooks: fn(&UdsLayer) -> &UdsTransitionHooks,
@@ -401,13 +409,34 @@ impl Layers {
         self.iter().filter_map(move |l| hooks(l).check.map(Handler))
     }
 
-    /// Every layer's prepare of the transition, in order.
+    /// Every layer's prepare of the transition, in order: `None` for a layer without
+    /// one.
     pub(crate) fn prepares(
         self,
         hooks: fn(&UdsLayer) -> &UdsTransitionHooks,
-    ) -> impl Iterator<Item = Handler<UdsTransitionPrepareFn>> {
-        self.iter()
-            .filter_map(move |l| hooks(l).prepare.map(Handler))
+    ) -> impl Iterator<Item = Option<Handler<UdsTransitionPrepareFn>>> {
+        self.iter().map(move |l| hooks(l).prepare.map(Handler))
+    }
+
+    /// The abandon of the transition from `active` to `sub_function` by the first
+    /// `count` layers, the last of them first.
+    pub(crate) fn abandon(
+        self,
+        hooks: fn(&UdsLayer) -> &UdsTransitionHooks,
+        count: usize,
+        active: u8,
+        sub_function: u8,
+    ) {
+        for abandon in self
+            .0
+            .iter()
+            .take(count)
+            .rev()
+            .filter_map(|l| hooks(l).abandon)
+        {
+            // SAFETY: `Layers::new`: a handler with the header's signature.
+            unsafe { abandon(active, sub_function) };
+        }
     }
 
     /// Every layer's execute of the transition to `sub_function`, the last layer's

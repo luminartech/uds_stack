@@ -541,24 +541,65 @@ fn settled(nrc: u8) -> Result<(), Nrc> {
     }
 }
 
-/// Every layer's check, then every layer's prepare, of the transition to `sub_function`:
-/// the first refusal.
+/// Every layer's check, then every layer's prepare, of the transition from `active` to
+/// `sub_function`: the first refusal. A refusal, or the future dropped unfinished,
+/// abandons the transition in every layer prepared before it.
 async fn transition(
-    layers: &Layers,
+    layers: &'static Layers,
     hooks: fn(&UdsLayer) -> &UdsTransitionHooks,
+    active: u8,
     sub_function: u8,
 ) -> Result<(), Nrc> {
     for check in layers.checks(hooks) {
-        match check.call(sub_function) {
+        match check.call(active, sub_function) {
             // A check answers at once; it is never called again to settle.
             op::RESPONSE_PENDING => return Err(Nrc::GeneralReject),
             nrc => settled(nrc)?,
         }
     }
+    let mut prepared = Prepared {
+        layers,
+        hooks,
+        active,
+        sub_function,
+        count: 0,
+        accepted: false,
+    };
     for prepare in layers.prepares(hooks) {
-        settled(op::settle(|op| prepare.call(op, sub_function)).await)?;
+        if let Some(prepare) = prepare {
+            settled(op::settle(|op| prepare.call(op, active, sub_function)).await)?;
+        }
+        prepared.count = prepared.count.saturating_add(1);
     }
+    prepared.accepted = true;
     Ok(())
+}
+
+/// The layers whose prepare of a transition answered positive, the first `count`, which
+/// are told to abandon it when this is dropped short of every layer accepting it.
+struct Prepared {
+    layers: &'static Layers,
+    hooks: fn(&UdsLayer) -> &UdsTransitionHooks,
+    active: u8,
+    sub_function: u8,
+    count: usize,
+    accepted: bool,
+}
+
+impl Drop for Prepared {
+    fn drop(&mut self) {
+        if !self.accepted {
+            let Self {
+                layers,
+                hooks,
+                active,
+                sub_function,
+                count,
+                ..
+            } = *self;
+            layers.abandon(hooks, count, active, sub_function);
+        }
+    }
 }
 
 /// Available in every session, no level needed.
@@ -598,8 +639,23 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> DiagnosticSessionContr
         P::leaves_running_software(session)
     }
 
-    async fn prepare(&mut self, session: Session, _active: Session) -> Result<(), Nrc> {
-        transition(P::LAYERS, session_hooks, u8::from(session)).await
+    async fn prepare(&mut self, session: Session, active: Session) -> Result<(), Nrc> {
+        transition(
+            P::LAYERS,
+            session_hooks,
+            u8::from(active),
+            u8::from(session),
+        )
+        .await
+    }
+
+    fn abandon(&mut self, session: Session, active: Session) {
+        P::LAYERS.abandon(
+            session_hooks,
+            usize::MAX,
+            u8::from(active),
+            u8::from(session),
+        );
     }
 
     fn on_transition(&mut self, _transition: SessionTransition, entered: Session, _: bool) {
@@ -618,12 +674,18 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> EcuReset
     }
 
     async fn reset(&mut self, kind: ResetType) -> Result<AfterReset, Nrc> {
-        transition(P::LAYERS, reset_hooks, u8::from(kind)).await?;
+        let active = u8::from(self.session);
+        transition(P::LAYERS, reset_hooks, active, u8::from(kind)).await?;
         Ok(after(kind))
     }
 
     fn confirmed(&mut self, kind: ResetType) {
         defer(&DEFERRED_RESET, u8::from(kind));
+    }
+
+    fn abandon(&mut self, kind: ResetType) {
+        let active = u8::from(self.session);
+        P::LAYERS.abandon(reset_hooks, usize::MAX, active, u8::from(kind));
     }
 }
 

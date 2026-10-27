@@ -5,10 +5,10 @@
 //! each connection the test opens is handed out under a socket index of its own. Two layers
 //! serve: a platform layer with the VIN, a slow DID, a routine, a security level and one
 //! whose seed handler copies nothing, a DTC memory of [`DTCS`], communication control and
-//! download handlers, and records of the transitions it executes, and an OEM layer that
-//! adds a writable DID, can refuse a reset, and prepares session changes as [`PREPARE`]
-//! says. A second server, [`Ecu::start_bare`], serves a layer of one DID and no other
-//! handler. Tests share these statics, so each holds [`lock`].
+//! download handlers, and records of the transitions it prepares, executes and abandons,
+//! and an OEM layer that adds a writable DID, can refuse a reset, and prepares session
+//! changes as [`PREPARE`] says. A second server, [`Ecu::start_bare`], serves a layer of one
+//! DID and no other handler. Tests share these statics, so each holds [`lock`].
 
 #![allow(unsafe_code, reason = "implements the C functions uds_c calls")]
 
@@ -87,8 +87,13 @@ pub enum Call {
     Block(usize, u8),
     /// The download's finish.
     Finish,
-    /// The OEM layer's prepare of a session change: operation status and sub-function.
-    Prepare(u8, u8),
+    /// A layer's prepare of a session change: operation status, active session and
+    /// sub-function.
+    Prepare(&'static str, u8, u8, u8),
+    /// A layer's abandon of a session change: active session and sub-function.
+    Abandon(&'static str, u8, u8),
+    /// A layer's abandon of a reset: active session and sub-function.
+    AbandonReset(&'static str, u8, u8),
 }
 
 /// Every handler call recorded so far.
@@ -116,6 +121,8 @@ pub enum Prepare {
     Ready,
     /// Response-pending on its first call, then done.
     PendOnce,
+    /// Response-pending until canceled.
+    Pend,
     /// Refused, `conditionsNotCorrect`.
     Refuse,
 }
@@ -300,16 +307,38 @@ unsafe extern "C" fn oem_reset(sub_function: u8) {
     record(Call::Reset("oem", sub_function));
 }
 
-unsafe extern "C" fn oem_session_prepare(op: u8, sub_function: u8) -> u8 {
-    record(Call::Prepare(op, sub_function));
+unsafe extern "C" fn platform_session_prepare(op: u8, active: u8, sub_function: u8) -> u8 {
+    record(Call::Prepare("platform", op, active, sub_function));
+    0x00
+}
+
+unsafe extern "C" fn oem_session_prepare(op: u8, active: u8, sub_function: u8) -> u8 {
+    record(Call::Prepare("oem", op, active, sub_function));
     match *PREPARE.lock().unwrap_or_else(PoisonError::into_inner) {
         Prepare::PendOnce if op == 0x00 => 0x78,
-        Prepare::Ready | Prepare::PendOnce => 0x00,
+        Prepare::Pend if op != 0x02 => 0x78,
+        Prepare::Ready | Prepare::PendOnce | Prepare::Pend => 0x00,
         Prepare::Refuse => 0x22,
     }
 }
 
-unsafe extern "C" fn oem_reset_check(_sub_function: u8) -> u8 {
+unsafe extern "C" fn platform_session_abandon(active: u8, sub_function: u8) {
+    record(Call::Abandon("platform", active, sub_function));
+}
+
+unsafe extern "C" fn oem_session_abandon(active: u8, sub_function: u8) {
+    record(Call::Abandon("oem", active, sub_function));
+}
+
+unsafe extern "C" fn platform_reset_abandon(active: u8, sub_function: u8) {
+    record(Call::AbandonReset("platform", active, sub_function));
+}
+
+unsafe extern "C" fn oem_reset_abandon(active: u8, sub_function: u8) {
+    record(Call::AbandonReset("oem", active, sub_function));
+}
+
+unsafe extern "C" fn oem_reset_check(_active: u8, _sub_function: u8) -> u8 {
     if *REFUSE_RESET.lock().unwrap_or_else(PoisonError::into_inner) {
         0x22
     } else {
@@ -410,13 +439,15 @@ static PLATFORM: UdsLayer = UdsLayer {
     },
     session: UdsTransitionHooks {
         check: None,
-        prepare: None,
+        prepare: Some(platform_session_prepare),
         execute: Some(platform_session),
+        abandon: Some(platform_session_abandon),
     },
     reset: UdsTransitionHooks {
         check: None,
         prepare: None,
         execute: Some(platform_reset),
+        abandon: Some(platform_reset_abandon),
     },
 };
 
@@ -434,11 +465,13 @@ static OEM: UdsLayer = UdsLayer {
         check: None,
         prepare: Some(oem_session_prepare),
         execute: Some(oem_session),
+        abandon: Some(oem_session_abandon),
     },
     reset: UdsTransitionHooks {
         check: Some(oem_reset_check),
         prepare: None,
         execute: Some(oem_reset),
+        abandon: Some(oem_reset_abandon),
     },
 };
 
@@ -555,6 +588,7 @@ const NO_TRANSITION: UdsTransitionHooks = UdsTransitionHooks {
     check: None,
     prepare: None,
     execute: None,
+    abandon: None,
 };
 
 /// A layer of one DID and no other handler.

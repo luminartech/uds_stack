@@ -157,7 +157,8 @@ fn the_programming_session_is_entered_from_the_extended_session_only() {
     assert_eq!(
         calls(),
         [
-            Call::Prepare(0x00, 0x03),
+            Call::Prepare("platform", 0x00, 0x01, 0x03),
+            Call::Prepare("oem", 0x00, 0x01, 0x03),
             Call::Session("oem", 0x03),
             Call::Session("platform", 0x03)
         ]
@@ -303,8 +304,8 @@ fn a_snapshot_request_names_a_held_dtc_and_record() {
     );
 }
 
-/// A session change a layer's prepare refuses is answered with its code, and neither
-/// entered nor executed.
+/// A session change a layer's prepare refuses is answered with its code, neither entered
+/// nor executed, and abandoned by the layer that prepared it first.
 #[test]
 fn a_refused_prepare_refuses_the_session_change() {
     let _lock = lock();
@@ -313,7 +314,14 @@ fn a_refused_prepare_refuses_the_session_change() {
     *support::PREPARE.lock().unwrap() = Prepare::Refuse;
     assert_eq!(ecu.request(&[0x10, 0x03]), [0x7F, 0x10, 0x22]);
     ecu.tick();
-    assert_eq!(calls(), [Call::Prepare(0x00, 0x03)]);
+    assert_eq!(
+        calls(),
+        [
+            Call::Prepare("platform", 0x00, 0x01, 0x03),
+            Call::Prepare("oem", 0x00, 0x01, 0x03),
+            Call::Abandon("platform", 0x01, 0x03)
+        ]
+    );
     assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x01]);
 }
 
@@ -330,10 +338,83 @@ fn a_pending_prepare_is_called_until_it_settles() {
     assert_eq!(
         calls(),
         [
-            Call::Prepare(0x00, 0x03),
-            Call::Prepare(0x01, 0x03),
+            Call::Prepare("platform", 0x00, 0x01, 0x03),
+            Call::Prepare("oem", 0x00, 0x01, 0x03),
+            Call::Prepare("oem", 0x01, 0x01, 0x03),
             Call::Session("oem", 0x03),
             Call::Session("platform", 0x03)
+        ]
+    );
+}
+
+/// A session change still being prepared when its connection closes is canceled in the
+/// layer preparing it, then abandoned by the layer that prepared it first.
+#[test]
+fn a_prepare_canceled_abandons_the_layers_prepared() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    *support::PREPARE.lock().unwrap() = Prepare::Pend;
+    sim::send(&support::diagnostic(&[0x10, 0x03]));
+    ecu.exchange(2);
+    sim::connect();
+    for _ in 0..10 {
+        ecu.tick();
+    }
+    let calls = calls();
+    assert_eq!(
+        calls[calls.len() - 2..],
+        [
+            Call::Prepare("oem", 0x02, 0x01, 0x03),
+            Call::Abandon("platform", 0x01, 0x03)
+        ]
+    );
+    assert!(!calls.iter().any(|c| matches!(c, Call::Session(..))));
+}
+
+/// A session change whose positive response cannot be sent is abandoned by every layer,
+/// the last first, and not entered.
+#[test]
+fn a_session_change_left_unanswered_is_abandoned() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    sim::fail(Fail::Write);
+    sim::send(&support::diagnostic(&[0x10, 0x03]));
+    for _ in 0..10 {
+        ecu.tick();
+    }
+    assert_eq!(
+        calls(),
+        [
+            Call::Prepare("platform", 0x00, 0x01, 0x03),
+            Call::Prepare("oem", 0x00, 0x01, 0x03),
+            Call::Abandon("oem", 0x01, 0x03),
+            Call::Abandon("platform", 0x01, 0x03)
+        ]
+    );
+    sim::fail(Fail::None);
+    ecu.activate();
+    assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x01]);
+}
+
+/// A reset whose positive response cannot be sent is abandoned by every layer, the last
+/// first, and not executed.
+#[test]
+fn a_reset_left_unanswered_is_abandoned() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    sim::fail(Fail::Write);
+    sim::send(&support::diagnostic(&[0x11, 0x01]));
+    for _ in 0..10 {
+        ecu.tick();
+    }
+    assert_eq!(
+        calls(),
+        [
+            Call::AbandonReset("oem", 0x01, 0x01),
+            Call::AbandonReset("platform", 0x01, 0x01)
         ]
     );
 }
@@ -382,7 +463,8 @@ fn dtc_setting_and_communication_control_resume_in_the_default_session() {
         assert_eq!(
             calls(),
             [
-                Call::Prepare(0x00, session),
+                Call::Prepare("platform", 0x00, 0x03, session),
+                Call::Prepare("oem", 0x00, 0x03, session),
                 Call::Session("oem", session),
                 Call::Session("platform", session)
             ]
@@ -393,7 +475,8 @@ fn dtc_setting_and_communication_control_resume_in_the_default_session() {
     assert_eq!(
         calls(),
         [
-            Call::Prepare(0x00, 0x01),
+            Call::Prepare("platform", 0x00, 0x02, 0x01),
+            Call::Prepare("oem", 0x00, 0x02, 0x01),
             Call::Session("oem", 0x01),
             Call::Session("platform", 0x01),
             Call::DtcSetting(0x01),
@@ -610,11 +693,13 @@ const fn layer_of(dids: &'static [UdsDidEntry]) -> UdsLayer {
             check: None,
             prepare: None,
             execute: None,
+            abandon: None,
         },
         reset: uds_c::UdsTransitionHooks {
             check: None,
             prepare: None,
             execute: None,
+            abandon: None,
         },
     }
 }

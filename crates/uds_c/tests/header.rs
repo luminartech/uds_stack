@@ -41,7 +41,7 @@ fn the_header_lays_out_every_structure_as_rust_does() {
         UdsSecurityLevel { level, sessions, attempt_limit, seed_len, delay_ms, seed, key }
         UdsDtcHooks { get, snapshot_count, snapshot_item, clear, setting }
         UdsTransferHooks { access, begin, block, finish }
-        UdsTransitionHooks { check, prepare, execute }
+        UdsTransitionHooks { check, prepare, execute, abandon }
         UdsLayer {
             dids, did_count, rids, rid_count, security_levels, security_level_count, dtc,
             comm_control, transfer, session, reset,

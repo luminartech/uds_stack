@@ -27,7 +27,8 @@ provides everything between those and a running server:
 - The operation-status protocol: a handler that needs time answers response-pending
   and is called again on each poll until it settles, or told to cancel.
 - Resets and session changes in three stages: every layer's check, every layer's
-  prepare, the positive response, and only then every layer's execute.
+  prepare, the positive response, and only then every layer's execute; a change not
+  made after all is abandoned by every layer that prepared it.
 - `edge-nal` sockets over the firmware's socket ABI, and the
   [`simple_doip`](https://crates.io/crates/simple_doip) entity and
   [`uds_on_ip`](https://crates.io/crates/uds_on_ip) transport they carry.

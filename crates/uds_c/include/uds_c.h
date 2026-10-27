@@ -334,22 +334,35 @@ typedef struct
     UdsTransferFinishFn finish;
 } UdsTransferHooks;
 
-/* EcuReset (0x11) and DiagnosticSessionControl (0x10) */
+/* EcuReset (0x11) and DiagnosticSessionControl (0x10)
+ *
+ * A transition's hooks are told the session the server is in,
+ * `active_session`, as a UDS_DSC_* value, and the sub-function requested:
+ * the session or the reset type. */
 
 /**
- * @brief Whether the transition to `sub_function` may be made: 0x00 or the NRC
- *        refusing it, at once. UDS_NRC_RESPONSE_PENDING is answered generalReject.
+ * @brief Whether the transition to `sub_function` may be made from
+ *        `active_session`: 0x00 or the NRC refusing it, at once.
+ *        UDS_NRC_RESPONSE_PENDING is answered generalReject.
  */
-typedef UdsNrc (*UdsTransitionCheckFn)(uint8_t sub_function);
+typedef UdsNrc (*UdsTransitionCheckFn)(uint8_t active_session, uint8_t sub_function);
 
 /**
  * @brief Brings the system to where the transition can be made: 0x00 once
- *        done, UDS_NRC_RESPONSE_PENDING meanwhile, or the NRC refusing it.
- *        Nothing undoes a prepare: a later layer may refuse the transition, or
- *        the request be canceled, so a prepared system is one that is also
- *        valid without the transition.
+ *        done, UDS_NRC_RESPONSE_PENDING meanwhile, or the NRC refusing it. A
+ *        prepare that refuses, or is canceled with UDS_OP_CANCEL, leaves the
+ *        system valid in `active_session`; one that returned 0x00 is undone by
+ *        the layer's abandon where the transition is not made after all.
  */
-typedef UdsNrc (*UdsTransitionPrepareFn)(UdsOpStatus op, uint8_t sub_function);
+typedef UdsNrc (*UdsTransitionPrepareFn)(UdsOpStatus op, uint8_t active_session, uint8_t sub_function);
+
+/**
+ * @brief Undoes the layer's prepare, which returned 0x00, of a transition that
+ *        is not made: a later layer's prepare refused it or was canceled, the
+ *        request was canceled, or the positive response was refused or never
+ *        confirmed. The server stays in `active_session`.
+ */
+typedef void (*UdsTransitionAbandonFn)(uint8_t active_session, uint8_t sub_function);
 
 /**
  * @brief Makes the transition, once uds_tcp_write has taken its positive
@@ -360,16 +373,20 @@ typedef UdsNrc (*UdsTransitionPrepareFn)(UdsOpStatus op, uint8_t sub_function);
 typedef void (*UdsTransitionExecuteFn)(uint8_t sub_function);
 
 /**
- * @brief A layer's say in one service's transitions; any hook may be NULL.
- *        The server asks every layer's check, then every layer's prepare,
- *        sends the positive response, then runs every layer's execute, the
- *        last layer's first.
+ * @brief A layer's say in one service's transitions. The server asks every
+ *        layer's check, then every layer's prepare, sends the positive
+ *        response, then runs every layer's execute, the last layer's first.
+ *        Where the transition is not made after a prepare, it runs the abandon
+ *        of every layer prepared, the last layer's first. Every hook may be
+ *        NULL, and an empty one behaves as NULL: a NULL check or prepare
+ *        answers 0x00 at once.
  */
 typedef struct
 {
     UdsTransitionCheckFn   check;
     UdsTransitionPrepareFn prepare;
     UdsTransitionExecuteFn execute;
+    UdsTransitionAbandonFn abandon;
 } UdsTransitionHooks;
 
 /* Layers */
@@ -381,7 +398,11 @@ typedef struct
  *        layer's entry wins; a later layer adds services but never replaces
  *        one. A DTC, communication control or download service that no layer
  *        serves is answered serviceNotSupported, and the server's start
- *        refuses one that two layers serve.
+ *        refuses one that two layers serve. So a service hook (`dtc`,
+ *        `comm_control`, `transfer`) or an identifier entry is set only in the
+ *        layer that serves it: NULL, or no entry, is what answers
+ *        serviceNotSupported or requestOutOfRange. The transition hooks
+ *        (`session`, `reset`) are every layer's.
  */
 typedef struct
 {
@@ -519,12 +540,12 @@ UDS_C_STATIC_ASSERT(sizeof(UdsSecurityLevel) == 16U, "UdsSecurityLevel layout");
 UDS_C_STATIC_ASSERT(offsetof(UdsSecurityLevel, delay_ms) == 4U, "UdsSecurityLevel layout");
 UDS_C_STATIC_ASSERT(sizeof(UdsDtcHooks) == 20U, "UdsDtcHooks layout");
 UDS_C_STATIC_ASSERT(sizeof(UdsTransferHooks) == 16U, "UdsTransferHooks layout");
-UDS_C_STATIC_ASSERT(sizeof(UdsTransitionHooks) == 12U, "UdsTransitionHooks layout");
-UDS_C_STATIC_ASSERT(sizeof(UdsLayer) == 88U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsTransitionHooks) == 16U, "UdsTransitionHooks layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsLayer) == 96U, "UdsLayer layout");
 UDS_C_STATIC_ASSERT(offsetof(UdsLayer, dtc) == 24U, "UdsLayer layout");
 UDS_C_STATIC_ASSERT(offsetof(UdsLayer, transfer) == 48U, "UdsLayer layout");
 UDS_C_STATIC_ASSERT(offsetof(UdsLayer, session) == 64U, "UdsLayer layout");
-UDS_C_STATIC_ASSERT(offsetof(UdsLayer, reset) == 76U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsLayer, reset) == 80U, "UdsLayer layout");
 #endif
 
 #undef UDS_C_STATIC_ASSERT
