@@ -580,12 +580,13 @@ impl Ecu {
             PARAMS,
         )));
         // SAFETY: just allocated, and nothing else refers to it yet.
-        let transport = unsafe { &mut *server }.transport_mut();
+        let transport = unsafe { &mut *server }.transport_mut().unwrap();
         let eid = EntityId::new([0x02, 0, 0, 0, 0, 0x01]).unwrap();
         doip::start_discovery(
             transport,
             FixedIdentity::new(eid, DiagnosticPowerModeCode::Ready),
-        );
+        )
+        .unwrap();
         // SAFETY: the server lives until `Ecu` is dropped, which drops the run future
         // first, and `poll_run` drops a finished future before arming the next, so no
         // two run futures borrow it at once.

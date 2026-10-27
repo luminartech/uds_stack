@@ -19,7 +19,7 @@ all-features = true
 # The server's application traits, which `TableApp` implements over the C tables.
 uds_services = { workspace = true }
 # The DoIP transport and entity the C sockets carry.
-uds_on_ip = { workspace = true }
+uds_on_ip = { workspace = true, features = ["connection"] }
 simple_doip = { workspace = true, features = ["connection"] }
 # The socket traits `nal` implements over the C socket calls.
 edge-nal = { workspace = true }
