@@ -758,8 +758,9 @@ mod declining {
     use uds_services::pipeline::settle;
     use uds_services::{
         Access, Address, Ai, CommunicationControl, CommunicationControlType,
-        CommunicationType, Mtype, Received, ResponseSink, ServiceSet, SubnetNumber, TaType,
-        TesterPresent, UdsServiceType, uds_server,
+        CommunicationType, DataFormatIdentifier, DataTransfer, Mtype, Received,
+        ResponseSink, ServiceSet, Sessions, SubnetNumber, TaType, TesterPresent,
+        TransferRequest, UdsServiceType, uds_server,
     };
 
     use super::FakeTransport;
@@ -773,7 +774,13 @@ mod declining {
     }
 
     fn serves(_ecu: &Ecu, service: UdsServiceType) -> bool {
-        !matches!(service, UdsServiceType::CommunicationControl)
+        !matches!(
+            service,
+            UdsServiceType::CommunicationControl
+                | UdsServiceType::RequestDownload
+                | UdsServiceType::TransferData
+                | UdsServiceType::RequestTransferExit
+        )
     }
 
     impl CommunicationControl for Ecu {
@@ -792,8 +799,29 @@ mod declining {
         }
     }
 
+    impl DataTransfer for Ecu {
+        const MAY_RESPOND_PENDING: bool = false;
+        const MAX_BLOCK_LEN: usize = 16;
+        const SESSIONS: Sessions = Sessions::ALL;
+        fn format_supported(&self, _format: DataFormatIdentifier) -> bool {
+            true
+        }
+        fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
+            Some(Access::new(Sessions::ALL))
+        }
+        async fn begin(&mut self, _r: TransferRequest<'_>) -> Result<(), Nrc> {
+            Ok(())
+        }
+        async fn block(&mut self, _d: &[u8], _o: &mut ResponseSink<'_>) -> Result<(), Nrc> {
+            Ok(())
+        }
+        async fn exit(&mut self, _r: &[u8], _o: &mut ResponseSink<'_>) -> Result<(), Nrc> {
+            Ok(())
+        }
+    }
+
     uds_server! {
-        Ecu: CommunicationControl, TesterPresent;
+        Ecu: CommunicationControl, DataTransfer, TesterPresent;
         transport = FakeTransport,
         peers = 1,
         services = DecliningServices,
@@ -801,10 +829,9 @@ mod declining {
         serves = serves,
     }
 
-    /// A listed service the application declines settles 0x11, ahead of Table 23's 0x7F
-    /// in the default session, as a service the assembly does not list would.
-    #[test]
-    fn a_declined_service_settles_0x11_before_its_session_check() {
+    /// Assert that `request`, sent physically in the default session, is answered
+    /// `expected`.
+    fn assert_answers(request: &[u8], expected: &[u8]) {
         let mut ecu = Ecu;
         let mut state = <<DecliningServices as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
         let mut buf = [0_u8; 32];
@@ -819,10 +846,29 @@ mod declining {
             &mut ecu,
             &mut state,
             phys,
-            Received::Whole(&[0x28, 0x00, 0x01]),
+            Received::Whole(request),
             &mut out,
         ));
         settle(phys, unsettled, false, &mut out);
-        assert_eq!(out.written_bytes(), &[0x7F, 0x28, 0x11]);
+        assert_eq!(out.written_bytes(), expected);
+    }
+
+    /// A listed service the application declines settles 0x11, ahead of Table 23's 0x7F
+    /// in the default session, as a service the assembly does not list would.
+    #[test]
+    fn a_declined_service_settles_0x11_before_its_session_check() {
+        assert_answers(&[0x28, 0x00, 0x01], &[0x7F, 0x28, 0x11]);
+    }
+
+    /// Declining the three services of `DataTransfer` settles each 0x11, a well-formed
+    /// `RequestDownload` included.
+    #[test]
+    fn declined_transfer_services_each_settle_0x11() {
+        assert_answers(
+            &[0x34, 0x00, 0x44, 0, 0, 0, 0, 0, 0, 0, 0x10],
+            &[0x7F, 0x34, 0x11],
+        );
+        assert_answers(&[0x36, 0x01, 0xAA], &[0x7F, 0x36, 0x11]);
+        assert_answers(&[0x37], &[0x7F, 0x37, 0x11]);
     }
 }
