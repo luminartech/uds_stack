@@ -24,7 +24,7 @@ use crate::{Layers, execute_deferred};
 ///
 /// Placing the whole of it, its server included, where the firmware wants it, with
 /// `#[link_section]` say, keeps the server off a small stack: [`Self::new`] is a
-/// `const fn`, so it is initialised data rather than built at run time.
+/// `const fn`, so it is initialized data rather than built at run time.
 ///
 /// # Safety
 ///
