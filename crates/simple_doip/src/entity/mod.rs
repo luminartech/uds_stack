@@ -477,9 +477,13 @@ impl<
     ///
     /// A `const fn`, for a target whose stack cannot hold an entity: it builds the entity
     /// as a `static`'s initializer, before it knows the identity it announces. Until
-    /// discovery starts the entity serves `TCP_DATA` alone. [`Entity::new`] is not
-    /// `const`, because a constant connection table is an image of every buffer, copied
-    /// from flash where the entity is built at run time.
+    /// discovery starts the entity serves `TCP_DATA` alone.
+    ///
+    /// The `static` is a `.data` image of the whole entity, buffers included: the entity
+    /// takes its size in flash as well as in RAM. Its initializer is `const` only where
+    /// `acceptor` is itself a `const`-built `static`, as a zero-sized acceptor over a C
+    /// stack is; an acceptor built at run time, as embassy-net's is from its network
+    /// stack, cannot be borrowed there.
     ///
     /// # Arguments
     ///
