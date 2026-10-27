@@ -1,5 +1,5 @@
 //! The `DoIP` entity and transport the firmware's sockets carry, and the poll that drives
-//! a server over them.
+//! a server over them for [`Firmware`](crate::Firmware).
 //!
 //! The entity accepts one connection at a time, plus the reserve socket
 //! `simple_doip` keeps for a second routing activation, and discovers on the one UDP
@@ -65,7 +65,7 @@ pub fn start_discovery<const MAX_MESSAGE: usize, const TESTERS: usize>(
     transport.start_discovery(Datagrams, identity, sys::uds_now_ms())
 }
 
-/// Why [`poll_run`] did not poll a running server.
+/// Why [`Firmware::poll`](crate::Firmware::poll) did not poll a running server.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum RunError<E> {
@@ -91,7 +91,7 @@ pub enum RunError<E> {
 ///
 /// [`RunError::NotStarted`] for an empty `run`; [`RunError::Stopped`] for the transport
 /// error the server stopped on.
-pub fn poll_run<F, E>(
+pub(crate) fn poll_run<F, E>(
     mut run: Pin<&mut Option<F>>,
     rearm: impl FnOnce() -> F,
 ) -> Result<(), RunError<E>>

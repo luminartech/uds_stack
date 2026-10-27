@@ -291,8 +291,8 @@ impl Layers {
     ///   and nothing changes a layer or its tables;
     /// - every handler keeps the contract `include/uds_c.h` states for it, and the
     ///   `uds_record_copy` it calls is this crate's;
-    /// - the server, [`crate::execute_deferred`] and every other use of these layers
-    ///   run in one execution context, so no handler is entered twice at once;
+    /// - the server, its [`Firmware`](crate::Firmware) and every other use of these
+    ///   layers run in one execution context, so no handler is entered twice at once;
     /// - the program runs one server: the record lent to a handler and the transitions
     ///   awaiting their responses are kept in this crate's statics, which a second
     ///   server would share.

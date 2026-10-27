@@ -34,16 +34,16 @@ pre-1.0 crates).
     to a DTC before the memory's clear handler runs, and exports the Annex D status transitions
     of `uds_services::dtc_status` to C (`uds_dtc_status_after_test_result` and its
     companions) for the memory to apply.
-  - `execute_deferred`, which makes a reset or session change once `uds_tcp_write` has
+  - `Firmware`, the server and its run future in one `static`, the one way to drive the
+    server from one execution context: `arm` at start-up, then `poll` on each pass of
+    its loop, both `unsafe` on that promise; `arm` again where a transport error
+    stopped it. Each poll makes a reset or session change once `uds_tcp_write` has
     taken its response, and on entering a session where `ControlDTCSetting` and
     `CommunicationControl` are not served, or after a reset that restarts the server
     whose execute returns, resumes their state through their handlers (ISO 14229-1:2020
     10.2), once. A reset runs before the default session it returns to.
     `enableRapidPowerShutDown` and `disableRapidPowerShutDown` keep the server running.
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
-    and transport over them with `doip::poll_run` to drive the server.
-  - `Firmware`, the server and its run future in one `static` for firmware that polls
-    from one execution context: `arm` at start-up, then `poll` on each pass of its loop,
-    both `unsafe` on that promise; `arm` again where a transport error stopped it.
+    and transport over them.
   - The `time-driver` feature and `time_driver!`, `embassy-time`'s clock over
     `uds_now_ms`.

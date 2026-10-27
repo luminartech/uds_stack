@@ -1,6 +1,5 @@
-//! The server and its run future in one `static`, for firmware that polls the server from
-//! one execution context: what every firmware built on this crate otherwise writes for
-//! itself around [`doip::poll_run`] and [`execute_deferred`].
+//! The server and its run future in one `static`, polled from one execution context: the
+//! way firmware drives the server.
 //!
 //! The firmware still names the run future's type, which only `type_alias_impl_trait`
 //! can do for a `static`; the rest, the cells, arming and the poll, is here.
@@ -17,8 +16,9 @@ use core::pin::Pin;
 
 use uds_services::Stopped;
 
+use crate::app::execute_deferred;
 use crate::doip::{self, RunError};
-use crate::{Layers, Validated, execute_deferred};
+use crate::{Layers, Validated};
 
 /// A server and the run future [`Self::poll`] drives, in one `static`.
 ///
@@ -39,8 +39,10 @@ use crate::{Layers, Validated, execute_deferred};
 /// - Each `run` closure moves the server reference it is given into the future it
 ///   returns and nowhere else, so that reference ends with the future.
 pub struct Firmware<S, F> {
-    server: UnsafeCell<S>,
+    /// Ahead of `server`, so a `Firmware` dropped drops the future before the server it
+    /// borrows.
     run: UnsafeCell<Option<F>>,
+    server: UnsafeCell<S>,
 }
 
 // SAFETY: every access to the cells is through `arm` or `poll`, whose contract confines
@@ -61,8 +63,8 @@ impl<S, F> Firmware<S, F> {
     #[must_use]
     pub const fn new(server: S) -> Self {
         Self {
-            server: UnsafeCell::new(server),
             run: UnsafeCell::new(None),
+            server: UnsafeCell::new(server),
         }
     }
 
@@ -97,9 +99,13 @@ impl<S, F> Firmware<S, F> {
         true
     }
 
-    /// One pass of the firmware's loop: the transitions confirmed responses leave to make,
-    /// [`execute_deferred`] for `layers`, then one poll of the run future,
-    /// [`doip::poll_run`], which `run` builds again once a confirmed reset has stopped it.
+    /// One pass of the firmware's loop: first the resets and session changes whose
+    /// positive responses `uds_tcp_write` took since the last pass, each through every
+    /// layer of `layers`, as `include/uds_c.h` orders them, then one poll of the run
+    /// future, with a waker that does nothing. A run future that stops on a confirmed
+    /// reset leaves the server at its power-up state, and `run` builds the next one, so
+    /// the server keeps serving; one that stops on a transport error leaves the server
+    /// unarmed.
     ///
     /// # Errors
     ///
