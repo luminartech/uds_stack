@@ -12,6 +12,8 @@ use crate::mapping::{
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
+#[cfg(feature = "connection")]
+use simple_doip::entity::{AlreadyStarted, Discovery, Entity, VehicleIdentity};
 use simple_doip::service::{self, ConnectionId, DiagnosticEntity, Refusal};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, SResult, Timestamp};
@@ -216,16 +218,6 @@ impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
         &self.entity
     }
 
-    /// The entity, to configure it between events: to start its discovery once the
-    /// interface has an address, say.
-    ///
-    /// The transport records which tester is on which connection and which responses
-    /// await their confirmation. While a response awaits one, do not replace the entity,
-    /// or close or send on its connections, or that record no longer matches the entity.
-    pub fn entity_mut(&mut self) -> &mut E {
-        &mut self.entity
-    }
-
     fn tester_mut(&mut self, address: LogicalAddress) -> Option<&mut Tester> {
         self.testers
             .iter_mut()
@@ -297,6 +289,39 @@ impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
         }
         tester.owes = ConnectionAction::Continue;
         (result == SResult::Ok).then_some(tester.connection)
+    }
+}
+
+#[cfg(feature = "connection")]
+impl<
+    'a,
+    A: edge_nal::TcpAccept + 'a,
+    const MCTS: usize,
+    const MAX_MESSAGE: usize,
+    const TESTERS: usize,
+    U: edge_nal::UdpSplit,
+    I: VehicleIdentity,
+    const CONNECTIONS: usize,
+>
+    DoIpTransport<
+        Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>>,
+        CONNECTIONS,
+    >
+{
+    /// Starts the discovery of an entity built by [`Entity::new_discovery_later`], as
+    /// [`Entity::start_discovery`] does: call it between events, once the interface has a
+    /// valid address.
+    ///
+    /// # Errors
+    ///
+    /// [`AlreadyStarted`] where the entity's discovery has started.
+    pub fn start_discovery(
+        &mut self,
+        socket: U,
+        identity: I,
+        seed: u32,
+    ) -> Result<(), AlreadyStarted> {
+        self.entity.start_discovery(socket, identity, seed)
     }
 }
 
