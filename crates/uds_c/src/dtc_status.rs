@@ -1,6 +1,7 @@
-//! The DTC status transitions of ISO 14229-1:2020 Annex D.2, as [`uds_services::dtc_status`]
-//! gives them, for a DTC memory the firmware keeps. Each is a pure function of a status
-//! byte, so unlike the server's other calls any task may make it.
+//! The DTC status transitions of ISO 14229-1:2020 Annex D.2, as
+//! [`uds_services::dtc_status`] gives them, for a DTC memory the firmware keeps. Each is
+//! a pure function of a status byte, so unlike the server's other calls any task may make
+//! it.
 
 #![allow(
     unsafe_code,

@@ -4,11 +4,11 @@
 //! The socket calls run over in-memory buffers with one TCP connection the test drives;
 //! each connection the test opens is handed out under a socket index of its own. Two
 //! layers serve: a platform layer with the VIN, a slow DID, a routine, a security level,
-//! a DTC memory of [`DTCS`], communication control and download handlers, and records of the transitions
-//! it executes, and an OEM layer that adds a writable DID, can refuse a reset, and
-//! prepares session changes as [`PREPARE`] says. A second server, [`Ecu::start_bare`],
-//! serves a layer of one DID and no other handler. Tests share these statics, so each
-//! holds [`lock`].
+//! a DTC memory of [`DTCS`], communication control and download handlers, and records of
+//! the transitions it executes, and an OEM layer that adds a writable DID, can refuse a
+//! reset, and prepares session changes as [`PREPARE`] says. A second server,
+//! [`Ecu::start_bare`], serves a layer of one DID and no other handler. Tests share these
+//! statics, so each holds [`lock`].
 
 #![allow(unsafe_code, reason = "implements the C functions uds_c calls")]
 
