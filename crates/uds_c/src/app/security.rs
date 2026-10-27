@@ -55,6 +55,11 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> SecurityAccess
         }
     }
 
+    /// The level's `seed_len`; [`Policy::MAX_SEED_LEN`] for a level no layer defines.
+    fn seed_len(&self, level: SecurityLevel) -> usize {
+        Self::level(level).map_or(P::MAX_SEED_LEN, |(_, e)| usize::from(e.seed_len))
+    }
+
     fn preconditions_met(&self, _level: SecurityLevel) -> bool {
         true
     }
