@@ -1,6 +1,8 @@
 // Every unsafe block in a C binding is an assumption about the C side, so each one states
 // the contract it relies on.
 #![deny(clippy::undocumented_unsafe_blocks)]
+// Each module relaxes `unsafe_code` for itself, so each says why.
+#![deny(clippy::allow_attributes_without_reason)]
 //! # `uds_c`
 //!
 //! A `uds_stack` UDS server for C firmware. The firmware describes its services as
