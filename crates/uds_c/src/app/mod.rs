@@ -533,7 +533,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> DiagnosticSessionContr
         P::leaves_running_software(session)
     }
 
-    async fn prepare(&mut self, session: Session) -> Result<(), Nrc> {
+    async fn prepare(&mut self, session: Session, _active: Session) -> Result<(), Nrc> {
         transition(P::LAYERS, session_hooks, u8::from(session)).await
     }
 
