@@ -35,8 +35,9 @@ pre-1.0 crates).
 - `uds_server!` takes an optional `serves = f`, a `fn(&App, UdsServiceType) -> bool`
   asked for every listed service: `false` declines the service at run time, so that
   every request for it is `serviceNotSupported` (0x11), as for a service the assembly
-  does not list, ahead of every other check. Without it every listed service is served,
-  so existing assemblies are unchanged.
+  does not list, ahead of every other check. Its answer must stay constant for the
+  server's life. Without it every listed service is served, so existing assemblies are
+  unchanged.
 
 ### Changed
 

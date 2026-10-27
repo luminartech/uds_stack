@@ -683,7 +683,9 @@ macro_rules! __uds_assert {
 /// tables it is given, say. `false` declines the service: ISO 14229-1:2020 8.7.2 Figure 5,
 /// ``UDSSVC_ARCH_0006``, settles every request for it `serviceNotSupported` (0x11), as for
 /// a service the list does not name, before any other check and without its trait being
-/// asked. Without it, every listed service is served.
+/// asked. The answer for each service must stay constant for the server's life: one that
+/// turned `false` mid-download would strand the transfer it opened. Without it, every
+/// listed service is served.
 ///
 /// `peers = 1` is the only count that compiles: the driver keeps one slot for a
 /// `DiagnosticSessionControl` or `ECUReset` response awaiting its confirmation, and a
