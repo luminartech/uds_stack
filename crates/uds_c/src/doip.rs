@@ -10,7 +10,7 @@ use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, Waker};
 
-use simple_doip::entity::{Discovery, EntityAddress, FixedIdentity};
+use simple_doip::entity::{AlreadyStarted, Discovery, EntityAddress, FixedIdentity};
 use simple_doip::service::EntityConfig;
 use uds_on_ip::DoIpTransport;
 use uds_services::{Reloads, Stopped};
@@ -51,15 +51,18 @@ pub const fn transport<const MAX_MESSAGE: usize, const TESTERS: usize>(
 }
 
 /// Starts discovery on the firmware's UDP socket as `identity`, its announcement jitter
-/// seeded from `uds_now_ms`. Called once, when the interface has a valid address and
-/// before the server is first polled.
+/// seeded from `uds_now_ms`, when the interface has a valid address and before the
+/// server is first polled.
+///
+/// # Errors
+///
+/// [`AlreadyStarted`] where discovery has started, as it has for a server started again
+/// after a transport error stopped it.
 pub fn start_discovery<const MAX_MESSAGE: usize, const TESTERS: usize>(
     transport: &mut Transport<MAX_MESSAGE, TESTERS>,
     identity: FixedIdentity,
-) {
-    transport
-        .entity_mut()
-        .start_discovery(Datagrams, identity, sys::uds_now_ms());
+) -> Result<(), AlreadyStarted> {
+    transport.start_discovery(Datagrams, identity, sys::uds_now_ms())
 }
 
 /// Why [`poll_run`] did not poll a running server.
