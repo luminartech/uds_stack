@@ -35,7 +35,7 @@ impl<F: FnMut(u8) -> u8> Drop for OpCall<F> {
 }
 
 /// Calls `call` once with INITIAL, for a call made outside a request, which cannot wait:
-/// a response-pending answer is cancelled at once with CANCEL. Returns the code it
+/// a response-pending answer is canceled at once with CANCEL. Returns the code it
 /// answered.
 pub fn once(mut call: impl FnMut(u8) -> u8) -> u8 {
     let status = call(INITIAL);

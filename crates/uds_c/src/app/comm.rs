@@ -13,8 +13,8 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> CommunicationControl
 {
     const MAY_RESPOND_PENDING: bool = true;
 
-    /// `enableRxAndTx` to `disableRxAndTx`, in the extended and programming sessions; the enhanced
-    /// address forms are not served.
+    /// `enableRxAndTx` to `disableRxAndTx`, in the extended and programming sessions;
+    /// the enhanced address forms are not served.
     fn access(&self, control_type: CommunicationControlType) -> Option<Access> {
         (u8::from(control_type) <= 0x03).then(outside_default)
     }
