@@ -160,10 +160,10 @@ pub trait DiagnosticSessionControl {
     ///
     /// # Cancel safety
     ///
-    /// The future is dropped unfinished where the requesting client's link closes, and
-    /// where [`Server::step`](crate::Server::step) is dropped. Nothing is sent and the
-    /// session does not change, so every await must leave a state valid in the active
-    /// session.
+    /// The future is dropped unfinished where the requesting client's link closes, where
+    /// the transport fails and [`Server::step`](crate::Server::step) returns its error,
+    /// and where `step` is dropped. Nothing is sent and the session does not change, so
+    /// every await must leave a state valid in the active session.
     ///
     /// [`ClientTiming::max_response_pending`]: crate::ClientTiming::max_response_pending
     fn prepare(
