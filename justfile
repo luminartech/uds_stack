@@ -152,7 +152,7 @@ embedded: && size
 # testing/embedded-probe/size-baseline.json, in the `firmware` profile on the pinned
 # toolchain; tools/check_size.py says what fails. Then the probe with its `run-time`
 # feature, the server built in main, against size-baseline-run-time.json. The image's
-# path is cargo's, so a CARGO_TARGET_DIR is honoured, and llvm-size and llvm-objdump are
+# path is cargo's, so a CARGO_TARGET_DIR is honored, and llvm-size and llvm-objdump are
 # the toolchain's own, from its llvm-tools component.
 [doc("Check the embedded probe's flash and RAM against the recorded baselines")]
 size *args:
