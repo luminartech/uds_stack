@@ -121,11 +121,7 @@ pub trait SecurityAccess {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
-    /// The longest seed this server issues.
-    ///
-    /// Also the width of the all-zero seed this crate answers a `requestSeed` with for the
-    /// level already unlocked (clause 10.4.1, Annex I transition 7): every level's zero
-    /// seed is this long, whatever the length of the seeds [`Self::seed`] writes for it.
+    /// The longest seed this server issues, and the most [`Self::seed_len`] counts.
     const MAX_SEED_LEN: usize;
 
     /// The longest key this server accepts.
@@ -195,6 +191,19 @@ pub trait SecurityAccess {
 
     /// Begin the delay this crate decided is owed.
     fn start_delay(&mut self, level: SecurityLevel);
+
+    /// The length of `level`'s seed, which the all-zero seed this crate answers a
+    /// `requestSeed` with for the level already unlocked has too (clause 10.4.1, Annex I
+    /// transition 7), so a client reads the same length locked or unlocked. Capped at
+    /// [`Self::MAX_SEED_LEN`], which is the default.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - the level the `requestSeed` names; see [`SecurityLevel`].
+    fn seed_len(&self, level: SecurityLevel) -> usize {
+        let _ = level;
+        Self::MAX_SEED_LEN
+    }
 
     /// Write a seed for `level` into `out`.
     ///

@@ -117,6 +117,11 @@ impl<const N: usize> TxQueue<N> {
         self.written >= position
     }
 
+    /// The stream position of the last byte written.
+    pub(crate) fn written(&self) -> u64 {
+        self.written
+    }
+
     pub(crate) fn clear(&mut self) {
         self.written = self.queued;
         self.start = 0;

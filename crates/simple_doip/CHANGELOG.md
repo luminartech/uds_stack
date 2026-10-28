@@ -21,6 +21,12 @@ changed rather than what was announced at the time.
   `AlreadyStarted`. A target whose stack cannot hold an entity builds it as a `static`'s
   initializer and starts discovery once the interface has a valid address and the
   identity is known.
+- An entity may confirm a diagnostic message once its socket reports it transmitted
+  rather than once the socket has taken it: `Entity`'s new last type parameter, a
+  `ConfirmOn` of `OnWrite`, the default and the behavior so far, or `OnTransmit`, chosen
+  with `Entity::confirm_on_transmit` or by naming it in the type `new_discovery_later`
+  builds. `OnTransmit` reads the new `TransmitProgress` trait, how many bytes of its
+  stream a socket has transmitted, which only its sockets implement.
 
 ### Changed
 

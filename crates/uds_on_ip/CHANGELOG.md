@@ -16,7 +16,7 @@ pre-1.0 crates).
   address.
   With `simple_doip`'s `Entity::new_discovery_later`, a server over a `DoIpTransport` is
   built in place as a `static`'s initializer, only where the acceptor is itself a
-  `static`.
+  `static`. It takes an entity that confirms on write or on transmission alike.
 
 ## [0.7.0] — 2026-10-16
 

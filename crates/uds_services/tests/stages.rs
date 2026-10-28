@@ -259,15 +259,19 @@ impl EcuReset for Ecu {
     fn confirmed(&mut self, _kind: ResetType) {}
 }
 
-/// Level 0x01 counts attempts, three before a delay; level 0x03 counts none; level 0x05
-/// is offered only in the programming session. Each seed is fixed, and its key is the
-/// seed's two's complement (clause 10.4.5.1). A `securityAccessDataRecord` of up to two
-/// bytes identifies the client, and only `0E 80` is a client this server knows.
+/// Level 0x01 counts attempts, three before a delay; level 0x03 counts none; level 0x05 is
+/// offered only in the programming session. Each seed is fixed, two bytes of the four
+/// `MAX_SEED_LEN` allows, and its key is the seed's two's complement (clause 10.4.5.1). A
+/// `securityAccessDataRecord` of up to two bytes identifies the client, and only `0E 80` is
+/// a client this server knows.
 impl SecurityAccess for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
-    const MAX_SEED_LEN: usize = 2;
+    const MAX_SEED_LEN: usize = 4;
     const MAX_KEY_LEN: usize = 2;
     const MAX_RECORD_LEN: usize = 2;
+    fn seed_len(&self, _l: SecurityLevel) -> usize {
+        2
+    }
     fn sessions(&self, level: SecurityLevel) -> Option<Sessions> {
         match level.request_seed() {
             0x01 | 0x03 => Some(Sessions::ALL),
@@ -930,7 +934,8 @@ fn extended(ecu: &mut Ecu) -> State {
 }
 
 /// Clause 10.4.5.2, Tables 47-50, then 10.4.5.3, Tables 51-52 — the seed, the key that
-/// unlocks, and a zero seed for the level now unlocked (Annex I transitions 2, 3, 7).
+/// unlocks, and a zero seed for the level now unlocked (Annex I transitions 2, 3, 7), as
+/// long as the level's seed rather than the longest one.
 #[test]
 fn security_access_seed_key_then_a_zero_seed() {
     let mut ecu = Ecu::default();

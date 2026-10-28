@@ -505,6 +505,24 @@ Protocol state
    confirmation (10.3.1). A reset accepted but not made is told to ``abandon`` instead, as
    ``UDSSVC_ARCH_0046`` has it for a session change.
 
+.. arch:: The DTC status transitions are this crate's; the DTC memory is the application's
+   :id: UDSSVC_ARCH_0047
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 Annex D.2
+   :tags: api; dtc; state
+
+   A server's DTC memory is the application's: which DTCs it holds, when a test result
+   matures, what an operation cycle is, and where the statuses are stored. How a DTC's
+   status byte changes is the standard's, and ``dtc_status`` makes those changes as pure
+   functions of a status: after a matured result, at an operation cycle's start, and on a
+   clear. A memory kept outside Rust, such as one behind ``uds_c``, applies the annex
+   through them rather than restating it, from whichever task its results arrive on.
+
+   They maintain every bit but ``warningIndicatorRequested``, whose condition is the
+   application's, and confirm a DTC at its first failure; ``MAINTAINED`` is the
+   ``DTCStatusAvailabilityMask`` of a server whose memory makes only these.
+
 .. arch:: The security access sequence is a state machine this crate owns
    :id: UDSSVC_ARCH_0037
    :depends_on: UDSSVC_ARCH_0034; UDSSVC_ARCH_0035

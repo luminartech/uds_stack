@@ -36,6 +36,7 @@ use edge_nal::{
 use embassy_time::{Duration, MockDriver};
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 use simple_doip::LogicalAddress;
+use simple_doip::entity::TransmitProgress;
 use simple_doip::messages::{
     DiagnosticNackCode, Message, NackCode, PayloadType, ProtocolVersion,
     RoutingActivationResponseCode,
@@ -85,6 +86,10 @@ struct Connection {
     outbound: Vec<u8>,
     /// How many bytes each write that wrote any carried.
     writes: Vec<usize>,
+    /// How many bytes the writes carried in all.
+    total_written: u64,
+    /// What the socket reports transmitted while its transmission is held.
+    transmit_held: Option<u64>,
     aborted: bool,
     closed: bool,
     dropped: bool,
@@ -273,6 +278,20 @@ impl MockPeer {
         self.with(|c| c.abort_stall = true);
     }
 
+    /// The socket reports nothing more transmitted until [`Self::transmit`].
+    pub fn hold_transmission(&self) {
+        self.with(|c| c.transmit_held = Some(c.total_written));
+    }
+
+    /// The socket reports `bytes` more transmitted, of what it has written.
+    pub fn transmit(&self, bytes: u64) {
+        self.with(|c| {
+            if let Some(held) = &mut c.transmit_held {
+                *held = (*held + bytes).min(c.total_written);
+            }
+        });
+    }
+
     /// Whether the socket's owner dropped it.
     pub fn is_dropped(&self) -> bool {
         self.with(|c| c.dropped)
@@ -394,6 +413,7 @@ impl MockPeer {
                 }
                 c.outbound.extend(&buf[..n]);
                 c.writes.push(n);
+                c.total_written += u64::try_from(n).unwrap();
                 Poll::Ready(Ok(n))
             })
         })
@@ -434,6 +454,15 @@ impl Write for MockSocket {
 impl Readable for MockSocket {
     async fn readable(&mut self) -> Result<(), MockError> {
         self.peer.readable().await
+    }
+}
+
+/// Everything written is transmitted at once, unless [`MockPeer::hold_transmission`]
+/// holds it.
+impl TransmitProgress for MockSocket {
+    fn transmitted(&self) -> u64 {
+        self.peer
+            .with(|c| c.transmit_held.unwrap_or(c.total_written))
     }
 }
 

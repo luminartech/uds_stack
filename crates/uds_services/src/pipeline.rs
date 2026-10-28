@@ -973,8 +973,8 @@ pub fn transfer_before_length(
 ///   (transition 4);
 /// * while the level's delay runs is `requiredTimeDelayNotExpired` (0x37) (transition 4);
 /// * for the unlocked level is answered with a zero seed of
-///   [`SecurityAccess::MAX_SEED_LEN`] bytes, discarding any seed awaiting a key
-///   (transitions 7 and 10);
+///   [`SecurityAccess::seed_len`] bytes, discarding any seed awaiting a key (transitions
+///   7 and 10);
 /// * otherwise is answered with the application's seed, and its level becomes the one
 ///   whose key is awaited (transitions 2, 5 and 8). A delay supported by the policy that
 ///   has stopped running has expired, so an attempt count at the limit is reset first.
@@ -1052,7 +1052,7 @@ async fn request_seed<A: SecurityAccess>(
     let _ = out.write_all(&[0x67, level.request_seed()]);
     if state.unlocked() == Some(level) {
         state.take_seed();
-        for _ in 0..A::MAX_SEED_LEN {
+        for _ in 0..services.seed_len(level).min(A::MAX_SEED_LEN) {
             let _ = out.write_all(&[0x00]);
         }
         return Ok(());

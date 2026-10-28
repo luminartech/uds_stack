@@ -217,9 +217,10 @@ stateDiagram-v2
 - **Requests wait for nothing.** `request` is a plain function, not a future: the
   request is accepted or refused when it returns, and there is nothing to drop
   part-way. It is queued on the
-  connection that registered its target and confirmed `Ok` once written,
-  `NoSocket` where no connection registered the target or the connection closes
-  first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where
+  connection that registered its target and confirmed `Ok` once written, or, for an
+  `OnTransmit` entity, once its socket reports it transmitted or the connection closes
+  after writing it, `NoSocket` where no connection registered the target or the
+  connection closes first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where
   the connection's queue has no room (ISO 13400-2:2019 8.3.1, 8.3.2). Requests to one
   target are confirmed in the order they were made. A response queues apart from the
   entity's own frames (acknowledgments, NACKs, routing activation responses and alive
@@ -824,6 +825,7 @@ the seam described in section 3 usable.
 | `src/entity/handler.rs` | Figure 16's generic header handler and Figure 17's diagnostic message handler |
 | `src/entity/table.rs` | The connection table: each slot's socket, buffers and phase, and the reserve |
 | `src/entity/outbox.rs` | Each slot's two transmit queues, the entity's own frames and the responses, and what is written next: a frame part's rest, or one queue's whole frames |
+| `src/entity/transmit.rs` | `ConfirmOn`: confirming a response once written, `OnWrite`, or once transmitted, `OnTransmit`, through a socket's `TransmitProgress` |
 | `src/entity/io.rs` | What each slot waits on from its socket: a write and a read at once on its split halves, or its close, applied in the poll that completes it |
 | `src/entity/discovery.rs` | `UDP_DISCOVERY`: the announcement burst, the pending answers and their waits, `VehicleIdentity`, applied in the poll that completes them |
 | `src/entity/discovery/datagram.rs` | Figure 16's header handler for a datagram, Figure 13's, and the frames that answer them |

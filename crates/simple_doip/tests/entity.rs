@@ -11,7 +11,9 @@ mod support;
 use std::pin::pin;
 
 use embassy_time::Duration;
-use simple_doip::entity::{AddressError, Entity, EntityAddress, Error};
+use simple_doip::entity::{
+    AddressError, Entity, EntityAddress, Error, NoDiscovery, OnTransmit,
+};
 use simple_doip::service::{
     ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Refusal,
     Timestamp,
@@ -36,6 +38,8 @@ type Small<'a> = Entity<'a, MockStack, 1, 64, 2>;
 /// The longest PDU a [`Small`] entity sends.
 const SMALL_PDU: usize = <Small<'static> as DiagnosticEntity>::MAX_PDU;
 type TwoSockets<'a> = Entity<'a, MockStack, 2, 4096, 2>;
+/// Two sockets, confirming what each has transmitted.
+type Transmitting<'a> = Entity<'a, MockStack, 2, 4096, 2, NoDiscovery, OnTransmit>;
 
 fn address() -> EntityAddress {
     EntityAddress::new(ENTITY, FUNCTIONAL).unwrap()
@@ -2296,4 +2300,127 @@ fn the_trait_contract_holds_for_an_echoing_caller() {
     second.eof();
     assert_eq!(events(&mut entity), [Ev::Closed(1)]);
     assert_eq!(events(&mut entity), []);
+}
+
+// --- confirming on transmission ----------------------------------------------------------
+
+/// A tester's request on `peer`, indicated, and the entity's response to it requested:
+/// the bytes the response and its acknowledgment take on the stream.
+fn answered<E: DiagnosticEntity>(
+    entity: &mut E,
+    peer: &MockPeer,
+    sa: LogicalAddress,
+) -> u64 {
+    peer.send(&diagnostic(sa, ENTITY, &[0x11, 0x01]));
+    assert!(matches!(step(entity), Some(Ev::Indication { .. })));
+    request(entity, sa, &[0x51, 0x01]).unwrap();
+    let both = [ack(ENTITY, sa), diagnostic(ENTITY, sa, &[0x51, 0x01])].concat();
+    u64::try_from(both.len()).unwrap()
+}
+
+/// An `OnTransmit` entity confirms a response once its socket reports the response's
+/// last byte transmitted, counted from the socket's first byte, the routing activation
+/// response included, and within a millisecond of it.
+#[test]
+fn a_response_is_confirmed_once_its_socket_has_transmitted_it() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity: Transmitting<'_> =
+        TwoSockets::new(&stack, address(), two_testers()).confirm_on_transmit();
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.hold_transmission();
+
+    let sent = answered(&mut entity, &peer, TESTER);
+    let mut buf = [0u8; 64];
+    let mut waiting = pin!(entity.next_event(&mut buf, None));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    assert_eq!(peer.take_written().len(), usize::try_from(sent).unwrap());
+
+    peer.transmit(sent - 1);
+    advance(ms(1));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+
+    peer.transmit(1);
+    advance(ms(1));
+    let event = until_stalled(waiting.as_mut()).map(|event| owned(event.unwrap()));
+    assert_eq!(
+        event,
+        Some(confirm(ENTITY, TaType::Physical, DoIpResult::Ok))
+    );
+}
+
+/// A response its socket has not transmitted holds back neither another connection's
+/// confirm nor its events.
+#[test]
+fn a_response_not_yet_transmitted_holds_back_no_other_connection() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity: Transmitting<'_> =
+        TwoSockets::new(&stack, address(), two_testers()).confirm_on_transmit();
+    let held = activated(&stack, &mut entity, TESTER);
+    let other = activated(&stack, &mut entity, OTHER);
+    held.hold_transmission();
+
+    let sent = answered(&mut entity, &held, TESTER);
+    answered(&mut entity, &other, OTHER);
+    assert_eq!(
+        events(&mut entity),
+        [Ev::Confirm {
+            sa: ENTITY,
+            ta: OTHER,
+            ta_type: TaType::Physical,
+            result: DoIpResult::Ok,
+        }]
+    );
+    other.send(&diagnostic(OTHER, ENTITY, &[0x3E, 0x00]));
+    assert!(matches!(
+        step(&mut entity),
+        Some(Ev::Indication { sa, .. }) if sa == OTHER
+    ));
+
+    held.transmit(sent);
+    advance(ms(1));
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
+    );
+}
+
+/// A connection that closes before its socket transmits a response it wrote confirms it,
+/// as one that confirms on write does.
+#[test]
+fn a_connection_closed_first_confirms_what_it_wrote() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity: Transmitting<'_> =
+        TwoSockets::new(&stack, address(), two_testers()).confirm_on_transmit();
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.hold_transmission();
+    answered(&mut entity, &peer, TESTER);
+    assert_eq!(events(&mut entity), []);
+
+    peer.eof();
+    assert_eq!(
+        events(&mut entity),
+        [
+            confirm(ENTITY, TaType::Physical, DoIpResult::Ok),
+            Ev::Closed(0)
+        ]
+    );
+}
+
+/// An entity that confirms on write, the default, does not wait for transmission.
+#[test]
+fn by_default_a_response_is_confirmed_once_written() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = TwoSockets::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.hold_transmission();
+
+    answered(&mut entity, &peer, TESTER);
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
+    );
 }

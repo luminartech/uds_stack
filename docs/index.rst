@@ -17,7 +17,8 @@ appear in ``Implements:`` and ``Verifies:`` annotations in the source.
 The crates
 ----------
 
-Each crate is built against one ISO document, named here with its edition. In a crate's
+Each protocol crate is built against one ISO document, named here with its edition; the C
+binding, ``uds_c``, is built against its C header instead. In a crate's
 documentation, and in the part of this set that covers it, a table, figure, clause or
 requirement cited with no document named is that one's; any other document is named where
 it is cited.
@@ -42,6 +43,9 @@ it is cited.
      - not yet authored
    * - ``uds_on_ip``
      - ISO 14229-5:2022, the UDSonIP profile and mapping
+     - not yet authored
+   * - ``uds_c``
+     - none: the C ABI of its ``include/uds_c.h``
      - not yet authored
 
 :doc:`architecture/index` describes how the crates fit together, and says where each
