@@ -331,7 +331,9 @@ typedef UdsNrc (*UdsTransferFinishFn)(UdsOpStatus op);
 /**
  * @brief A layer's download handlers; NULL: not served by this layer. One
  *        layer serves downloads, with `begin`: the server's start refuses a
- *        second.
+ *        second. Downloads are served only in the policy's TRANSFER_SESSIONS,
+ *        the programming session by default, so the server's start refuses an
+ *        `access` naming a session outside them.
  */
 typedef struct
 {

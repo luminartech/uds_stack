@@ -156,6 +156,10 @@ pub enum TableError {
     /// An access names a security level that is not a requestSeed sub-function.
     #[error("{0}: its access names a level that is not a requestSeed sub-function")]
     Access(AccessOf),
+    /// A download's access names a session outside [`Policy::TRANSFER_SESSIONS`], where
+    /// the server refuses every download whatever the access grants.
+    #[error("{0}: its access names a session outside the policy's TRANSFER_SESSIONS")]
+    TransferSessions(AccessOf),
     /// An entry lacks a handler it needs: a DID neither read nor written, a routine
     /// with no step, a level without its seed or key, a download without its block or
     /// finish, or a layer's DTC snapshot or clear without its `get`, or a snapshot
@@ -173,6 +177,18 @@ pub enum TableError {
         /// The level's requestSeed value.
         level: u8,
     },
+}
+
+/// Refuses the first download access naming a session outside `sessions`, the policy's
+/// [`Policy::TRANSFER_SESSIONS`].
+fn within_transfer_sessions(layers: &Layers, sessions: Sessions) -> Result<(), TableError> {
+    match layers
+        .transfer_accesses()
+        .position(|a| !a.sessions_within(sessions))
+    {
+        Some(index) => Err(TableError::TransferSessions(AccessOf::Transfer(index))),
+        None => Ok(()),
+    }
 }
 
 /// Proof that [`TableApp::validate`] accepted the tables of the application `A`, which
@@ -330,7 +346,8 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
     /// Checks the layers once, before the server starts: every record within the
     /// policy's limits, every security level a requestSeed sub-function allowing at
     /// least one attempt and at most `LEVELS` of them, every access naming such a level
-    /// or none, every entry with the handlers it needs, no identifier twice, at most one
+    /// or none, every download access within [`Policy::TRANSFER_SESSIONS`], every entry
+    /// with the handlers it needs, no identifier twice, at most one
     /// layer serving the DTC memory, DTC setting, communication control and downloads
     /// each, and the memory's snapshot and clear in its own layer.
     ///
@@ -377,6 +394,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
         if let Some(index) = layers.transfer_accesses().position(|a| !a.valid()) {
             return Err(TableError::Access(AccessOf::Transfer(index)));
         }
+        within_transfer_sessions(layers, P::TRANSFER_SESSIONS)?;
         if let Some(e) = layers.security_levels().find(|e| e.attempt_limit == 0) {
             return Err(TableError::NoAttempts { level: e.level });
         }
