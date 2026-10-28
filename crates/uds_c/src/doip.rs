@@ -52,17 +52,15 @@ pub const fn transport<const MAX_MESSAGE: usize, const TESTERS: usize>(
 
 /// Starts discovery on the firmware's UDP socket as `identity`, its announcement jitter
 /// seeded from `uds_now_ms`, when the interface has a valid address and before the
-/// server is first polled.
-///
-/// # Errors
-///
-/// [`AlreadyStarted`] where discovery has started, as it has for a server started again
-/// after a transport error stopped it.
+/// server is first polled. Does nothing where discovery has started, as it has for a
+/// server armed again after a transport error stopped it, which keeps that discovery.
 pub fn start_discovery<const MAX_MESSAGE: usize, const TESTERS: usize>(
     transport: &mut Transport<MAX_MESSAGE, TESTERS>,
     identity: FixedIdentity,
-) -> Result<(), AlreadyStarted> {
-    transport.start_discovery(Datagrams, identity, sys::uds_now_ms())
+) {
+    match transport.start_discovery(Datagrams, identity, sys::uds_now_ms()) {
+        Ok(()) | Err(AlreadyStarted) => {}
+    }
 }
 
 /// Why [`Firmware::poll`](crate::Firmware::poll) did not poll a running server.

@@ -671,6 +671,22 @@ fn a_failed_accept_stops_the_server() {
     assert!(matches!(ecu.poll(), Err(RunError::NotStarted)));
 }
 
+/// A server stopped on a transport error is armed again, its discovery kept, and
+/// serves.
+#[test]
+fn a_server_stopped_on_a_transport_error_is_armed_again() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    sim::fail(Fail::Accept);
+    sim::connect();
+    assert!(matches!(ecu.poll(), Err(RunError::Stopped(_))));
+    sim::fail(Fail::None);
+    assert!(ecu.arm());
+    assert!(!ecu.arm());
+    ecu.activate();
+    assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x01]);
+}
+
 /// A server never armed is not polled.
 #[test]
 fn an_unarmed_server_is_not_started() {
