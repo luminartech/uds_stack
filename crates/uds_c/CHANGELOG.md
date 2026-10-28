@@ -39,12 +39,12 @@ pre-1.0 crates).
   - `Firmware`, the server and its run future in one `static`, the one way to drive the
     server from one execution context: `arm` at start-up, then `poll` on each pass of
     its loop, both `unsafe` on that promise; `arm` again where a transport error
-    stopped it. `poll` makes the transitions through the layers of the server's own
-    policy. Each poll makes a reset or session change once `uds_tcp_write` has
-    taken its response, and on entering a session where `ControlDTCSetting` and
-    `CommunicationControl` are not served, or after a reset that restarts the server
-    whose execute returns, resumes their state through their handlers (ISO 14229-1:2020
-    10.2), once. A reset runs before the default session it returns to.
+    stopped it, `doip::start_discovery` keeping the discovery started. `poll` makes
+    the transitions through the layers of the server's own policy. Each poll makes a
+    reset or session change once `uds_tcp_write` has taken its response, and on
+    entering a session where `ControlDTCSetting` and `CommunicationControl` are not
+    served, or after a reset that restarts the server whose execute returns, resumes
+    their state through their handlers (ISO 14229-1:2020 10.2), once. A reset runs before the default session it returns to.
     `enableRapidPowerShutDown` and `disableRapidPowerShutDown` keep the server running.
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
     and transport over them.

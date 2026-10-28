@@ -646,6 +646,8 @@ type Validate<A> =
 
 /// A server in a [`Firmware`], armed as firmware arms it, polled as firmware polls it.
 pub struct Ecu {
+    /// Arms the server, as firmware does at start-up and after a transport error.
+    arm: Box<dyn FnMut() -> bool>,
     /// One pass of the firmware's loop.
     poll: Box<dyn FnMut() -> Result<(), RunError<Error>>>,
     /// Frees the firmware.
@@ -689,23 +691,32 @@ impl Ecu {
         let firmware = unsafe { &*raw };
         // SAFETY: every test that serves holds `lock`, so one thread arms and polls each
         // firmware, and `run` keeps the server reference in the future alone.
-        let armed = unsafe { firmware.arm(validate().unwrap(), start_discovery, run) };
-        assert!(armed);
+        let arm = Box::new(move || unsafe {
+            firmware.arm(validate().unwrap(), start_discovery, run)
+        });
+        assert!(arm());
         // SAFETY: as for `arm`.
         let poll = Box::new(move || unsafe { firmware.poll(run) });
         let layout = Layout::new::<Firmware<Server<A, Transport, 1>, Run>>();
-        // SAFETY: from `Box::into_raw` above, with the box's layout; `Ecu` drops `poll`,
-        // the last user of the reference, first. Dropped and freed through `raw` rather
-        // than a `Box`, whose unique access the run future's drop, reading the server
-        // through its own reference, would conflict with.
+        // SAFETY: from `Box::into_raw` above, with the box's layout; `Ecu` drops `arm`
+        // and `poll`, the last users of the reference, first. Dropped and freed through
+        // `raw` rather than a `Box`, whose unique access the run future's drop, reading
+        // the server through its own reference, would conflict with.
         let free = Box::new(move || unsafe {
             ptr::drop_in_place(raw);
             alloc::dealloc(raw.cast(), layout);
         });
         Self {
+            arm,
             poll,
             free: Some(free),
         }
+    }
+
+    /// Arms the server again, as firmware does after a transport error stopped it:
+    /// whether it was unarmed.
+    pub fn arm(&mut self) -> bool {
+        (self.arm)()
     }
 
     /// One pass of the firmware's loop, which the server must survive.
@@ -770,6 +781,7 @@ impl Ecu {
 
 impl Drop for Ecu {
     fn drop(&mut self) {
+        self.arm = Box::new(|| false);
         self.poll = Box::new(|| Err(RunError::NotStarted));
         if let Some(free) = self.free.take() {
             free();
@@ -783,8 +795,7 @@ fn start_discovery<A: ServiceSet>(server: &mut Server<A, Transport, 1>) {
     doip::start_discovery(
         server.transport_mut().unwrap(),
         FixedIdentity::new(eid, DiagnosticPowerModeCode::Ready),
-    )
-    .unwrap();
+    );
 }
 
 /// The server's run future, holding the server reference alone.

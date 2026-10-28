@@ -128,10 +128,10 @@
 //! with the nightly `type_alias_impl_trait` feature, in its own crate. At start-up it
 //! checks the tables with [`TableApp::validate`] and hands the [`Validated`] proof it
 //! returns to [`Firmware::arm`], whose closures start discovery with
-//! [`doip::start_discovery`] and build the run future; on each pass of its loop it calls
-//! [`Firmware::poll`]. `arm` fails to compile for an assembly not given
-//! `serves = App::serves`, as above. The crate's integration tests drive the server the
-//! same way, over a simulated C side.
+//! [`doip::start_discovery`] and build the run future, and again after a transport error
+//! stops the server; on each pass of its loop it calls [`Firmware::poll`]. `arm` fails to
+//! compile for an assembly not given `serves = App::serves`, as above. The crate's
+//! integration tests drive the server the same way, over a simulated C side.
 
 #![no_std]
 

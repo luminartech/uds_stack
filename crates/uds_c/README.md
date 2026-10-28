@@ -96,7 +96,8 @@ The server is built in place in a `uds_c::Firmware` `static`, with
 nightly `type_alias_impl_trait` feature in the firmware's crate; this crate itself
 builds on stable. At start-up the firmware calls `App::validate()` and hands the
 `Validated<App>` proof it returns to `Firmware::arm`, whose closures start discovery with
-`uds_c::doip::start_discovery` and build the run future. On every pass of its loop it
+`uds_c::doip::start_discovery` and build the run future; after a transport error stops
+the server, it calls `arm` again, with the same closures. On every pass of its loop it
 calls `Firmware::poll(run)`, which makes the resets and session changes whose positive
 responses `uds_tcp_write` has taken, through the server's own layers, then polls the
 server once. `Firmware` is the one way to drive the server, and `serves = App::serves`

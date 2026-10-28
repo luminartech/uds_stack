@@ -112,6 +112,9 @@ impl<S: TableServer, F> Firmware<S, F> {
     /// already. The [`Validated`] it takes is what [`TableApp::validate`] returned for
     /// the server's own application.
     ///
+    /// `start` runs on every arming, a re-arming after a transport error included:
+    /// [`doip::start_discovery`] starts discovery the first time and does nothing after.
+    ///
     /// Fails to compile for a server whose assembly was not given
     /// `serves = App::serves`, without which a service the tables do not serve is
     /// refused only after the checks ahead of its handler, not `serviceNotSupported`
