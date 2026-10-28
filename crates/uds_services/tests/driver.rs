@@ -1405,6 +1405,31 @@ fn a_transport_error_while_preparing_abandons_nothing() {
     assert_eq!(app.abandoned, [None, None]);
 }
 
+/// A prepared change whose confirmation fails while a second change prepares, and whose
+/// transport then fails, is abandoned once: the drain that took the failed confirmation
+/// leaves it for the step's guard.
+#[test]
+fn a_failed_confirmation_drained_before_a_transport_error_is_abandoned_once() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Transport(TransportError(1))),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
+    server.services().pends = 2;
+    assert_eq!(block_on(server.step()), Err(()));
+    assert!(server.transport().finished(), "the script was not consumed");
+    let app = server.services();
+    assert_eq!(app.prepared, 1, "the second prepare completed");
+    assert_eq!(app.abandoned, [ABANDONED, None]);
+    assert_eq!(app.transitions, [None, None]);
+}
+
 /// A step dropped once `prepare` has accepted the change, while its positive response
 /// is handed over, abandons the change.
 #[test]
