@@ -9,12 +9,12 @@
     reason = "a static's cells, reached through the unsafe calls' single-context contract"
 )]
 
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::fmt;
 use core::future::Future;
 use core::pin::Pin;
 
-use uds_services::{Server, ServiceSet, Stopped, UdsTransport};
+use uds_services::{Server, ServiceSet, StepError, Stopped, UdsTransport};
 
 use crate::app::execute_deferred;
 use crate::doip::{self, RunError};
@@ -79,6 +79,9 @@ pub struct Firmware<S, F> {
     /// borrows.
     run: UnsafeCell<Option<F>>,
     server: UnsafeCell<S>,
+    /// Whether a terminal transport error stopped the server, which is then never armed
+    /// again.
+    failed: Cell<bool>,
 }
 
 // SAFETY: every access to the cells is through `arm` or `poll`, whose contract confines
@@ -101,19 +104,18 @@ impl<S, F> Firmware<S, F> {
         Self {
             run: UnsafeCell::new(None),
             server: UnsafeCell::new(server),
+            failed: Cell::new(false),
         }
     }
 }
 
 impl<S: TableServer, F> Firmware<S, F> {
-    /// Arms the server where it has no run future, at start-up or after a transport
-    /// error stopped it: `start` prepares it, then `run` builds the future
-    /// [`Self::poll`] drives. Returns `false`, calling neither, where it is armed
-    /// already. The [`Validated`] it takes is what [`TableApp::validate`] returned for
-    /// the server's own application.
-    ///
-    /// `start` runs on every arming, a re-arming after a transport error included:
-    /// [`doip::start_discovery`] starts discovery the first time and does nothing after.
+    /// Arms the server at start-up: `start` prepares it, then `run` builds the future
+    /// [`Self::poll`] drives. Returns `false`, calling neither, where it is armed already
+    /// or a terminal transport error stopped it ([`RunError::Stopped`]): that server is
+    /// never stepped again, and serves again only once the firmware restarts. The
+    /// [`Validated`] it takes is what [`TableApp::validate`] returned for the server's
+    /// own application.
     ///
     /// Fails to compile for a server whose assembly was not given
     /// `serves = App::serves`, without which a service the tables do not serve is
@@ -138,7 +140,7 @@ impl<S: TableServer, F> Firmware<S, F> {
         // SAFETY: the contract makes this call the only one under way, so nothing else
         // reaches the slot.
         let slot = unsafe { &mut *self.run.get() };
-        if slot.is_some() {
+        if slot.is_some() || self.failed.get() {
             return false;
         }
         // SAFETY: no run future, so, by the contract on `run`, no reference to the
@@ -155,12 +157,17 @@ impl<S: TableServer, F> Firmware<S, F> {
     /// as `include/uds_c.h` orders them, then one poll of the run future, with a waker
     /// that does nothing. A run future that stops on a confirmed reset leaves the server
     /// at its power-up state, and `run` builds the next one, so the server keeps
-    /// serving; one that stops on a transport error leaves the server unarmed.
+    /// serving. One that stops on a transport error between requests, which the server
+    /// recovers from, leaves the server where it was, a response awaiting its
+    /// confirmation included, and `run` builds the next one over the same server too. One
+    /// that stops on a terminal transport error, mid-request, leaves the server unarmed
+    /// for good.
     ///
     /// # Errors
     ///
-    /// [`RunError::NotStarted`] before [`Self::arm`] or after a transport error;
-    /// [`RunError::Stopped`] for the transport error the server stopped on.
+    /// [`RunError::NotStarted`] before [`Self::arm`] or after a terminal transport error;
+    /// [`RunError::Interrupted`] for a recoverable transport error, the server serving
+    /// on; [`RunError::Stopped`] for the terminal transport error the server stopped on.
     ///
     /// # Safety
     ///
@@ -170,18 +177,22 @@ impl<S: TableServer, F> Firmware<S, F> {
         run: impl FnOnce(&'static mut S) -> F,
     ) -> Result<(), RunError<E>>
     where
-        F: Future<Output = Result<Stopped, E>>,
+        F: Future<Output = Result<Stopped, StepError<E>>>,
     {
         execute_deferred(S::LAYERS);
         // SAFETY: the contract makes this the only reference to the slot; it is behind
         // `&'static self`, so the future in it is never moved or freed, and only
         // dropped in place.
         let slot = unsafe { Pin::new_unchecked(&mut *self.run.get()) };
-        doip::poll_run(slot, || {
+        let polled = doip::poll_run(slot, || {
             // SAFETY: `poll_run` drops the finished future before it calls this, and by
             // the contract on `run` that future held the only reference to the server.
             run(unsafe { &mut *self.server.get() })
-        })
+        });
+        if matches!(polled, Err(RunError::Stopped(_))) {
+            self.failed.set(true);
+        }
+        polled
     }
 }
 
@@ -240,39 +251,51 @@ mod tests {
         const DECLINES: bool = true;
     }
 
-    /// The server's run future: pending `pending` polls, then stopped on a reset, or on a
-    /// transport error where it `fails`.
+    /// How a run future ends.
+    #[derive(Debug, Clone, Copy)]
+    enum End {
+        /// On a confirmed reset.
+        Reset,
+        /// On a transport error, recoverable or terminal.
+        Fails(StepError<()>),
+    }
+
+    const RESET: End = End::Reset;
+    const RECOVERABLE: End = End::Fails(StepError::Recoverable(()));
+    const TERMINAL: End = End::Fails(StepError::Terminal(()));
+
+    /// The server's run future: pending `pending` polls, then ended as `end` says.
     #[derive(Debug)]
     struct Run {
         server: &'static mut Server,
         pending: u32,
-        fails: bool,
+        end: End,
     }
 
     impl Future for Run {
-        type Output = Result<Stopped, ()>;
+        type Output = Result<Stopped, StepError<()>>;
 
         fn poll(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
             self.server.polls += 1;
             if self.pending > 0 {
                 self.pending -= 1;
-                Poll::Pending
-            } else if self.fails {
-                Poll::Ready(Err(()))
-            } else {
-                Poll::Ready(Ok(Stopped::Reset(ResetType::HardReset)))
+                return Poll::Pending;
             }
+            Poll::Ready(match self.end {
+                End::Reset => Ok(Stopped::Reset(ResetType::HardReset)),
+                End::Fails(error) => Err(error),
+            })
         }
     }
 
     /// Builds a run future, keeping the server reference in it alone.
-    fn run(pending: u32, fails: bool) -> impl FnOnce(&'static mut Server) -> Run {
+    fn run(pending: u32, end: End) -> impl FnOnce(&'static mut Server) -> Run {
         move |server| {
             server.runs += 1;
             Run {
                 server,
                 pending,
-                fails,
+                end,
             }
         }
     }
@@ -302,7 +325,7 @@ mod tests {
         static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
         // SAFETY: each test's static is reached from that test's thread alone, and each
         // `run` keeps the server reference in its future.
-        let polled = unsafe { FIRMWARE.poll(run(0, false)) };
+        let polled = unsafe { FIRMWARE.poll(run(0, RESET)) };
         assert!(matches!(polled, Err(RunError::NotStarted)));
     }
 
@@ -311,9 +334,9 @@ mod tests {
         static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
         // SAFETY: as above.
         unsafe {
-            assert!(FIRMWARE.arm(validated(), start, run(5, false)));
-            assert!(!FIRMWARE.arm(validated(), start, run(5, false)));
-            assert!(FIRMWARE.poll(run(5, false)).is_ok());
+            assert!(FIRMWARE.arm(validated(), start, run(5, RESET)));
+            assert!(!FIRMWARE.arm(validated(), start, run(5, RESET)));
+            assert!(FIRMWARE.poll(run(5, RESET)).is_ok());
         }
         // SAFETY: as above; this read invalidates the armed run future's reference
         // for writes, which is sound only because the future is never polled again.
@@ -322,30 +345,47 @@ mod tests {
     }
 
     #[test]
-    fn a_reset_builds_the_run_again_and_a_transport_error_unarms_it() {
+    fn a_reset_or_a_recoverable_error_builds_the_run_again() {
         static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
         // SAFETY: as above.
         unsafe {
-            assert!(FIRMWARE.arm(validated(), start, run(1, false)));
-            assert!(FIRMWARE.poll(run(0, true)).is_ok());
-            // The first run stops on a reset, and the second is built, failing when
-            // polled.
-            assert!(FIRMWARE.poll(run(0, true)).is_ok());
+            assert!(FIRMWARE.arm(validated(), start, run(1, RESET)));
+            assert!(FIRMWARE.poll(run(0, RECOVERABLE)).is_ok());
+            // The first run stops on a reset, and the second is built, failing
+            // recoverably when polled; the third is built over the same server.
+            assert!(FIRMWARE.poll(run(0, RECOVERABLE)).is_ok());
             assert!(matches!(
-                FIRMWARE.poll(run(0, true)),
+                FIRMWARE.poll(run(1, RESET)),
+                Err(RunError::Interrupted(()))
+            ));
+            assert!(!FIRMWARE.arm(validated(), start, run(0, RESET)));
+            assert!(FIRMWARE.poll(run(0, RESET)).is_ok());
+        }
+        // SAFETY: as above; the armed run future is never polled again.
+        let server = unsafe { &*FIRMWARE.server.get() };
+        assert_eq!((server.starts, server.runs, server.polls), (1, 3, 4));
+    }
+
+    #[test]
+    fn a_terminal_error_unarms_the_run_for_good() {
+        static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
+        // SAFETY: as above.
+        unsafe {
+            assert!(FIRMWARE.arm(validated(), start, run(0, TERMINAL)));
+            assert!(matches!(
+                FIRMWARE.poll(run(0, RESET)),
                 Err(RunError::Stopped(()))
             ));
             assert!(matches!(
-                FIRMWARE.poll(run(0, true)),
+                FIRMWARE.poll(run(0, RESET)),
+                Err(RunError::NotStarted)
+            ));
+            assert!(!FIRMWARE.arm(validated(), start, run(0, RESET)));
+            assert!(matches!(
+                FIRMWARE.poll(run(0, RESET)),
                 Err(RunError::NotStarted)
             ));
         }
-        assert_eq!(counters(&FIRMWARE), (1, 2, 3));
-        // Unarmed by the error, so arming starts the server again.
-        // SAFETY: as above.
-        unsafe {
-            assert!(FIRMWARE.arm(validated(), start, run(0, false)));
-            assert!(FIRMWARE.poll(run(0, false)).is_ok());
-        }
+        assert_eq!(counters(&FIRMWARE), (1, 1, 1));
     }
 }

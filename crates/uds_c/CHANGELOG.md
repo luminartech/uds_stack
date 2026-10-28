@@ -38,8 +38,10 @@ pre-1.0 crates).
     companions) for the memory to apply.
   - `Firmware`, the server and its run future in one `static`, the one way to drive the
     server from one execution context: `arm` at start-up, then `poll` on each pass of
-    its loop, both `unsafe` on that promise; `arm` again where a transport error
-    stopped it, `doip::start_discovery` keeping the discovery started. `poll` makes
+    its loop, both `unsafe` on that promise. `poll` builds the run future again over
+    the same server after a transport error between requests (`RunError::Interrupted`),
+    and leaves the server unarmed after one mid-request (`RunError::Stopped`), which
+    `arm` then refuses. `poll` makes
     the transitions through the layers of the server's own policy. Each poll makes a
     reset or session change once its response is transmitted, as the firmware's
     `uds_tcp_transmitted` reports for the connection's stream, and on

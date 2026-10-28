@@ -16,7 +16,7 @@ use simple_doip::entity::{
 };
 use simple_doip::service::EntityConfig;
 use uds_on_ip::DoIpTransport;
-use uds_services::{Reloads, Stopped};
+use uds_services::{Reloads, StepError, Stopped};
 
 use crate::nal::{Acceptor, Datagrams};
 use crate::sys;
@@ -56,8 +56,7 @@ pub const fn transport<const MAX_MESSAGE: usize, const TESTERS: usize>(
 
 /// Starts discovery on the firmware's UDP socket as `identity`, its announcement jitter
 /// seeded from `uds_now_ms`, when the interface has a valid address and before the
-/// server is first polled. Does nothing where discovery has started, as it has for a
-/// server armed again after a transport error stopped it, which keeps that discovery.
+/// server is first polled. Does nothing where discovery has started.
 pub fn start_discovery<const MAX_MESSAGE: usize, const TESTERS: usize>(
     transport: &mut Transport<MAX_MESSAGE, TESTERS>,
     identity: FixedIdentity,
@@ -71,10 +70,17 @@ pub fn start_discovery<const MAX_MESSAGE: usize, const TESTERS: usize>(
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum RunError<E> {
-    /// No run future is armed: the server was never started, or it stopped earlier.
+    /// No run future is armed: the server was never armed, or a terminal transport error
+    /// ([`Self::Stopped`]) stopped it.
     #[error("no run future is armed")]
     NotStarted,
-    /// The server stopped on a transport error, and its run future was dropped.
+    /// The transport failed between requests, which the server recovers from
+    /// ([`StepError::Recoverable`]): the run future was built again over the same server,
+    /// which serves on, a response awaiting its confirmation included.
+    #[error("the transport failed between requests")]
+    Interrupted(#[source] E),
+    /// The server stopped on a terminal transport error ([`StepError::Terminal`]), and
+    /// its run future was dropped. The server is never armed again.
     #[error("the server stopped on a transport error")]
     Stopped(#[source] E),
 }
@@ -82,23 +88,25 @@ pub enum RunError<E> {
 /// Polls the server's run future once, with a waker that does nothing: the firmware
 /// polls on every pass of its loop.
 ///
-/// A server that stops on a confirmed reset is at its power-up state; its finished
-/// future is dropped, then `rearm` builds the next one, so the server keeps serving. A
-/// server that stops on a transport error is left unarmed.
+/// A server that stops on a confirmed reset is at its power-up state, and one that stops
+/// on a recoverable transport error is where it was; either way its finished future is
+/// dropped, then `rearm` builds the next one, so the server keeps serving. A server that
+/// stops on a terminal transport error is left unarmed.
 ///
 /// `run` lives where the firmware keeps it across polls, typically a `static`, since a
 /// future dropped mid-step loses its request.
 ///
 /// # Errors
 ///
-/// [`RunError::NotStarted`] for an empty `run`; [`RunError::Stopped`] for the transport
-/// error the server stopped on.
+/// [`RunError::NotStarted`] for an empty `run`; [`RunError::Interrupted`] for a
+/// recoverable transport error, the server armed again; [`RunError::Stopped`] for the
+/// terminal transport error the server stopped on.
 pub(crate) fn poll_run<F, E>(
     mut run: Pin<&mut Option<F>>,
     rearm: impl FnOnce() -> F,
 ) -> Result<(), RunError<E>>
 where
-    F: Future<Output = Result<Stopped, E>>,
+    F: Future<Output = Result<Stopped, StepError<E>>>,
 {
     let Some(future) = run.as_mut().as_pin_mut() else {
         return Err(RunError::NotStarted);
@@ -111,7 +119,12 @@ where
             run.set(Some(rearm()));
             Ok(())
         }
-        Poll::Ready(Err(error)) => {
+        Poll::Ready(Err(StepError::Recoverable(error))) => {
+            run.set(None);
+            run.set(Some(rearm()));
+            Err(RunError::Interrupted(error))
+        }
+        Poll::Ready(Err(StepError::Terminal(error))) => {
             run.set(None);
             Err(RunError::Stopped(error))
         }

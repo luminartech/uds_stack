@@ -96,11 +96,14 @@ The server is built in place in a `uds_c::Firmware` `static`, with
 nightly `type_alias_impl_trait` feature in the firmware's crate; this crate itself
 builds on stable. At start-up the firmware calls `App::validate()` and hands the
 `Validated<App>` proof it returns to `Firmware::arm`, whose closures start discovery with
-`uds_c::doip::start_discovery` and build the run future; after a transport error stops
-the server, it calls `arm` again, with the same closures. On every pass of its loop it
+`uds_c::doip::start_discovery` and build the run future. On every pass of its loop it
 calls `Firmware::poll(run)`, which makes the resets and session changes whose positive
 responses the stack has transmitted, as `uds_tcp_transmitted` reports, through the
-server's own layers, then polls the server once. `Firmware` is the one way to drive the server, and `serves = App::serves`
+server's own layers, then polls the server once. A transport error between requests,
+`RunError::Interrupted`, is recovered from: `poll` builds the run future again over the
+same server, which serves on with nothing lost. A transport error mid-request,
+`RunError::Stopped`, is terminal: the server is left unarmed, `arm` refuses it from then
+on, and it serves again only once the firmware restarts. `Firmware` is the one way to drive the server, and `serves = App::serves`
 is required: `Firmware::arm` fails to compile for an assembly without it. Both calls are
 `unsafe`: the firmware promises to make them from that loop alone.
 
