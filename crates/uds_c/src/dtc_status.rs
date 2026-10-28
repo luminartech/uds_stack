@@ -41,6 +41,6 @@ mod tests {
         assert_eq!(cleared, 0x50);
         let failed = uds_dtc_status_after_test_result(cleared, true);
         assert_eq!(failed, 0x2F);
-        assert_eq!(uds_dtc_status_at_operation_cycle_start(failed), 0x6C);
+        assert_eq!(uds_dtc_status_at_operation_cycle_start(failed), 0x6D);
     }
 }
