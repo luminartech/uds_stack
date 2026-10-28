@@ -118,16 +118,16 @@ impl EntityAddress {
     ///
     /// - [`AddressError::NotPhysical`] where `physical` is not a physical entity address.
     /// - [`AddressError::NotFunctional`] where `functional` is not a functional address.
-    pub fn new(
+    pub const fn new(
         physical: LogicalAddress,
         functional: LogicalAddress,
     ) -> Result<Self, AddressError> {
-        if physical.default_ta_type() != TaType::Physical
+        if !matches!(physical.default_ta_type(), TaType::Physical)
             || TesterAddress::new(physical).is_ok()
         {
             return Err(AddressError::NotPhysical(physical));
         }
-        if functional.default_ta_type() != TaType::Functional {
+        if !matches!(functional.default_ta_type(), TaType::Functional) {
             return Err(AddressError::NotFunctional(functional));
         }
         Ok(Self {
@@ -170,6 +170,11 @@ pub enum Error<E> {
     #[error("accepting a connection failed: {0:?}")]
     Accept(E),
 }
+
+/// Why [`Entity::start_discovery`] refused: the entity's discovery has started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the entity's discovery has started")]
+pub struct AlreadyStarted;
 
 /// A `DoIP` entity: the `TCP_DATA` sockets of ISO 13400-2:2019 12.6, behind
 /// [`DiagnosticEntity`].
@@ -384,27 +389,8 @@ impl<
         address: EntityAddress,
         config: EntityConfig<TESTERS>,
     ) -> Self {
-        const {
-            assert!(
-                MCTS >= 1 && MCTS <= 255,
-                "ISO 13400-2:2019 Table 11: MCTS is 1 to 255"
-            );
-            assert!(
-                MAX_MESSAGE >= RESERVE_CAP,
-                "MAX_MESSAGE must hold the reserve socket's frames"
-            );
-        };
-        Self {
-            acceptor,
-            address,
-            config,
-            connections: core::array::from_fn(|_| Slot::new()),
-            reserve: Slot::new(),
-            arbitration: None,
-            confirms: [None; CONFIRMS],
-            turn: Turn::Connection(0),
-            discovery: NoDiscovery,
-        }
+        let connections = core::array::from_fn(|_| Slot::new());
+        Self::assemble(acceptor, address, config, connections, NoDiscovery)
     }
 
     /// This entity, announcing itself on `socket` and answering vehicle identification,
@@ -434,17 +420,7 @@ impl<
         identity: I,
         seed: u32,
     ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Discovery<U, I>> {
-        Entity {
-            acceptor: self.acceptor,
-            address: self.address,
-            config: self.config,
-            connections: self.connections,
-            reserve: self.reserve,
-            arbitration: self.arbitration,
-            confirms: self.confirms,
-            turn: self.turn,
-            discovery: Discovery::new(socket, identity, seed),
-        }
+        self.replace_discovery(Discovery::new(socket, identity, seed))
     }
 
     /// The entity with discovery where `discovery` is `Some` and none where it is `None`,
@@ -461,18 +437,82 @@ impl<
         self,
         discovery: Option<(U, I, u32)>,
     ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>> {
-        Entity {
-            acceptor: self.acceptor,
-            address: self.address,
-            config: self.config,
-            connections: self.connections,
-            reserve: self.reserve,
-            arbitration: self.arbitration,
-            confirms: self.confirms,
-            turn: self.turn,
-            discovery: discovery
+        self.replace_discovery(
+            discovery
                 .map(|(socket, identity, seed)| Discovery::new(socket, identity, seed)),
+        )
+    }
+}
+
+impl<
+    'a,
+    A: TcpAccept + 'a,
+    const MCTS: usize,
+    const MAX_MESSAGE: usize,
+    const TESTERS: usize,
+    U: UdpSplit,
+    I: VehicleIdentity,
+> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>>
+{
+    /// An entity accepting connections from `acceptor`, whose discovery
+    /// [`Self::start_discovery`] starts once the interface has a valid address.
+    ///
+    /// A `const fn`, for a target whose stack cannot hold an entity: it builds the entity
+    /// as a `static`'s initializer, before it knows the identity it announces. Until
+    /// discovery starts the entity serves `TCP_DATA` alone.
+    ///
+    /// The `static` is a `.data` image of the whole entity, buffers included: the entity
+    /// takes its size in flash as well as in RAM. Its initializer is `const` only where
+    /// `acceptor` is itself a `const`-built `static`, as a zero-sized acceptor over a C
+    /// stack is; an acceptor built at run time, as embassy-net's is from its network
+    /// stack, cannot be borrowed there.
+    ///
+    /// # Arguments
+    ///
+    /// * `acceptor` - the bound listening socket, usually on [`TCP_PORT`](crate::TCP_PORT).
+    /// * `address` - the addresses the entity answers.
+    /// * `config` - the testers that may activate routing.
+    #[must_use]
+    pub const fn new_discovery_later(
+        acceptor: &'a A,
+        address: EntityAddress,
+        config: EntityConfig<TESTERS>,
+    ) -> Self {
+        let connections = [const { Slot::new() }; MCTS];
+        Self::assemble(acceptor, address, config, connections, None)
+    }
+
+    /// Starts discovery on `socket`, as [`Entity::with_discovery`] does for an entity it
+    /// builds: the announcements start at the next [`DiagnosticEntity::next_event`], so
+    /// call this once the interface has a valid address (REQ 8.DoIP-050).
+    ///
+    /// Discovery starts once per entity. A new address discards every `TCP_DATA` socket
+    /// (REQ 7.DoIP-030), so an entity built as a `static` is not re-addressed.
+    ///
+    /// # Arguments
+    ///
+    /// * `socket` - a UDP socket bound to
+    ///   [`UDP_DISCOVERY_PORT`](crate::UDP_DISCOVERY_PORT) on every address, able to
+    ///   send to the limited broadcast address.
+    /// * `identity` - what the entity announces itself as.
+    /// * `seed` - a seed for the random waits of `A_DoIP_Announce_Wait`, from the
+    ///   target's random number generator, as [`Entity::with_discovery`] takes it.
+    ///
+    /// # Errors
+    ///
+    /// [`AlreadyStarted`] where discovery has started: the entity keeps it, and drops
+    /// `socket` and `identity`.
+    pub fn start_discovery(
+        &mut self,
+        socket: U,
+        identity: I,
+        seed: u32,
+    ) -> Result<(), AlreadyStarted> {
+        if self.discovery.is_some() {
+            return Err(AlreadyStarted);
         }
+        self.discovery = Some(Discovery::new(socket, identity, seed));
+        Ok(())
     }
 }
 
@@ -485,6 +525,56 @@ impl<
     D: Discover,
 > Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D>
 {
+    /// The entity every constructor builds, over `connections`, empty slots, with
+    /// `discovery` as its UDP side.
+    const fn assemble(
+        acceptor: &'a A,
+        address: EntityAddress,
+        config: EntityConfig<TESTERS>,
+        connections: [Slot<A::Socket<'a>, MAX_MESSAGE>; MCTS],
+        discovery: D,
+    ) -> Self {
+        const {
+            assert!(
+                MCTS >= 1 && MCTS <= 255,
+                "ISO 13400-2:2019 Table 11: MCTS is 1 to 255"
+            );
+            assert!(
+                MAX_MESSAGE >= RESERVE_CAP,
+                "MAX_MESSAGE must hold the reserve socket's frames"
+            );
+        };
+        Self {
+            acceptor,
+            address,
+            config,
+            connections,
+            reserve: Slot::new(),
+            arbitration: None,
+            confirms: [None; CONFIRMS],
+            turn: Turn::Connection(0),
+            discovery,
+        }
+    }
+
+    /// This entity with `discovery` as its UDP side in place of its own.
+    fn replace_discovery<E: Discover>(
+        self,
+        discovery: E,
+    ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, E> {
+        Entity {
+            acceptor: self.acceptor,
+            address: self.address,
+            config: self.config,
+            connections: self.connections,
+            reserve: self.reserve,
+            arbitration: self.arbitration,
+            confirms: self.confirms,
+            turn: self.turn,
+            discovery,
+        }
+    }
+
     fn connection_id(index: usize) -> ConnectionId {
         ConnectionId::new(u8::try_from(index).unwrap_or(u8::MAX))
     }
