@@ -14,6 +14,7 @@ unsafe extern "C" {
     pub(crate) safe fn uds_tcp_readable(sock: i32) -> bool;
     pub(crate) fn uds_tcp_read(sock: i32, buf: *mut u8, cap: usize) -> i32;
     pub(crate) fn uds_tcp_write(sock: i32, buf: *const u8, len: usize) -> i32;
+    pub(crate) safe fn uds_tcp_transmitted(sock: i32) -> u64;
     pub(crate) safe fn uds_tcp_close(sock: i32, reset: bool);
     pub(crate) safe fn uds_tcp_release(sock: i32);
     pub(crate) safe fn uds_udp_readable() -> bool;

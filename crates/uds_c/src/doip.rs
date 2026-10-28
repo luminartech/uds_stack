@@ -3,14 +3,17 @@
 //!
 //! The entity accepts one connection at a time, plus the reserve socket
 //! `simple_doip` keeps for a second routing activation, and discovers on the one UDP
-//! socket. It is built in place, without discovery, so a server holding it is a
-//! `static`; [`start_discovery`] starts discovery once the interface has an address.
+//! socket. It confirms a response once `uds_tcp_transmitted` reports it transmitted. It
+//! is built in place, without discovery, so a server holding it is a `static`;
+//! [`start_discovery`] starts discovery once the interface has an address.
 
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, Waker};
 
-use simple_doip::entity::{AlreadyStarted, Discovery, EntityAddress, FixedIdentity};
+use simple_doip::entity::{
+    AlreadyStarted, Discovery, EntityAddress, FixedIdentity, OnTransmit,
+};
 use simple_doip::service::EntityConfig;
 use uds_on_ip::DoIpTransport;
 use uds_services::{Reloads, Stopped};
@@ -19,8 +22,8 @@ use crate::nal::{Acceptor, Datagrams};
 use crate::sys;
 
 /// The entity over the firmware's sockets: one connection, messages of up to
-/// `MAX_MESSAGE` bytes with their header, and `TESTERS` testers allowed to activate
-/// routing.
+/// `MAX_MESSAGE` bytes with their header, `TESTERS` testers allowed to activate routing,
+/// and each response confirmed once transmitted.
 pub type Entity<const MAX_MESSAGE: usize, const TESTERS: usize> =
     simple_doip::entity::Entity<
         'static,
@@ -29,6 +32,7 @@ pub type Entity<const MAX_MESSAGE: usize, const TESTERS: usize> =
         MAX_MESSAGE,
         TESTERS,
         Option<Discovery<Datagrams, FixedIdentity>>,
+        OnTransmit,
     >;
 
 /// The transport over [`Entity`]: one slot per entity socket, the reserve included.
