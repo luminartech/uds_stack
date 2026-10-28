@@ -1319,6 +1319,33 @@ fn a_close_before_the_confirmation_abandons_the_prepared_change() {
     assert_eq!(app.transitions, [None, None]);
 }
 
+/// A prepared change whose response waits on an identical earlier one's confirmation,
+/// and is lost when the client's link closes first, is abandoned: the earlier change
+/// awaiting its confirmation does not stand in for it. Both are abandoned, the earlier
+/// one on its failed confirmation.
+#[test]
+fn an_identical_change_awaiting_confirmation_does_not_hide_a_lost_response() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Ind(request_from(TESTER), EXTENDED), // its response waits on the first's
+            Step::Close(TESTER),
+            Step::Conf(response_to(TESTER), SResult::Transport(TransportError(1))),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 1);
+    let app = server.services();
+    assert_eq!(app.prepared, 2);
+    assert_eq!(app.abandoned, [ABANDONED, ABANDONED]);
+    assert_eq!(app.transitions, [None, None]);
+}
+
 /// A positive response refused after `prepare` accepted the change, here for a peer
 /// that cannot take it, answers `responseTooLong` and abandons the change.
 #[test]
