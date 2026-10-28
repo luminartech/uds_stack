@@ -685,9 +685,8 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> EcuReset
         P::reset_access(kind)
     }
 
-    async fn reset(&mut self, kind: ResetType) -> Result<AfterReset, Nrc> {
-        let active = u8::from(self.session);
-        transition(P::LAYERS, reset_hooks, active, u8::from(kind)).await?;
+    async fn reset(&mut self, kind: ResetType, active: Session) -> Result<AfterReset, Nrc> {
+        transition(P::LAYERS, reset_hooks, u8::from(active), u8::from(kind)).await?;
         Ok(after(kind))
     }
 
@@ -695,9 +694,8 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> EcuReset
         defer(&DEFERRED_RESET, u8::from(kind));
     }
 
-    fn abandon(&mut self, kind: ResetType) {
-        let active = u8::from(self.session);
-        P::LAYERS.abandon(reset_hooks, usize::MAX, active, u8::from(kind));
+    fn abandon(&mut self, kind: ResetType, active: Session) {
+        P::LAYERS.abandon(reset_hooks, usize::MAX, u8::from(active), u8::from(kind));
     }
 }
 
