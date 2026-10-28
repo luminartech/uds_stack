@@ -92,6 +92,17 @@ pub fn abandon_session<A: DiagnosticSessionControl>(
     services.abandon(session, state.session());
 }
 
+/// Tell `services` the reset `kind` it accepted is not made, from the session `state` is
+/// in, read through here as [`abandon_session`] reads it.
+#[doc(hidden)]
+pub fn abandon_reset<A: EcuReset>(
+    services: &mut A,
+    state: &State,
+    kind: uds_protocol::ResetType,
+) {
+    services.abandon(kind, state.session());
+}
+
 /// The `P2` pair of the session `state` is in, as `services` states it. Read through here
 /// for the reason [`transition`] writes through here: `State`'s accessors stay
 /// crate-private.
@@ -754,11 +765,12 @@ pub async fn diagnostic_session_control<A: DiagnosticSessionControl>(
 #[doc(hidden)]
 pub async fn ecu_reset<A: EcuReset>(
     services: &mut A,
+    state: &State,
     request: &EcuResetRequest,
     out: &mut ResponseSink<'_>,
 ) -> Result<Effect, NegativeResponseCode> {
     let kind = request.reset_type;
-    let after = services.reset(kind).await?;
+    let after = services.reset(kind, state.session()).await?;
     let _ = out.write_all(&[0x51, u8::from(kind)]);
     if kind == uds_protocol::ResetType::EnableRapidPowerShutDown {
         let _ = out.write_all(&[services.power_down_time()]);

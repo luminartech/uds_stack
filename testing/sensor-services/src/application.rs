@@ -136,7 +136,11 @@ impl EcuReset for Ecu {
             _ => None,
         }
     }
-    fn reset(&mut self, kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
+    fn reset(
+        &mut self,
+        kind: ResetType,
+        _active: S,
+    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
         ready(Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
             AfterReset::Continue
         } else {
