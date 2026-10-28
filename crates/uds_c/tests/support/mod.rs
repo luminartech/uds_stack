@@ -30,9 +30,9 @@ use simple_doip::service::{EntityConfig, TesterAddress};
 use simple_doip::{EntityId, LogicalAddress};
 use uds_c::doip::{self, RunError};
 use uds_c::{
-    Firmware, Layers, Policy, TableApp, TableError, UdsAccess, UdsDidEntry, UdsDtcHooks,
-    UdsLayer, UdsRidEntry, UdsSecurityLevel, UdsTransferHooks, UdsTransitionHooks,
-    Validated, uds_record_copy, uds_record_copy_16_be,
+    Firmware, Layers, Policy, TableApp, TableError, TableServer, UdsAccess, UdsDidEntry,
+    UdsDtcHooks, UdsLayer, UdsRidEntry, UdsSecurityLevel, UdsTransferHooks,
+    UdsTransitionHooks, Validated, uds_record_copy, uds_record_copy_16_be,
 };
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
@@ -640,6 +640,10 @@ type Error = <Transport as UdsTransport>::Error;
 
 type Run = Pin<Box<dyn Future<Output = Result<Stopped, Error>>>>;
 
+/// The `validate` of the application assembly `A` serves.
+type Validate<A> =
+    fn() -> Result<Validated<<Server<A, Transport, 1> as TableServer>::App>, TableError>;
+
 /// A server in a [`Firmware`], armed as firmware arms it, polled as firmware polls it.
 pub struct Ecu {
     /// One pass of the firmware's loop.
@@ -651,26 +655,25 @@ pub struct Ecu {
 impl Ecu {
     /// The bench server, with discovery started and its run future armed.
     pub fn start() -> Self {
-        Self::serve::<BenchServices>(App::new(), &LAYERS, App::validate())
+        Self::serve::<BenchServices>(App::new(), App::validate)
     }
 
     /// The server of [`Warning`], the bench's layers reporting every status bit, started
     /// as [`Ecu::start`] starts the bench's.
     pub fn start_warning() -> Self {
-        Self::serve::<WarningServices>(WarningApp::new(), &LAYERS, WarningApp::validate())
+        Self::serve::<WarningServices>(WarningApp::new(), WarningApp::validate)
     }
 
     /// The server of [`Bare`], one DID and no other handler, started as [`Ecu::start`]
     /// starts the bench's.
     pub fn start_bare() -> Self {
-        Self::serve::<BareServices>(BareApp::new(), &BARE_LAYERS, BareApp::validate())
+        Self::serve::<BareServices>(BareApp::new(), BareApp::validate)
     }
 
-    fn serve<A: ServiceSet + 'static>(
-        app: A::App,
-        layers: &'static Layers,
-        validated: Result<Validated, TableError>,
-    ) -> Self {
+    fn serve<A: ServiceSet + 'static>(app: A::App, validate: Validate<A>) -> Self
+    where
+        Server<A, Transport, 1>: TableServer,
+    {
         let raw: *mut Firmware<Server<A, Transport, 1>, Run> =
             Box::into_raw(Box::new(Firmware::new(Server::new(
                 app,
@@ -686,10 +689,10 @@ impl Ecu {
         let firmware = unsafe { &*raw };
         // SAFETY: every test that serves holds `lock`, so one thread arms and polls each
         // firmware, and `run` keeps the server reference in the future alone.
-        let armed = unsafe { firmware.arm(validated.unwrap(), start_discovery, run) };
+        let armed = unsafe { firmware.arm(validate().unwrap(), start_discovery, run) };
         assert!(armed);
         // SAFETY: as for `arm`.
-        let poll = Box::new(move || unsafe { firmware.poll(layers, run) });
+        let poll = Box::new(move || unsafe { firmware.poll(run) });
         let layout = Layout::new::<Firmware<Server<A, Transport, 1>, Run>>();
         // SAFETY: from `Box::into_raw` above, with the box's layout; `Ecu` drops `poll`,
         // the last user of the reference, first. Dropped and freed through `raw` rather
@@ -789,14 +792,19 @@ fn run<A: ServiceSet + 'static>(server: &'static mut Server<A, Transport, 1>) ->
     Box::pin(server.run())
 }
 
-/// A firmware never armed, of a server that never runs.
-static IDLE: Firmware<(), core::future::Ready<Result<Stopped, ()>>> = Firmware::new(());
+/// A firmware of the bench server, never armed.
+static IDLE: Firmware<BenchServer, Run> = Firmware::new(BenchServer::new(
+    App::new(),
+    doip::transport(ENTITY, EntityConfig::new([TESTER_ADDRESS]), bench_reloads()),
+    Address(ECU),
+    PARAMS,
+));
 
 /// A poll of [`IDLE`]: the transitions confirmed responses left to make, for [`LAYERS`],
 /// then no run future to poll.
-pub fn poll_unarmed() -> Result<(), RunError<()>> {
+pub fn poll_unarmed() -> Result<(), RunError<Error>> {
     // SAFETY: polled under `lock` alone, and never armed.
-    unsafe { IDLE.poll(&LAYERS, |()| core::future::ready(Err(()))) }
+    unsafe { IDLE.poll(run) }
 }
 
 /// An ECU for one test, the shared state reset: holds the lock for the test's run.

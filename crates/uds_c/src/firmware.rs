@@ -14,11 +14,43 @@ use core::fmt;
 use core::future::Future;
 use core::pin::Pin;
 
-use uds_services::Stopped;
+use uds_services::{Server, ServiceSet, Stopped, UdsTransport};
 
 use crate::app::execute_deferred;
 use crate::doip::{self, RunError};
-use crate::{Layers, Validated};
+use crate::{Layers, Policy, TableApp, Validated};
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// A server over a [`TableApp`]: what a [`Firmware`] arms and polls. Implemented for
+/// every `uds_services::Server` whose application is a `TableApp`, and sealed.
+pub trait TableServer: sealed::Sealed {
+    /// The server's application, whose [`Validated`] proof [`Firmware::arm`] takes.
+    type App;
+    /// The layers the application serves, through which [`Firmware::poll`] makes the
+    /// resets and session changes its responses confirmed.
+    const LAYERS: &'static Layers;
+}
+
+impl<A, T, const PEERS: usize> sealed::Sealed for Server<A, T, PEERS>
+where
+    A: ServiceSet,
+    T: UdsTransport,
+{
+}
+
+impl<A, T, P, const PEERS: usize, const RECORD: usize, const LEVELS: usize> TableServer
+    for Server<A, T, PEERS>
+where
+    A: ServiceSet<App = TableApp<P, RECORD, LEVELS>>,
+    T: UdsTransport,
+    P: Policy,
+{
+    type App = TableApp<P, RECORD, LEVELS>;
+    const LAYERS: &'static Layers = P::LAYERS;
+}
 
 /// A server and the run future [`Self::poll`] drives, in one `static`.
 ///
@@ -67,21 +99,21 @@ impl<S, F> Firmware<S, F> {
             server: UnsafeCell::new(server),
         }
     }
+}
 
+impl<S: TableServer, F> Firmware<S, F> {
     /// Arms the server where it has no run future, at start-up or after a transport
-    /// error stopped it: `start` prepares it, starting its discovery say, then `run`
-    /// builds the future [`Self::poll`] drives. Returns `false`, calling neither, where
-    /// it is armed already. The [`Validated`] it takes is what [`TableApp::validate`]
-    /// returned for the server's tables.
+    /// error stopped it: `start` prepares it, then `run` builds the future
+    /// [`Self::poll`] drives. Returns `false`, calling neither, where it is armed
+    /// already. The [`Validated`] it takes is what [`TableApp::validate`] returned for
+    /// the server's own application.
     ///
     /// # Safety
     ///
     /// The contract in [`Firmware`]'s `# Safety`.
-    ///
-    /// [`TableApp::validate`]: crate::TableApp::validate
     pub unsafe fn arm(
         &'static self,
-        _: Validated,
+        _: Validated<S::App>,
         start: impl FnOnce(&mut S),
         run: impl FnOnce(&'static mut S) -> F,
     ) -> bool {
@@ -101,11 +133,11 @@ impl<S, F> Firmware<S, F> {
 
     /// One pass of the firmware's loop: first the resets and session changes whose
     /// positive responses `uds_tcp_write` took since the last pass, each through every
-    /// layer of `layers`, as `include/uds_c.h` orders them, then one poll of the run
-    /// future, with a waker that does nothing. A run future that stops on a confirmed
-    /// reset leaves the server at its power-up state, and `run` builds the next one, so
-    /// the server keeps serving; one that stops on a transport error leaves the server
-    /// unarmed.
+    /// layer of the server's policy, as `include/uds_c.h` orders them, then one poll of
+    /// the run future, with a waker that does nothing. A run future that stops on a
+    /// confirmed reset leaves the server at its power-up state, and `run` builds the
+    /// next one, so the server keeps serving; one that stops on a transport error leaves
+    /// the server unarmed.
     ///
     /// # Errors
     ///
@@ -117,13 +149,12 @@ impl<S, F> Firmware<S, F> {
     /// The contract in [`Firmware`]'s `# Safety`.
     pub unsafe fn poll<E>(
         &'static self,
-        layers: &Layers,
         run: impl FnOnce(&'static mut S) -> F,
     ) -> Result<(), RunError<E>>
     where
         F: Future<Output = Result<Stopped, E>>,
     {
-        execute_deferred(layers);
+        execute_deferred(S::LAYERS);
         // SAFETY: the contract makes this the only reference to the slot; it is behind
         // `&'static self`, so the future in it is never moved or freed, and only
         // dropped in place.
@@ -171,7 +202,7 @@ mod tests {
         }
     }
 
-    fn validated() -> Validated {
+    fn validated() -> Validated<TableApp<Empty>> {
         TableApp::<Empty>::validate().expect("no tables, so nothing to refuse")
     }
 
@@ -181,6 +212,13 @@ mod tests {
         starts: u32,
         runs: u32,
         polls: u32,
+    }
+
+    impl sealed::Sealed for Server {}
+
+    impl TableServer for Server {
+        type App = TableApp<Empty>;
+        const LAYERS: &'static Layers = &LAYERS;
     }
 
     /// The server's run future: pending `pending` polls, then stopped on a reset, or on a
@@ -245,7 +283,7 @@ mod tests {
         static FIRMWARE: Firmware<Server, Run> = Firmware::new(server());
         // SAFETY: each test's static is reached from that test's thread alone, and each
         // `run` keeps the server reference in its future.
-        let polled = unsafe { FIRMWARE.poll(&LAYERS, run(0, false)) };
+        let polled = unsafe { FIRMWARE.poll(run(0, false)) };
         assert!(matches!(polled, Err(RunError::NotStarted)));
     }
 
@@ -256,7 +294,7 @@ mod tests {
         unsafe {
             assert!(FIRMWARE.arm(validated(), start, run(5, false)));
             assert!(!FIRMWARE.arm(validated(), start, run(5, false)));
-            assert!(FIRMWARE.poll(&LAYERS, run(5, false)).is_ok());
+            assert!(FIRMWARE.poll(run(5, false)).is_ok());
         }
         // SAFETY: as above; this read invalidates the armed run future's reference
         // for writes, which is sound only because the future is never polled again.
@@ -270,16 +308,16 @@ mod tests {
         // SAFETY: as above.
         unsafe {
             assert!(FIRMWARE.arm(validated(), start, run(1, false)));
-            assert!(FIRMWARE.poll(&LAYERS, run(0, true)).is_ok());
+            assert!(FIRMWARE.poll(run(0, true)).is_ok());
             // The first run stops on a reset, and the second is built, failing when
             // polled.
-            assert!(FIRMWARE.poll(&LAYERS, run(0, true)).is_ok());
+            assert!(FIRMWARE.poll(run(0, true)).is_ok());
             assert!(matches!(
-                FIRMWARE.poll(&LAYERS, run(0, true)),
+                FIRMWARE.poll(run(0, true)),
                 Err(RunError::Stopped(()))
             ));
             assert!(matches!(
-                FIRMWARE.poll(&LAYERS, run(0, true)),
+                FIRMWARE.poll(run(0, true)),
                 Err(RunError::NotStarted)
             ));
         }
@@ -288,7 +326,7 @@ mod tests {
         // SAFETY: as above.
         unsafe {
             assert!(FIRMWARE.arm(validated(), start, run(0, false)));
-            assert!(FIRMWARE.poll(&LAYERS, run(0, false)).is_ok());
+            assert!(FIRMWARE.poll(run(0, false)).is_ok());
         }
     }
 }
