@@ -49,12 +49,14 @@ pub const fn after_test_result(status: DtcStatusMask, failed: bool) -> DtcStatus
 
 /// The status an operation cycle starts with, from the `status` the last one ended with:
 /// that cycle ends, so `pendingDTC` clears where it tested the DTC without a failure, and
-/// this one has neither tested nor failed it yet. `testFailed` clears with it, until the
-/// test reports again in the new cycle.
+/// this one has neither tested nor failed it yet. `testFailed` keeps the last result
+/// until the test reports again: Table D.3 changes it only on a test result and on a
+/// clear.
 #[must_use]
 pub const fn at_operation_cycle_start(status: DtcStatusMask) -> DtcStatusMask {
     let kept = status.and(
-        DtcStatusMask::PendingDtc
+        DtcStatusMask::TestFailed
+            .or(DtcStatusMask::PendingDtc)
             .or(DtcStatusMask::ConfirmedDtc)
             .or(DtcStatusMask::TestNotCompletedSinceLastClear)
             .or(DtcStatusMask::TestFailedSinceLastClear)
@@ -97,9 +99,10 @@ mod tests {
             | DtcStatusMask::ConfirmedDtc
             | DtcStatusMask::TestFailedSinceLastClear;
         assert_eq!(at_operation_cycle_start(passed).bits(), 0x68);
-        // Failed in the last cycle: pending stays, the cycle's own bits restart.
+        // Failed in the last cycle: pending and testFailed stay, the cycle's own bits
+        // restart.
         let failed = after_test_result(cleared(), true);
-        assert_eq!(at_operation_cycle_start(failed).bits(), 0x6C);
+        assert_eq!(at_operation_cycle_start(failed).bits(), 0x6D);
         // Not tested in the last cycle: pending stays.
         let untested = passed | DtcStatusMask::TestNotCompletedThisOperationCycle;
         assert_eq!(at_operation_cycle_start(untested).bits(), 0x6C);
