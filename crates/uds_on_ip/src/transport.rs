@@ -13,7 +13,7 @@ use crate::mapping::{
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
 #[cfg(feature = "connection")]
-use simple_doip::entity::{AlreadyStarted, Discovery, Entity, VehicleIdentity};
+use simple_doip::entity::{AlreadyStarted, ConfirmOn, Discovery, Entity, VehicleIdentity};
 use simple_doip::service::{self, ConnectionId, DiagnosticEntity, Refusal};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, SResult, Timestamp};
@@ -301,10 +301,11 @@ impl<
     const TESTERS: usize,
     U: edge_nal::UdpSplit,
     I: VehicleIdentity,
+    C: ConfirmOn<A::Socket<'a>>,
     const CONNECTIONS: usize,
 >
     DoIpTransport<
-        Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>>,
+        Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>, C>,
         CONNECTIONS,
     >
 {
