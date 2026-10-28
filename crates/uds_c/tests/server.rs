@@ -604,7 +604,9 @@ fn a_clear_reaches_its_handler_by_index() {
 }
 
 /// `ControlDTCSetting` and `CommunicationControl` reach their handlers outside the default
-/// session, with the sub-function and its parameter.
+/// session, with the sub-function and its parameter. The one network and DTC group are
+/// all there is: a specific subnet is out of range and an option record is refused,
+/// neither reaching its handler.
 #[test]
 fn dtc_setting_and_communication_control_reach_their_handlers() {
     let _lock = lock();
@@ -615,14 +617,21 @@ fn dtc_setting_and_communication_control_reach_their_handlers() {
     ecu.tick();
     calls();
     assert_eq!(ecu.request(&[0x85, 0x02]), [0xC5, 0x02]);
+    assert_eq!(ecu.request(&[0x85, 0x02, 0x01]), [0x7F, 0x85, 0x13]);
     assert_eq!(ecu.request(&[0x28, 0x03, 0x01]), [0x68, 0x03]);
+    assert_eq!(ecu.request(&[0x28, 0x01, 0xF1]), [0x68, 0x01]);
+    assert_eq!(ecu.request(&[0x28, 0x01, 0x51]), [0x7F, 0x28, 0x31]);
     assert_eq!(
         ecu.request(&[0x28, 0x04, 0x01, 0x00, 0x01]),
         [0x7F, 0x28, 0x12]
     );
     assert_eq!(
         calls(),
-        [Call::DtcSetting(0x02), Call::CommControl(0x03, 0x01)]
+        [
+            Call::DtcSetting(0x02),
+            Call::CommControl(0x03, 0x01),
+            Call::CommControl(0x01, 0x01)
+        ]
     );
 }
 

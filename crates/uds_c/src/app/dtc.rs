@@ -216,7 +216,9 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> ControlDtcSetting
     for TableApp<P, RECORD, LEVELS>
 {
     const MAY_RESPOND_PENDING: bool = true;
-    const MAX_OPTION_RECORD_LEN: usize = 3;
+    /// The server has one DTC group, so a request naming one in an option record is
+    /// `incorrectMessageLengthOrInvalidFormat`.
+    const MAX_OPTION_RECORD_LEN: usize = 0;
 
     /// `on` (0x01) and `off` (0x02), in the extended and programming sessions.
     fn access(&self, setting: DtcSettingType) -> Option<Access> {
