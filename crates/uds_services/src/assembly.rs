@@ -375,7 +375,7 @@ macro_rules! __uds_abandon_hook {
     };
     ($self:ident, $state:ident, $effect:ident, EcuReset) => {
         if let $crate::Effect::Reset { kind, .. } = $effect {
-            <<Self as $crate::ServiceSet>::App as $crate::EcuReset>::abandon($self, kind);
+            $crate::pipeline::abandon_reset($self, $state, kind);
         }
     };
     ($self:ident, $state:ident, $effect:ident, $svc:ident) => {};
@@ -563,7 +563,7 @@ macro_rules! __uds_stage {
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, EcuReset) => {
         if let $crate::Request::EcuReset(ref r) = $req {
-            return $crate::pipeline::ecu_reset($self, r, $out).await;
+            return $crate::pipeline::ecu_reset($self, $state, r, $out).await;
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, SecurityAccess) => {

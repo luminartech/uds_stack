@@ -262,6 +262,7 @@ pub trait EcuReset {
     /// # Arguments
     ///
     /// * `kind` - the reset requested, one [`Self::access`] admitted; see [`ResetType`].
+    /// * `active` - the session the server is in when the request arrives.
     ///
     /// # Errors
     ///
@@ -271,6 +272,7 @@ pub trait EcuReset {
     fn reset(
         &mut self,
         kind: ResetType,
+        active: DiagnosticSessionType,
     ) -> impl core::future::Future<Output = Result<AfterReset, NegativeResponseCode>>;
 
     /// The `powerDownTime` an accepted [`ResetType::EnableRapidPowerShutDown`]'s
@@ -308,7 +310,8 @@ pub trait EcuReset {
     /// # Arguments
     ///
     /// * `kind` - the reset `reset` accepted; see [`ResetType`].
-    fn abandon(&mut self, _kind: ResetType) {}
+    /// * `active` - the session the server is in.
+    fn abandon(&mut self, _kind: ResetType, _active: DiagnosticSessionType) {}
 }
 
 /// `TesterPresent` (0x3E), for servers that act on it. Restarting `tS3_Server` is the
@@ -498,6 +501,7 @@ mod tests {
         async fn reset(
             &mut self,
             _k: ResetType,
+            _active: DiagnosticSessionType,
         ) -> Result<AfterReset, NegativeResponseCode> {
             Ok(AfterReset::Restart)
         }

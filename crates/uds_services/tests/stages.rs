@@ -241,7 +241,7 @@ impl EcuReset for Ecu {
             _ => None,
         }
     }
-    async fn reset(&mut self, kind: ResetType) -> Result<AfterReset, Nrc> {
+    async fn reset(&mut self, kind: ResetType, _active: S) -> Result<AfterReset, Nrc> {
         if core::mem::take(&mut self.refuse) {
             return Err(Nrc::ConditionsNotCorrect);
         }

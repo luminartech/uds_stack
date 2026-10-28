@@ -55,9 +55,11 @@ fn conf(result: SResult) -> Step {
 #[derive(Debug, Default)]
 struct Ecu {
     transitions: Vec<SessionTransition>,
-    accepted: Vec<ResetType>,
+    /// Every reset accepted, with the session it was accepted in.
+    accepted: Vec<(ResetType, S)>,
     confirmed: Vec<ResetType>,
-    abandoned: Vec<ResetType>,
+    /// Every reset abandoned, with the session it was abandoned in.
+    abandoned: Vec<(ResetType, S)>,
 }
 
 impl DiagnosticSessionControl for Ecu {
@@ -111,8 +113,12 @@ impl EcuReset for Ecu {
         )
         .then(|| Access::new(Sessions::ALL))
     }
-    fn reset(&mut self, kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
-        self.accepted.push(kind);
+    fn reset(
+        &mut self,
+        kind: ResetType,
+        active: S,
+    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+        self.accepted.push((kind, active));
         ready(Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
             AfterReset::Continue
         } else {
@@ -125,8 +131,8 @@ impl EcuReset for Ecu {
     fn confirmed(&mut self, kind: ResetType) {
         self.confirmed.push(kind);
     }
-    fn abandon(&mut self, kind: ResetType) {
-        self.abandoned.push(kind);
+    fn abandon(&mut self, kind: ResetType, active: S) {
+        self.abandoned.push((kind, active));
     }
 }
 
@@ -329,7 +335,10 @@ fn a_failed_reset_confirmation_runs_nothing() {
         assert_eq!(step(&mut s), None);
     }
     assert_eq!(s.services().confirmed, []);
-    assert_eq!(s.services().abandoned, [ResetType::HardReset]);
+    // Accepted and abandoned in the session in force.
+    let programming = (ResetType::HardReset, S::ProgrammingSession);
+    assert_eq!(s.services().accepted, [programming]);
+    assert_eq!(s.services().abandoned, [programming]);
     assert_eq!(s.transport().sent_bytes(3).first(), Some(&0x50));
 }
 

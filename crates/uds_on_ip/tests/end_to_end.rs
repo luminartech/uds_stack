@@ -140,7 +140,7 @@ impl EcuReset for Ecu {
     fn access(&self, _kind: ResetType) -> Option<Access> {
         Some(Access::new(Sessions::ALL))
     }
-    async fn reset(&mut self, _kind: ResetType) -> Result<AfterReset, Nrc> {
+    async fn reset(&mut self, _kind: ResetType, _active: S) -> Result<AfterReset, Nrc> {
         PendN(core::mem::take(&mut self.reset_slow)).await;
         Ok(AfterReset::Restart)
     }

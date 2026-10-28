@@ -81,7 +81,11 @@ impl EcuReset for Ecu {
     fn access(&self, _kind: ResetType) -> Option<Access> {
         Some(Access::new(Sessions::ALL))
     }
-    fn reset(&mut self, _kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
+    fn reset(
+        &mut self,
+        _kind: ResetType,
+        _active: uds_services::DiagnosticSessionType,
+    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
         core::future::ready(Ok(AfterReset::Restart))
     }
     fn confirmed(&mut self, _kind: ResetType) {}

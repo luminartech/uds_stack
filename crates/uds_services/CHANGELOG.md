@@ -30,7 +30,8 @@ pre-1.0 crates).
   requests are not under it.
 - `EcuReset::abandon`, called in place of `confirmed` where a reset `reset` accepted is
   not made: its response is refused after all, its confirmation fails, the link closes
-  first, the transport fails or `Server::step` is dropped. It does nothing by default.
+  first, the transport fails or `Server::step` is dropped. It is told the active
+  session, and does nothing by default.
 
 ### Changed
 
@@ -55,6 +56,10 @@ pre-1.0 crates).
       core::future::ready(Ok(()))
   }
   ```
+
+- **Breaking.** `EcuReset::reset` is told the active session too, as `prepare` is:
+  `reset(&mut self, kind: ResetType, active: DiagnosticSessionType)`. Migrate: add the
+  parameter to each implementation.
 
 ## [0.7.0] — 2026-10-16
 
