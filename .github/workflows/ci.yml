@@ -348,11 +348,10 @@ jobs:
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D warnings
         run: cargo doc -p uds_c --all-features --no-deps
-      # The package's file list and manifest. Not verified: a verify build takes the
-      # workspace dependencies from crates.io, which carries the APIs uds_c calls only
-      # once they release with it.
+      # Packaged and built with the workspace crates whose unreleased APIs and features
+      # it uses, which cargo then takes from these packages rather than crates.io.
       - name: Package the C binding
-        run: cargo package -p uds_c --no-verify
+        run: cargo package -p simple_doip -p uds_services -p uds_on_ip -p uds_c
 
   # Tree borrows, for the reason the connection tests use it: the entity's select.
   uds-c-miri:
