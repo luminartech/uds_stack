@@ -160,10 +160,10 @@ pub trait DiagnosticSessionControl {
     /// # Cancel safety
     ///
     /// The future is dropped unfinished where the requesting client's link closes, where
-    /// the transport fails and [`Server::step`](crate::Server::step) returns its error,
-    /// and where `step` is dropped. Nothing is sent, the session does not change and
-    /// [`Self::abandon`] is not called, so every await must leave a state valid in the
-    /// active session.
+    /// the transport fails and [`Server::step`](crate::Server::step) returns a
+    /// [`StepError::Terminal`](crate::StepError::Terminal), and where `step` is dropped.
+    /// Nothing is sent, the session does not change and [`Self::abandon`] is not called,
+    /// so every await must leave a state valid in the active session.
     ///
     /// [`ClientTiming::max_response_pending`]: crate::ClientTiming::max_response_pending
     fn prepare(
@@ -177,8 +177,12 @@ pub trait DiagnosticSessionControl {
     ///
     /// Called in place of entering `session` where the positive response is refused after
     /// all (`responseTooLong`, say), its confirmation fails, the requesting client's link
-    /// closes before it, `tS3_Server` expires first, the transport fails, or
-    /// [`Server::step`](crate::Server::step) is dropped before the session is entered.
+    /// closes before it, `tS3_Server` expires first, the transport fails mid-request
+    /// before it ([`StepError::Terminal`](crate::StepError::Terminal)), or
+    /// [`Server::step`](crate::Server::step) is dropped before the session is entered. A
+    /// transport failing between requests
+    /// ([`StepError::Recoverable`](crate::StepError::Recoverable)) abandons nothing: the
+    /// confirmation the next step takes enters the session.
     ///
     /// # Arguments
     ///
@@ -304,8 +308,8 @@ pub trait EcuReset {
     /// Called in place of [`Self::confirmed`] where, as for
     /// [`DiagnosticSessionControl::abandon`], the positive response is refused after
     /// all, its confirmation fails, the requesting client's link closes before it, the
-    /// transport fails, or [`Server::step`](crate::Server::step) is dropped first. Not
-    /// called for a `reset` dropped unfinished.
+    /// transport fails mid-request before it, or [`Server::step`](crate::Server::step) is
+    /// dropped first. Not called for a `reset` dropped unfinished.
     ///
     /// # Arguments
     ///

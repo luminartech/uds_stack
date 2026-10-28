@@ -845,9 +845,11 @@ Protocol state
    ``on_transition`` called, only on the positive response's confirmation
    (``UDSSVC_ARCH_0038``). A change ``prepare`` accepted that is not made, because the
    response is refused after all, its confirmation fails, the link closes first,
-   ``tS3_Server`` expires first, the transport fails or the step is dropped, is told to
-   ``abandon`` instead, and the server stays in the session it was in. A ``prepare`` still
-   running when the link closes, the transport fails or the step is dropped has its future
+   ``tS3_Server`` expires first, the transport fails mid-request first or the step is
+   dropped, is told to ``abandon`` instead, and the server stays in the session it was in.
+   A transport failing between requests abandons nothing (``UDSSVC_ARCH_0040``): the
+   change awaits its confirmation, which the next step takes. A ``prepare`` still running
+   when the link closes, the transport fails or the step is dropped has its future
    dropped: nothing is sent, and nothing is abandoned.
 
    .. code-block:: rust

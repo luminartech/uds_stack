@@ -44,6 +44,8 @@ pub enum Step {
     /// `next_event` pends once, as a transport with nothing to report does, so a caller
     /// can drop the future that awaits it.
     Pend,
+    /// `next_event` fails once, and the script goes on.
+    Fail,
 }
 
 /// The most steps a script can have.
@@ -238,7 +240,8 @@ impl Script {
         self.sent_count = self.sent_count.wrapping_add(1);
     }
 
-    /// The next step, or the one error this transport returns: the script is exhausted.
+    /// The next step, or this transport's error: a [`Step::Fail`], or the script
+    /// exhausted.
     fn advance<'b>(
         &mut self,
         buffer: &'b mut [u8],
@@ -287,6 +290,7 @@ impl Script {
                 }
                 Step::Slip(t) => self.now = t,
                 Step::Pend => {}
+                Step::Fail => return Err(()),
                 Step::At(t) => {
                     self.now = t;
                     // The comparison the seam doc prescribes, right across the wrap.
