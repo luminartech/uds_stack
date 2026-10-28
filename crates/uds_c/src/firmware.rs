@@ -150,12 +150,12 @@ impl<S: TableServer, F> Firmware<S, F> {
     }
 
     /// One pass of the firmware's loop: first the resets and session changes whose
-    /// positive responses `uds_tcp_write` took since the last pass, each through every
-    /// layer of the server's policy, as `include/uds_c.h` orders them, then one poll of
-    /// the run future, with a waker that does nothing. A run future that stops on a
-    /// confirmed reset leaves the server at its power-up state, and `run` builds the
-    /// next one, so the server keeps serving; one that stops on a transport error leaves
-    /// the server unarmed.
+    /// positive responses the stack transmitted since the last pass, as
+    /// `uds_tcp_transmitted` reports it, each through every layer of the server's policy,
+    /// as `include/uds_c.h` orders them, then one poll of the run future, with a waker
+    /// that does nothing. A run future that stops on a confirmed reset leaves the server
+    /// at its power-up state, and `run` builds the next one, so the server keeps
+    /// serving; one that stops on a transport error leaves the server unarmed.
     ///
     /// # Errors
     ///

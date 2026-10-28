@@ -51,6 +51,53 @@ fn a_hard_reset_executes_after_its_response() {
     );
 }
 
+/// A reset whose response the stack has taken but not transmitted is neither confirmed
+/// nor executed, and its connection stays open; once the stack transmits the response,
+/// the connection closes and the reset executes on the next pass.
+#[test]
+fn a_reset_executes_only_once_its_response_is_transmitted() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    sim::hold_transmission(true);
+    assert_eq!(ecu.request(&[0x11, 0x01]), [0x51, 0x01]);
+    for _ in 0..100 {
+        MockDriver::get().advance(Duration::from_millis(1));
+        ecu.tick();
+    }
+    assert_eq!(
+        sim::closed(),
+        None,
+        "not closed before the response is transmitted"
+    );
+    assert_eq!(
+        calls(),
+        [],
+        "not executed before the response is transmitted"
+    );
+
+    sim::hold_transmission(false);
+    MockDriver::get().advance(Duration::from_millis(1));
+    ecu.tick();
+    assert_eq!(sim::closed(), Some(Closed::Graceful));
+    assert_eq!(
+        calls(),
+        [],
+        "executed on the pass that confirmed its response"
+    );
+
+    ecu.tick();
+    assert_eq!(
+        calls(),
+        [
+            Call::Reset("oem", 0x01),
+            Call::Reset("platform", 0x01),
+            Call::DtcSetting(0x01),
+            Call::CommControl(0x00, 0x03)
+        ]
+    );
+}
+
 /// enableRapidPowerShutDown keeps the server running: its response carries the
 /// powerDownTime and closes the connection, as every reset's does (ISO 14229-5:2022
 /// REQ 7.11), every layer executes it on the next pass, and the session, DTC setting and

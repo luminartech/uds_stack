@@ -377,12 +377,12 @@ typedef UdsNrc (*UdsTransitionPrepareFn)(UdsOpStatus op, uint8_t active_session,
 typedef void (*UdsTransitionAbandonFn)(uint8_t active_session, uint8_t sub_function);
 
 /**
- * @brief Makes the transition, once uds_tcp_write has taken its positive
- *        response. A session's also runs, with UDS_DSC_DEFAULT_SESSION, when the
- *        server returns to the default session without a request: on
- *        tS3_Server expiry, or after a reset that restarts the server from
- *        another session, once every layer's execute of that reset has
- *        returned.
+ * @brief Makes the transition, once uds_tcp_transmitted reports its positive
+ *        response transmitted. A session's also runs, with
+ *        UDS_DSC_DEFAULT_SESSION, when the server returns to the default
+ *        session without a request: on tS3_Server expiry, or after a reset
+ *        that restarts the server from another session, once every layer's
+ *        execute of that reset has returned.
  */
 typedef void (*UdsTransitionExecuteFn)(uint8_t sub_function);
 
@@ -475,10 +475,9 @@ int32_t uds_tcp_read(int32_t sock, uint8_t *buf, size_t cap);
 /**
  * @brief Hands bytes to the firmware's TCP/IP stack to send. The bytes taken
  *        are the stack's to send without a further call from the server (with
- *        lwIP, tcp_write and then tcp_output), so a response taken whole counts
- *        as sent: the server confirms it, and makes the reset or session change
- *        it answers on its next poll. An execute that must not cut the response
- *        short, a reset's, waits for the stack to send it.
+ *        lwIP, tcp_write and then tcp_output). A response taken whole is
+ *        confirmed once uds_tcp_transmitted reports it transmitted, and the
+ *        reset or session change it answers is made on the next poll.
  * @param sock The connection's socket index.
  * @param buf The bytes; `len` bytes are readable, and are copied before return.
  * @param len How many bytes to send.
@@ -487,6 +486,19 @@ int32_t uds_tcp_read(int32_t sock, uint8_t *buf, size_t cap);
  *         UDS_SOCK_ERR.
  */
 int32_t uds_tcp_write(int32_t sock, uint8_t const *buf, size_t len);
+
+/**
+ * @brief How much of the connection's stream the stack has transmitted. The
+ *        server confirms a response once this reaches the response's last
+ *        byte, so a reset's execute runs only after the response is on the
+ *        wire; until then it calls again on later polls. A connection that
+ *        closes first confirms every response uds_tcp_write took whole.
+ * @param sock The connection's socket index.
+ * @return The bytes transmitted, counted from the first byte uds_tcp_write
+ *         took on `sock`: never decreasing, and at most the bytes taken. A
+ *         stack that cannot tell returns the bytes taken so far.
+ */
+uint64_t uds_tcp_transmitted(int32_t sock);
 
 /**
  * @brief Closes the connection. Idempotent.

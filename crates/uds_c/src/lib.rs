@@ -31,9 +31,10 @@
 //!   [`uds_record_copy_16_be`], [`uds_record_copy_32_be`] and [`uds_record_copy_64_be`]
 //!   copy an integer big-endian, the byte order of UDS records.
 //! - [`Firmware`], the server and its run future in one `static`, the one way to drive the
-//!   server: each poll first makes the resets and session changes whose responses
-//!   `uds_tcp_write` has taken, and resumes `ControlDTCSetting` and `CommunicationControl`
-//!   state on entering a session where they are not served.
+//!   server: each poll first makes the resets and session changes whose responses the
+//!   stack has transmitted, as `uds_tcp_transmitted` reports, and resumes
+//!   `ControlDTCSetting` and `CommunicationControl` state on entering a session where
+//!   they are not served.
 //! - [`nal`], `edge-nal` sockets over the C socket calls, and [`doip`], the entity
 //!   and transport they carry.
 //! - With the `time-driver` feature, `time_driver!`, `embassy-time`'s clock over

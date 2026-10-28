@@ -1,6 +1,6 @@
 //! The socket and clock calls of `uds_c.h`, over in-memory buffers.
 
-use core::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 use std::vec::Vec;
@@ -11,6 +11,15 @@ pub static NOW_MS: AtomicU32 = AtomicU32::new(0);
 /// The most bytes a write takes, after first answering would-block; 0 for no limit.
 /// Simulates the firmware's send buffer filling.
 pub static WRITE_CAP: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether the stack holds what `uds_tcp_write` takes from now on, transmitting none of
+/// it, so `uds_tcp_transmitted` lags the bytes written.
+static HOLD: AtomicBool = AtomicBool::new(false);
+
+/// The stack holds what it takes from now on, or transmits everything taken.
+pub fn hold_transmission(hold: bool) {
+    HOLD.store(hold, Ordering::Relaxed);
+}
 
 /// The socket call that answers `UDS_SOCK_ERR`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +63,8 @@ pub struct Connection {
     accepted: bool,
     rx: VecDeque<u8>,
     tx: Vec<u8>,
+    /// How much of `tx` the stack has transmitted.
+    transmitted: usize,
     closed: Option<Closed>,
     /// The last write answered would-block, under `WRITE_CAP`.
     blocked: bool,
@@ -64,10 +75,11 @@ static TCP: Mutex<Option<Connection>> = Mutex::new(None);
 const WOULD_BLOCK: i32 = -1;
 const ERR: i32 = -2;
 
-/// Forgets the connection, the write cap and any failing call.
+/// Forgets the connection, the write cap, any held transmission and any failing call.
 pub fn reset() {
     *TCP.lock().unwrap_or_else(PoisonError::into_inner) = None;
     WRITE_CAP.store(0, Ordering::Relaxed);
+    hold_transmission(false);
     fail(Fail::None);
 }
 
@@ -193,9 +205,23 @@ extern "C" fn uds_tcp_write(sock: i32, buf: *const u8, len: usize) -> i32 {
         };
         // SAFETY: the server passes `len` readable bytes and `n <= len`.
         c.tx.extend_from_slice(unsafe { core::slice::from_raw_parts(buf, n) });
+        if !HOLD.load(Ordering::Relaxed) {
+            c.transmitted = c.tx.len();
+        }
         i32::try_from(n).unwrap()
     })
     .unwrap_or(ERR)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn uds_tcp_transmitted(sock: i32) -> u64 {
+    on(sock, |c| {
+        if !HOLD.load(Ordering::Relaxed) {
+            c.transmitted = c.tx.len();
+        }
+        u64::try_from(c.transmitted).unwrap()
+    })
+    .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]

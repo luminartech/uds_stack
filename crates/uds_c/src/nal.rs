@@ -4,6 +4,10 @@
 //! either completes or reports would-block having moved nothing, which is the cancel
 //! safety the entity requires. Would-block maps to `Pending`, and nothing wakes the
 //! server: it is polled again on the next pass of the firmware's loop.
+//!
+//! A [`Socket`] reports what the stack has transmitted through `uds_tcp_transmitted`, so
+//! the entity confirms a response once it is on the wire, not once the stack has taken
+//! it.
 
 #![allow(unsafe_code, reason = "calls the C socket functions with Rust buffers")]
 
@@ -16,6 +20,7 @@ use edge_nal::{
     Close, Readable, TcpAccept, TcpShutdown, TcpSplit, UdpReceive, UdpSend, UdpSplit,
 };
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
+use simple_doip::entity::TransmitProgress;
 
 use crate::sys;
 
@@ -133,6 +138,12 @@ impl Write for Half<'_> {
     /// Every write is already handed to the firmware's stack, which sends it.
     fn flush(&mut self) -> impl Future<Output = Result<(), Failed>> {
         ready(Ok(()))
+    }
+}
+
+impl TransmitProgress for Socket {
+    fn transmitted(&self) -> u64 {
+        sys::uds_tcp_transmitted(self.0)
     }
 }
 

@@ -41,12 +41,14 @@ pre-1.0 crates).
     its loop, both `unsafe` on that promise; `arm` again where a transport error
     stopped it, `doip::start_discovery` keeping the discovery started. `poll` makes
     the transitions through the layers of the server's own policy. Each poll makes a
-    reset or session change once `uds_tcp_write` has taken its response, and on
+    reset or session change once its response is transmitted, as the firmware's
+    `uds_tcp_transmitted` reports for the connection's stream, and on
     entering a session where `ControlDTCSetting` and `CommunicationControl` are not
     served, or after a reset that restarts the server whose execute returns, resumes
     their state through their handlers (ISO 14229-1:2020 10.2), once. A reset runs before the default session it returns to.
     `enableRapidPowerShutDown` and `disableRapidPowerShutDown` keep the server running.
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
-    and transport over them.
+    and transport over them. The entity confirms a response once the firmware's
+    `uds_tcp_transmitted` reports it transmitted.
   - The `time-driver` feature and `time_driver!`, `embassy-time`'s clock over
     `uds_now_ms`.
