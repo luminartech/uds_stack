@@ -51,9 +51,14 @@ impl SessionTiming {
 /// classifies the change before the application sees it, so an application never tracks
 /// a session itself.
 ///
-/// No `MAY_RESPOND_PENDING`, unlike the services in ``UDSSVC_ARCH_0033``: nothing here is
-/// awaited, so there is no window in which a 0x78 could come due.
+/// [`Self::prepare`] is the stage the driver awaits (``UDSSVC_ARCH_0046``), so the
+/// service declares [`Self::MAY_RESPOND_PENDING`] as every service in
+/// ``UDSSVC_ARCH_0033`` does.
 pub trait DiagnosticSessionControl {
+    /// ``UDSSVC_ARCH_0033``: whether the driver may answer
+    /// `requestCorrectlyReceivedResponsePending` (0x78) while [`Self::prepare`] runs.
+    const MAY_RESPOND_PENDING: bool;
+
     /// The longest positive response beyond the mandatory four timing bytes.
     const MAX_RESPONSE_LEN: usize;
 
@@ -125,7 +130,69 @@ pub trait DiagnosticSessionControl {
     /// * `session` - the session being entered; see [`DiagnosticSessionType`].
     fn leaves_running_software(&self, session: DiagnosticSessionType) -> bool;
 
-    /// Called after the positive response, and on `tS3_Server` expiry.
+    /// Reach the state `session` needs, or refuse it, before the positive response
+    /// (``UDSSVC_ARCH_0046``): stop what the server is doing before a programming
+    /// session, say. Asked once [`Self::supports`] and [`Self::supported_from`] have
+    /// admitted the request, so what remains is whether the server's own state allows the
+    /// change now.
+    ///
+    /// `session` is entered, and [`Self::on_transition`] called, only once the positive
+    /// response is confirmed sent, or a suppressed one's completion reported. Where the
+    /// change accepted is not made, [`Self::abandon`] is called instead.
+    ///
+    /// With [`Self::MAY_RESPOND_PENDING`] the driver answers 0x78 each time the response
+    /// window runs out first. A client may give up after a ceiling of its own on those,
+    /// such as [`ClientTiming::max_response_pending`], so a `prepare` that can pend long
+    /// completes within what its clients accept.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - the session being requested; see [`DiagnosticSessionType`].
+    /// * `active` - the session the server is in when the request arrives.
+    ///
+    /// # Errors
+    ///
+    /// The [`NegativeResponseCode`] refusing the change, which nothing is entered after.
+    /// It is sent as returned, under the suppression rules every handler's code is
+    /// (``UDSSVC_ARCH_0009``): `conditionsNotCorrect` (0x22) where the server's state
+    /// does not allow the change, ISO 14229-1:2020 clause 10.2.4.
+    ///
+    /// # Cancel safety
+    ///
+    /// The future is dropped unfinished where the requesting client's link closes, where
+    /// the transport fails and [`Server::step`](crate::Server::step) returns a
+    /// [`StepError::Terminal`](crate::StepError::Terminal), and where `step` is dropped.
+    /// Nothing is sent, the session does not change and [`Self::abandon`] is not called,
+    /// so every await must leave a state valid in the active session.
+    ///
+    /// [`ClientTiming::max_response_pending`]: crate::ClientTiming::max_response_pending
+    fn prepare(
+        &mut self,
+        session: DiagnosticSessionType,
+        active: DiagnosticSessionType,
+    ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
+
+    /// The change [`Self::prepare`] accepted is not made, and the server stays in
+    /// `active`: undo what `prepare` changed. By default, nothing is done.
+    ///
+    /// Called in place of entering `session` where the positive response is refused after
+    /// all (`responseTooLong`, say), its confirmation fails, the requesting client's link
+    /// closes before it, `tS3_Server` expires first, the transport fails mid-request
+    /// before it ([`StepError::Terminal`](crate::StepError::Terminal)), or
+    /// [`Server::step`](crate::Server::step) is dropped before the session is entered. A
+    /// transport failing between requests
+    /// ([`StepError::Recoverable`](crate::StepError::Recoverable)) abandons nothing: the
+    /// confirmation the next step takes enters the session.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - the session `prepare` accepted; see [`DiagnosticSessionType`].
+    /// * `active` - the session the server is in.
+    fn abandon(&mut self, _session: DiagnosticSessionType, _active: DiagnosticSessionType) {
+    }
+
+    /// Called once the positive response is confirmed sent, or a suppressed one's
+    /// completion reported, and on `tS3_Server` expiry.
     ///
     /// ``UDSSVC_ARCH_0038``. The application applies what clause 10.2 Figure 7 owes the
     /// state it holds: `transition` says which of the four cases occurred, and `entered`
@@ -199,6 +266,7 @@ pub trait EcuReset {
     /// # Arguments
     ///
     /// * `kind` - the reset requested, one [`Self::access`] admitted; see [`ResetType`].
+    /// * `active` - the session the server is in when the request arrives.
     ///
     /// # Errors
     ///
@@ -208,6 +276,7 @@ pub trait EcuReset {
     fn reset(
         &mut self,
         kind: ResetType,
+        active: DiagnosticSessionType,
     ) -> impl core::future::Future<Output = Result<AfterReset, NegativeResponseCode>>;
 
     /// The `powerDownTime` an accepted [`ResetType::EnableRapidPowerShutDown`]'s
@@ -225,12 +294,28 @@ pub trait EcuReset {
     /// positive response, it starts here.
     ///
     /// Called for every accepted reset, before the protocol state returns to the power-up
-    /// state for an [`AfterReset::Restart`]. Not called where the confirmation failed.
+    /// state for an [`AfterReset::Restart`]. Where the reset is not made,
+    /// [`Self::abandon`] is called instead.
     ///
     /// # Arguments
     ///
     /// * `kind` - the reset whose response was confirmed; see [`ResetType`].
     fn confirmed(&mut self, kind: ResetType);
+
+    /// The reset [`Self::reset`] accepted is not made: undo what `reset` changed. By
+    /// default, nothing is done.
+    ///
+    /// Called in place of [`Self::confirmed`] where, as for
+    /// [`DiagnosticSessionControl::abandon`], the positive response is refused after
+    /// all, its confirmation fails, the requesting client's link closes before it, the
+    /// transport fails mid-request before it, or [`Server::step`](crate::Server::step) is
+    /// dropped first. Not called for a `reset` dropped unfinished.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - the reset `reset` accepted; see [`ResetType`].
+    /// * `active` - the session the server is in.
+    fn abandon(&mut self, _kind: ResetType, _active: DiagnosticSessionType) {}
 }
 
 /// `TesterPresent` (0x3E), for servers that act on it. Restarting `tS3_Server` is the
@@ -369,6 +454,7 @@ mod tests {
     struct Ecu;
 
     impl DiagnosticSessionControl for Ecu {
+        const MAY_RESPOND_PENDING: bool = false;
         const MAX_RESPONSE_LEN: usize = 0;
         fn supports(&self, session: DiagnosticSessionType) -> bool {
             matches!(
@@ -395,6 +481,13 @@ mod tests {
                 p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             }
         }
+        fn prepare(
+            &mut self,
+            _s: DiagnosticSessionType,
+            _active: DiagnosticSessionType,
+        ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>> {
+            core::future::ready(Ok(()))
+        }
         fn on_transition(
             &mut self,
             _t: SessionTransition,
@@ -412,6 +505,7 @@ mod tests {
         async fn reset(
             &mut self,
             _k: ResetType,
+            _active: DiagnosticSessionType,
         ) -> Result<AfterReset, NegativeResponseCode> {
             Ok(AfterReset::Restart)
         }

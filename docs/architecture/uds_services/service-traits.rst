@@ -207,22 +207,18 @@ The traits
    check at all, since a service that is not implemented has no impl to read the constant
    from.
 
-   **Two services do not carry it, and cannot.** A response-pending is what the driver
+   **One service does not carry it, and cannot.** A response-pending is what the driver
    sends while it is still awaiting a handler, so a service with nothing awaited has no
    window in which one could come due. ``TesterPresent``'s ``on_tester_present`` is
-   synchronous; ``DiagnosticSessionControl``'s ``supports``, ``supported_from``,
-   ``timing`` and ``leaves_running_software`` are lookups made before the response is
-   composed or sent, and its
-   ``on_transition`` runs after that response has gone out. On both, the constant would
-   have had one possible value and no effect, and declaring it asked an application to
-   answer a question with one answer.
-   ``__uds_may_pend!`` answers ``false`` for both, so this is not a default reintroduced by
+   synchronous, so the constant would have one possible value and no effect.
+   ``__uds_may_pend!`` answers ``false`` for it, so this is not a default reintroduced by
    another name: there is nothing an application can write that would change it.
 
-   This is a statement about the *shape of the trait*, not about the two services. If
-   ``on_transition`` ever becomes ``async`` — entering a programming session can be slow —
-   then ``DiagnosticSessionControl`` acquires a window and the constant comes back with
-   it.
+   ``DiagnosticSessionControl`` carries it for ``prepare``, the stage ``UDSSVC_ARCH_0046``
+   awaits before the positive response. Its lookups, ``supports``, ``supported_from``,
+   ``timing`` and ``leaves_running_software``, are made before the response is composed,
+   and ``on_transition`` runs once the response is confirmed, so ``prepare`` is the
+   service's one window, and the constant says whether a 0x78 may fill it.
 
 .. needflow::
    :filter: id in ["UDSSVC_ARCH_0012", "UDSSVC_ARCH_0013", "UDSSVC_ARCH_0014"]
@@ -503,7 +499,8 @@ Protocol state
    request's completion report, ``confirmed`` is called, and a ``Restart`` returns the
    protocol state to the power-up one through Figure 7 key 4, re-arms start-up, and ends
    ``run`` with ``Stopped``. No request is served between a restart's response and its
-   confirmation (10.3.1).
+   confirmation (10.3.1). A reset accepted but not made is told to ``abandon`` instead, as
+   ``UDSSVC_ARCH_0046`` has it for a session change.
 
 .. arch:: The security access sequence is a state machine this crate owns
    :id: UDSSVC_ARCH_0037
@@ -808,6 +805,7 @@ Protocol state
    diagnostic session when it has sent the DiagnosticSessionControl positive response
    message". So the transition is applied after the response is written, not before, and a
    ``DiagnosticSessionControl`` settled negatively leaves the active session unchanged.
+   ``UDSSVC_ARCH_0046``'s ``prepare`` runs before the response and enters nothing.
    Session *timeout* reaches this crate as a transition to default from the binding, since
    ``UDSSVC_ARCH_0002`` keeps ``uds_session``'s ``tS3_Server`` out of this crate.
 
@@ -832,6 +830,57 @@ Protocol state
    apply them to, and ``on_transition`` is the only route by which an application
    holding that functionality can comply. The classification is authored now because it is
    the part that does not change when the message types arrive.
+
+.. arch:: A session change is prepared before its positive response
+   :id: UDSSVC_ARCH_0046
+   :depends_on: UDSSVC_ARCH_0012; UDSSVC_ARCH_0033; UDSSVC_ARCH_0038
+   :status: draft
+   :origin: derived
+   :tags: api; traits; state; session; response-pending
+
+   ``DiagnosticSessionControl::prepare`` is awaited once clause 8.7's checks have admitted
+   a session change, and before its positive response is composed. ``Ok`` lets the
+   response follow; a negative response code refuses the change and is sent as every
+   handler's code is, under ``UDSSVC_ARCH_0009``. The session is entered, and
+   ``on_transition`` called, only on the positive response's confirmation
+   (``UDSSVC_ARCH_0038``). A change ``prepare`` accepted that is not made, because the
+   response is refused after all, its confirmation fails, the link closes first,
+   ``tS3_Server`` expires first, the transport fails mid-request first or the step is
+   dropped, is told to ``abandon`` instead, and the server stays in the session it was in.
+   A transport failing between requests abandons nothing (``UDSSVC_ARCH_0040``): the
+   change awaits its confirmation, which the next step takes. A ``prepare`` still running
+   when the link closes, the transport fails or the step is dropped has its future
+   dropped: nothing is sent, and nothing is abandoned.
+
+   .. code-block:: rust
+
+      impl DiagnosticSessionControl for Ecu {
+          const MAY_RESPOND_PENDING: bool = true;
+          // supports, supported_from, timing, leaves_running_software, abandon,
+          // on_transition
+
+          async fn prepare(
+              &mut self,
+              session: DiagnosticSessionType,
+              active: DiagnosticSessionType,
+          ) -> Result<(), Nrc> { .. }
+      }
+
+   Rationale: a server must sometimes reach a state before it can honor the session its
+   positive response announces, stopping a function that may not run in a programming
+   session, say, and it may find that it cannot. ``on_transition`` follows the response,
+   so a refusal there would come after a positive answer the client has acted on, and a
+   lookup returning a code could refuse but not wait. An awaited stage before the response
+   does both, and ``MAY_RESPOND_PENDING`` (``UDSSVC_ARCH_0033``) says whether the client is
+   told to wait meanwhile. A client's own ceiling on response-pending messages bounds how
+   long that wait can be. ``prepare`` is required rather than defaulted, as
+   ``UDSSVC_ARCH_0012`` and ``UDSSVC_ARCH_0033`` have it: a server that needs nothing
+   returns a ready future, and one that leaves the stage out fails to compile. ``abandon``
+   is a notification with nothing to answer, so it does nothing by default: without it,
+   what ``prepare`` changed would outlive a change that never happened, since
+   ``on_transition`` reports only a session entered. ``prepare`` is told the active
+   session, as ``supported_from`` is, so a preparation that depends on the pair needs no
+   session of its own.
 
 Identifiers
 -----------

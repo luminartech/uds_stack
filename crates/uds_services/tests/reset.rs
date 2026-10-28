@@ -55,11 +55,15 @@ fn conf(result: SResult) -> Step {
 #[derive(Debug, Default)]
 struct Ecu {
     transitions: Vec<SessionTransition>,
-    accepted: Vec<ResetType>,
+    /// Every reset accepted, with the session it was accepted in.
+    accepted: Vec<(ResetType, S)>,
     confirmed: Vec<ResetType>,
+    /// Every reset abandoned, with the session it was abandoned in.
+    abandoned: Vec<(ResetType, S)>,
 }
 
 impl DiagnosticSessionControl for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
     const MAX_RESPONSE_LEN: usize = 0;
     fn supports(&self, s: S) -> bool {
         matches!(
@@ -82,6 +86,13 @@ impl DiagnosticSessionControl for Ecu {
             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
+    fn prepare(
+        &mut self,
+        _s: S,
+        _active: S,
+    ) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        core::future::ready(Ok(()))
+    }
     fn on_transition(&mut self, t: SessionTransition, _entered: S, _relocked: bool) {
         self.transitions.push(t);
     }
@@ -102,8 +113,12 @@ impl EcuReset for Ecu {
         )
         .then(|| Access::new(Sessions::ALL))
     }
-    fn reset(&mut self, kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
-        self.accepted.push(kind);
+    fn reset(
+        &mut self,
+        kind: ResetType,
+        active: S,
+    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+        self.accepted.push((kind, active));
         ready(Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
             AfterReset::Continue
         } else {
@@ -115,6 +130,9 @@ impl EcuReset for Ecu {
     }
     fn confirmed(&mut self, kind: ResetType) {
         self.confirmed.push(kind);
+    }
+    fn abandon(&mut self, kind: ResetType, active: S) {
+        self.abandoned.push((kind, active));
     }
 }
 
@@ -299,7 +317,7 @@ fn the_transport_is_refused_while_a_response_awaits_its_confirmation() {
 }
 
 /// ``UDSS_LLR_0085`` acts on a successful transmission only: a reset whose confirmation
-/// fails runs nothing, and the server serves on in its session.
+/// fails runs nothing and is abandoned, and the server serves on in its session.
 #[test]
 fn a_failed_reset_confirmation_runs_nothing() {
     let mut s = EcuServer::new(
@@ -317,6 +335,10 @@ fn a_failed_reset_confirmation_runs_nothing() {
         assert_eq!(step(&mut s), None);
     }
     assert_eq!(s.services().confirmed, []);
+    // Accepted and abandoned in the session in force.
+    let programming = (ResetType::HardReset, S::ProgrammingSession);
+    assert_eq!(s.services().accepted, [programming]);
+    assert_eq!(s.services().abandoned, [programming]);
     assert_eq!(s.transport().sent_bytes(3).first(), Some(&0x50));
 }
 

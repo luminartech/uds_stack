@@ -6,9 +6,9 @@
 //! into a [`ResponseSink`].
 //!
 //! A service trait whose handler can be in progress declares `MAY_RESPOND_PENDING` with
-//! no default, so omitting it fails to compile. [`DiagnosticSessionControl`] and
-//! [`TesterPresent`] do not declare it: neither is ever awaited, so no response-pending
-//! can come due.
+//! no default, so omitting it fails to compile. [`DiagnosticSessionControl`] declares it
+//! for its `prepare`. [`TesterPresent`] does not: it is never awaited, so no
+//! response-pending can come due.
 
 use crate::pipeline::Settling;
 use crate::state::ProtocolState;
@@ -342,6 +342,19 @@ pub trait ServiceSet: crate::sealed::Sealed {
         kind: ResetType,
         after: AfterReset,
     );
+
+    /// The change `effect`, accepted by its handler, is not made: tell the application
+    /// through `DiagnosticSessionControl::abandon` or `EcuReset::abandon`, where the
+    /// service is listed.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - the [`Self::App`] told of the change, held by [`crate::Server`]
+    /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`],
+    ///   whose session stays as it is
+    /// * `effect` - the [`Effect`] that is not made
+    #[doc(hidden)]
+    fn abandoned(app: &mut Self::App, state: &Self::State, effect: Effect);
 
     /// The `P2` pair of the session `state` is in, which [`crate::Server`] enforces for
     /// the next request.

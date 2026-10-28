@@ -44,6 +44,8 @@ pub enum Step {
     /// `next_event` pends once, as a transport with nothing to report does, so a caller
     /// can drop the future that awaits it.
     Pend,
+    /// `next_event` fails once, and the script goes on.
+    Fail,
 }
 
 /// The most steps a script can have.
@@ -108,6 +110,8 @@ pub struct Script {
     pub restarts: usize,
     /// Whether closing fails.
     failing_close: bool,
+    /// The longest message the peer accepts, where it advertises one.
+    outbound_max: Option<usize>,
 }
 
 impl Script {
@@ -138,6 +142,7 @@ impl Script {
             closes: 0,
             restarts: 0,
             failing_close: false,
+            outbound_max: None,
         }
     }
 
@@ -150,6 +155,12 @@ impl Script {
     /// The same, failing to close.
     pub fn failing_close(mut self) -> Self {
         self.failing_close = true;
+        self
+    }
+
+    /// The same, advertising a peer that accepts messages of `len` bytes at most.
+    pub fn bounded(mut self, len: usize) -> Self {
+        self.outbound_max = Some(len);
         self
     }
 
@@ -229,7 +240,8 @@ impl Script {
         self.sent_count = self.sent_count.wrapping_add(1);
     }
 
-    /// The next step, or the one error this transport returns: the script is exhausted.
+    /// The next step, or this transport's error: a [`Step::Fail`], or the script
+    /// exhausted.
     fn advance<'b>(
         &mut self,
         buffer: &'b mut [u8],
@@ -278,6 +290,7 @@ impl Script {
                 }
                 Step::Slip(t) => self.now = t,
                 Step::Pend => {}
+                Step::Fail => return Err(()),
                 Step::At(t) => {
                     self.now = t;
                     // The comparison the seam doc prescribes, right across the wrap.
@@ -346,7 +359,7 @@ impl UdsTransport for Script {
         })
     }
     fn outbound_max(&self) -> Option<usize> {
-        None
+        self.outbound_max
     }
     fn channel_timing(&self) -> Reloads {
         self.reloads
