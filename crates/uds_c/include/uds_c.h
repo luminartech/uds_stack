@@ -358,9 +358,21 @@ typedef UdsNrc (*UdsTransitionPrepareFn)(UdsOpStatus op, uint8_t active_session,
 
 /**
  * @brief Undoes the layer's prepare, which returned 0x00, of a transition that
- *        is not made: a later layer's prepare refused it or was canceled, the
- *        request was canceled, or the positive response was refused or never
- *        confirmed. The server stays in `active_session`.
+ *        is not made after all:
+ *        - a later layer's prepare refused it, or was canceled with
+ *          UDS_OP_CANCEL;
+ *        - the positive response was refused after all (responseTooLong,
+ *          say);
+ *        - its confirmation failed;
+ *        - the requesting client's link closed first;
+ *        - for a session change, tS3_Server expired first, a confirmed change
+ *          that a tS3_Server timeout overtakes in the same poll included;
+ *        - the transport failed, stopping the server;
+ *        - the server's run future was dropped first.
+ *        The server stays in `active_session`, the session it is in as abandon
+ *        runs: UDS_DSC_DEFAULT_SESSION after a tS3_Server expiry. Abandon runs
+ *        within the poll that finds the transition not made, so before the
+ *        execute(UDS_DSC_DEFAULT_SESSION) that an expiry defers to the next.
  */
 typedef void (*UdsTransitionAbandonFn)(uint8_t active_session, uint8_t sub_function);
 
@@ -380,8 +392,8 @@ typedef void (*UdsTransitionExecuteFn)(uint8_t sub_function);
  *        response, then runs every layer's execute, the last layer's first.
  *        Where the transition is not made after a prepare, it runs the abandon
  *        of every layer prepared, the last layer's first. Every hook may be
- *        NULL, and an empty one behaves as NULL: a NULL check or prepare
- *        answers 0x00 at once.
+ *        NULL, and an empty function behaves as a NULL hook: a NULL check or
+ *        prepare answers 0x00 at once.
  */
 typedef struct
 {
