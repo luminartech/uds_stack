@@ -19,13 +19,21 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> CommunicationControl
         (u8::from(control_type) <= 0x03).then(outside_default)
     }
 
+    /// The server has one network: a subnet other than every network (0x0) and the one
+    /// the request came on (0xF) is `requestOutOfRange`, without the handler.
     async fn control(
         &mut self,
         control_type: CommunicationControlType,
         communication_type: CommunicationType,
-        _subnet: SubnetNumber,
+        subnet: SubnetNumber,
         _node_id: Option<u16>,
     ) -> Result<(), Nrc> {
+        if !matches!(
+            subnet,
+            SubnetNumber::AllConnectedNetworks | SubnetNumber::ReceivedOn
+        ) {
+            return Err(Nrc::RequestOutOfRange);
+        }
         let Some(control) = P::LAYERS.comm_control() else {
             return Err(Nrc::ServiceNotSupported);
         };
