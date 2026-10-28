@@ -707,31 +707,78 @@ fn a_failed_write_drops_its_connection() {
     assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x01]);
 }
 
-/// A failed accept stops the server on the transport error, and leaves it unarmed.
+/// A failed accept between requests interrupts the server, which is armed again at once
+/// and serves on.
 #[test]
-fn a_failed_accept_stops_the_server() {
+fn a_failed_accept_between_requests_interrupts_the_server() {
     let _lock = lock();
     let mut ecu = Ecu::start();
     sim::fail(Fail::Accept);
     sim::connect();
-    assert!(matches!(ecu.poll(), Err(RunError::Stopped(_))));
-    assert!(matches!(ecu.poll(), Err(RunError::NotStarted)));
-}
-
-/// A server stopped on a transport error is armed again, its discovery kept, and
-/// serves.
-#[test]
-fn a_server_stopped_on_a_transport_error_is_armed_again() {
-    let _lock = lock();
-    let mut ecu = Ecu::start();
-    sim::fail(Fail::Accept);
-    sim::connect();
-    assert!(matches!(ecu.poll(), Err(RunError::Stopped(_))));
+    assert!(matches!(ecu.poll(), Err(RunError::Interrupted(_))));
     sim::fail(Fail::None);
-    assert!(ecu.arm());
-    assert!(!ecu.arm());
+    assert!(!ecu.arm(), "armed again already");
     ecu.activate();
     assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x01]);
+}
+
+/// A failed accept between requests while a session change's positive response is still
+/// being written keeps the change: the tester receives the whole response, the layers
+/// execute the change once it is transmitted, nothing is abandoned, and the server is in
+/// the session the response announced.
+#[test]
+fn a_failed_accept_while_a_session_change_is_written_keeps_the_change() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    sim::WRITE_CAP.store(4, Ordering::Relaxed);
+    sim::send(&support::diagnostic(&[0x10, 0x03]));
+    let mut seen = Vec::new();
+    for _ in 0..100 {
+        if seen.len() >= 2 {
+            break;
+        }
+        ecu.tick();
+        seen.extend(calls());
+    }
+    assert_eq!(
+        seen,
+        [
+            Call::Prepare("platform", 0x00, 0x01, 0x03),
+            Call::Prepare("oem", 0x00, 0x01, 0x03)
+        ]
+    );
+    sim::fail(Fail::Accept);
+    assert!(matches!(ecu.poll(), Err(RunError::Interrupted(_))));
+    sim::fail(Fail::None);
+    assert!(!ecu.arm(), "armed again already");
+    let frames = ecu.exchange(3);
+    assert_eq!(frames[2].0, 0x8001);
+    assert_eq!(frames[2].1[4..], [0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    ecu.tick();
+    assert_eq!(
+        calls(),
+        [Call::Session("oem", 0x03), Call::Session("platform", 0x03)]
+    );
+    assert_eq!(ecu.request(&[0x22, 0xF1, 0x86]), [0x62, 0xF1, 0x86, 0x03]);
+}
+
+/// A failed accept while a session change is prepared stops the server for good: the
+/// change is abandoned, the server is left unarmed and is never armed again.
+#[test]
+fn a_failed_accept_mid_request_stops_the_server_for_good() {
+    let _lock = lock();
+    let mut ecu = Ecu::start();
+    ecu.activate();
+    *support::PREPARE.lock().unwrap() = Prepare::Pend;
+    sim::send(&support::diagnostic(&[0x10, 0x03]));
+    ecu.exchange(2);
+    sim::fail(Fail::Accept);
+    assert!(matches!(ecu.poll(), Err(RunError::Stopped(_))));
+    sim::fail(Fail::None);
+    assert!(!ecu.arm(), "armed again after a terminal error");
+    assert!(matches!(ecu.poll(), Err(RunError::NotStarted)));
+    assert_eq!(calls().last(), Some(&Call::Abandon("platform", 0x01, 0x03)));
 }
 
 /// A server never armed is not polled.

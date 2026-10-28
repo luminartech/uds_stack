@@ -37,8 +37,8 @@ use uds_c::{
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
     Access, Address, DiagnosticSessionType as Session, DtcStatusMask, P2StarServerMax,
-    ResetType, Server, ServerParams, ServiceSet, SessionTiming, Sessions, Stopped,
-    UdsTransport, uds_server,
+    ResetType, Server, ServerParams, ServiceSet, SessionTiming, Sessions, StepError,
+    Stopped, UdsTransport, uds_server,
 };
 
 /// The tester's logical address.
@@ -638,7 +638,7 @@ const TESTER_ADDRESS: TesterAddress = match TesterAddress::new(LogicalAddress(TE
 
 type Error = <Transport as UdsTransport>::Error;
 
-type Run = Pin<Box<dyn Future<Output = Result<Stopped, Error>>>>;
+type Run = Pin<Box<dyn Future<Output = Result<Stopped, StepError<Error>>>>>;
 
 /// The `validate` of the application assembly `A` serves.
 type Validate<A> =
@@ -646,7 +646,7 @@ type Validate<A> =
 
 /// A server in a [`Firmware`], armed as firmware arms it, polled as firmware polls it.
 pub struct Ecu {
-    /// Arms the server, as firmware does at start-up and after a transport error.
+    /// Arms the server, as firmware does at start-up.
     arm: Box<dyn FnMut() -> bool>,
     /// One pass of the firmware's loop.
     poll: Box<dyn FnMut() -> Result<(), RunError<Error>>>,
@@ -713,8 +713,8 @@ impl Ecu {
         }
     }
 
-    /// Arms the server again, as firmware does after a transport error stopped it:
-    /// whether it was unarmed.
+    /// Arms the server again: whether it was unarmed, and no terminal transport error
+    /// stopped it.
     pub fn arm(&mut self) -> bool {
         (self.arm)()
     }
