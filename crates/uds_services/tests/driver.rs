@@ -12,7 +12,7 @@ use common::{PendN, STEPS, Script, Step, block_on};
 use uds_services::{
     Address, AfterSend, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc,
     Reloads, ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink,
-    Stepped, TaType, Timestamp, TransportEvent, UdsTransport, uds_server,
+    StepError, Stepped, TaType, Timestamp, TransportEvent, UdsTransport, uds_server,
 };
 use uds_session::TransportError;
 
@@ -150,7 +150,7 @@ fn a_spurious_confirmation_is_survived() {
     let mut server = Srv::new(Ecu, Spurious { done: false }, Address(0x10), PARAMS);
     assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
     assert!(server.transport().done);
-    assert_eq!(block_on(server.step()), Err(()));
+    assert_eq!(block_on(server.step()), Err(StepError::Recoverable(())));
 }
 
 const ECU: Address = Address(0x10);
@@ -1369,8 +1369,8 @@ fn a_positive_response_refused_after_prepare_abandons_the_change() {
     assert_eq!(app.transitions, [None, None]);
 }
 
-/// A transport failing as the positive response is handed over ends the step with its
-/// error, and the change `prepare` accepted is abandoned.
+/// A transport failing as the positive response is handed over ends the step with a
+/// terminal error, and the change `prepare` accepted is abandoned.
 #[test]
 fn a_transport_error_after_prepare_abandons_the_change() {
     let mut server = PreparingSrv::new(
@@ -1379,15 +1379,15 @@ fn a_transport_error_after_prepare_abandons_the_change() {
         ECU,
         PARAMS,
     );
-    assert_eq!(block_on(server.step()), Err(()));
+    assert_eq!(block_on(server.step()), Err(StepError::Terminal(())));
     let app = server.services();
     assert_eq!(app.prepared, 1);
     assert_eq!(app.abandoned, [ABANDONED, None]);
     assert_eq!(app.transitions, [None, None]);
 }
 
-/// A transport failing while `prepare` runs drops it unfinished: the step ends with the
-/// error, and nothing is abandoned.
+/// A transport failing while `prepare` runs drops it unfinished: the step ends with a
+/// terminal error, and nothing is abandoned.
 #[test]
 fn a_transport_error_while_preparing_abandons_nothing() {
     let mut server = PreparingSrv::new(
@@ -1399,7 +1399,7 @@ fn a_transport_error_while_preparing_abandons_nothing() {
         ECU,
         PARAMS,
     );
-    assert_eq!(block_on(server.step()), Err(()));
+    assert_eq!(block_on(server.step()), Err(StepError::Terminal(())));
     let app = server.services();
     assert_eq!(app.prepared, 0, "the dropped prepare completed");
     assert_eq!(app.abandoned, [None, None]);
@@ -1422,12 +1422,36 @@ fn a_failed_confirmation_drained_before_a_transport_error_is_abandoned_once() {
     );
     assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
     server.services().pends = 2;
-    assert_eq!(block_on(server.step()), Err(()));
+    assert_eq!(block_on(server.step()), Err(StepError::Terminal(())));
     assert!(server.transport().finished(), "the script was not consumed");
     let app = server.services();
     assert_eq!(app.prepared, 1, "the second prepare completed");
     assert_eq!(app.abandoned, [ABANDONED, None]);
     assert_eq!(app.transitions, [None, None]);
+}
+
+/// A transport failing between requests while the positive response awaits its
+/// confirmation is recoverable: nothing is abandoned, and the next step takes the
+/// confirmation and enters the session.
+#[test]
+fn a_transport_error_between_requests_keeps_the_change_awaiting_confirmation() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Fail,
+            Step::Conf(response_to(TESTER), SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
+    assert_eq!(block_on(server.step()), Err(StepError::Recoverable(())));
+    assert_eq!(server.services().abandoned, [None, None]);
+    assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
+    let app = server.services();
+    assert_eq!(app.abandoned, [None, None]);
+    assert_eq!(app.transitions, [INTO_EXTENDED, None]);
 }
 
 /// A step dropped once `prepare` has accepted the change, while its positive response

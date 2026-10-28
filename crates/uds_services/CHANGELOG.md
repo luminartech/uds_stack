@@ -30,10 +30,21 @@ pre-1.0 crates).
   requests are not under it.
 - `EcuReset::abandon`, called in place of `confirmed` where a reset `reset` accepted is
   not made: its response is refused after all, its confirmation fails, the link closes
-  first, the transport fails or `Server::step` is dropped. It is told the active
-  session, and does nothing by default.
+  first, the transport fails mid-request first or `Server::step` is dropped. It is told
+  the active session, and does nothing by default.
 
 ### Changed
+
+- **Breaking.** `Server::step` and `Server::run` fail with the new `StepError`, which
+  carries the transport's error and says whether the server may be stepped again. A
+  transport failing while the server awaits its next event between requests is
+  `StepError::Recoverable`: nothing is half done there, a response awaiting its
+  confirmation keeps its change, which the confirmation the next step takes makes, and
+  `step` or `run` may be called again. A transport failing while an event or a request
+  is handled is `StepError::Terminal`, terminal for the instance as every error was
+  before. `StepError::is_recoverable` tells them apart and `StepError::into_inner`
+  returns the transport's error. Migrate: match the two variants, or take the error out
+  with `into_inner` where both end the server.
 
 - **Breaking.** `DiagnosticSessionControl` has a required `prepare` and a required
   `MAY_RESPOND_PENDING`. `prepare` is awaited once a session change is admitted and

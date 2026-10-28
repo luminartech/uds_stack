@@ -47,7 +47,8 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     /// change abandoned.
     unmade: Option<Effect>,
     /// Whether the step in progress, if any, awaits the transport's next event between
-    /// requests, the one await it is dropped at with the server serving on.
+    /// requests, the one await it is dropped at, or fails at, with the server serving
+    /// on.
     idle: bool,
     /// The parameters the server was built with, against which each session's `P2` pair is
     /// checked in debug builds.
@@ -149,34 +150,44 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// Handle one transport event. Returns [`Stepped::Stopped`] where a restarting reset
     /// was confirmed during this step, which the caller acts on before stepping again.
     ///
-    /// **An `Err` is terminal for this server instance** (``UDSSVC_ARCH_0040``). A
-    /// transport error unwinds through the drains, so a session-hook decision a drain
-    /// recorded (a `tS3_Server` expiry, a confirmed session) may not have been applied,
-    /// and the application's state and the session layer may disagree afterwards. Do not
-    /// call `step` on this instance again; [`Self::into_parts`] takes the services and
-    /// the transport back out.
+    /// An `Err` says whether this instance may be stepped again (``UDSSVC_ARCH_0040``):
+    ///
+    /// - [`StepError::Recoverable`]: the transport failed while the server awaited its
+    ///   next event between requests, where nothing is half done. A response awaiting
+    ///   its confirmation keeps its change, which that confirmation makes, and `step` may
+    ///   be called again.
+    /// - [`StepError::Terminal`]: the transport failed while an event or a request was
+    ///   handled. The error unwinds through the drains, so a session-hook decision a
+    ///   drain recorded (a `tS3_Server` expiry, a confirmed session) may not have been
+    ///   applied, and the application's state and the session layer may disagree
+    ///   afterwards. **Do not call `step` on this instance again**; [`Self::into_parts`]
+    ///   takes the services and the transport back out.
     ///
     /// # Cancel safety
     ///
     /// The returned future is **not** cancel-safe: drop it only between `step` calls.
-    /// Dropped at any await other than the transport's `next_event`, it leaves the
-    /// instance in the state an `Err` does.
+    /// Dropped at any await other than the transport's `next_event` between requests, it
+    /// leaves the instance in the state a [`StepError::Terminal`] does.
     ///
     /// # Errors
     ///
-    /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
-    /// error: it is a response, written into the sink.
+    /// [`StepError`], carrying the [`UdsTransport::Error`], where the transport failed. A
+    /// negative response is not an error: it is a response, written into the sink.
     ///
     /// # Panics
     ///
     /// Where [`DiagnosticSessionControl::timing`](crate::DiagnosticSessionControl::timing)
     /// returns a pair the [`ServerParams`] response-pending lead does not fit
     /// ([`ServerParams::lead_fits`]), on the first request that pair would time.
-    pub async fn step(&mut self) -> Result<Stepped, T::Error> {
+    pub async fn step(&mut self) -> Result<Stepped, StepError<T::Error>> {
         let step = Stepping(self);
-        let handled = step.0.handle().await;
-        step.0.idle = handled.is_ok();
-        let Some(stopped) = handled? else {
+        let handled = match step.0.handle().await {
+            Ok(handled) => handled,
+            Err(error) if step.0.idle => return Err(StepError::Recoverable(error)),
+            Err(error) => return Err(StepError::Terminal(error)),
+        };
+        step.0.idle = true;
+        let Some(stopped) = handled else {
             return Ok(Stepped::Continue);
         };
         // Annex I transition 1 owes start-up again after a restart.
@@ -356,8 +367,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 
     /// Run until a restarting reset is confirmed, or the transport fails.
     ///
-    /// **The `Err` this returns is terminal for this server instance**, as an `Err` from
-    /// [`Self::step`] is. Do not call `run` or `step` on this instance again;
+    /// The `Err` this returns is [`Self::step`]'s. After a [`StepError::Recoverable`],
+    /// `run` or `step` may be called on this instance again. After a
+    /// [`StepError::Terminal`], **do not call `run` or `step` on this instance again**;
     /// [`Self::into_parts`] takes the services and the transport back out.
     ///
     /// # Cancel safety
@@ -373,7 +385,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// # Panics
     ///
     /// Where [`Self::step`] does.
-    pub async fn run(&mut self) -> Result<Stopped, T::Error> {
+    pub async fn run(&mut self) -> Result<Stopped, StepError<T::Error>> {
         loop {
             if let Stepped::Stopped(stopped) = self.step().await? {
                 return Ok(stopped);
@@ -386,7 +398,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// state. The caller holds the `own` address and [`ServerParams`] it built this with.
     ///
     /// A server in a `ConstStaticCell`/`StaticCell` cannot be moved out of; it is stepped
-    /// again instead. After an `Err` from [`Self::step`], this is the only supported use.
+    /// again instead. After a [`StepError::Terminal`], this is the only supported use.
     #[must_use]
     pub fn into_parts(self) -> (A::App, T) {
         (self.services, self.transport)
@@ -438,8 +450,8 @@ pub enum Stopped {
     Reset(ResetType),
 }
 
-/// The transport's next event, awaited with `idle` set: the one await [`Server::step`] is
-/// dropped at with the server serving on.
+/// The transport's next event, awaited with `idle` set, and left set where it fails: the
+/// one await [`Server::step`] is dropped at, or fails at, with the server serving on.
 async fn between_requests<'b, T: UdsTransport>(
     transport: &mut T,
     idle: &mut bool,
@@ -447,10 +459,54 @@ async fn between_requests<'b, T: UdsTransport>(
     deadline: Option<Timestamp>,
 ) -> Result<TransportEvent<'b>, T::Error> {
     *idle = true;
-    let event = transport.next_event(buffer, deadline).await;
+    let event = transport.next_event(buffer, deadline).await?;
     *idle = false;
-    event
+    Ok(event)
 }
+
+/// Why [`Server::step`] or [`Server::run`] failed: the transport's error, and whether the
+/// server may be stepped again (``UDSSVC_ARCH_0040``).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepError<E> {
+    /// The transport failed while the server awaited its next event between requests.
+    /// Nothing was half done there: a response awaiting its confirmation keeps its
+    /// change, and the server may be stepped again.
+    Recoverable(E),
+    /// The transport failed while an event or a request was handled. Terminal for the
+    /// instance; see [`Server::step`].
+    Terminal(E),
+}
+
+impl<E> StepError<E> {
+    /// Whether the server may be stepped again.
+    #[must_use]
+    pub const fn is_recoverable(&self) -> bool {
+        matches!(self, Self::Recoverable(_))
+    }
+
+    /// The transport's error.
+    #[must_use]
+    pub fn into_inner(self) -> E {
+        match self {
+            Self::Recoverable(error) | Self::Terminal(error) => error,
+        }
+    }
+}
+
+impl<E: core::fmt::Debug> core::fmt::Display for StepError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Recoverable(error) => {
+                write!(f, "the transport failed between requests: {error:?}")
+            }
+            Self::Terminal(error) => {
+                write!(f, "the transport failed mid-request: {error:?}")
+            }
+        }
+    }
+}
+
+impl<E: core::fmt::Debug> core::error::Error for StepError<E> {}
 
 /// Load the `P2` pair of the session in force into the session layer, so the request about
 /// to be indicated at `now` opens the window its session advertised. The session layer is

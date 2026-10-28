@@ -72,7 +72,7 @@ pub use client::{
 };
 
 pub mod server;
-pub use server::{Server, ServerParams, Stepped, Stopped};
+pub use server::{Server, ServerParams, StepError, Stepped, Stopped};
 
 #[doc(hidden)]
 pub mod storage;
