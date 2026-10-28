@@ -37,6 +37,8 @@ pub(super) struct Outbox<const CAP: usize> {
     pub(super) data: TxQueue<CAP>,
     /// The rest of the frame part written.
     writing: Option<Frame>,
+    /// The bytes written from both queues since the socket was opened.
+    sent: u64,
 }
 
 /// What [`Outbox::next`] gave to write: the queue it is in, how many bytes, and whether
@@ -60,6 +62,7 @@ impl<const CAP: usize> Outbox<CAP> {
             control: TxQueue::new(),
             data: TxQueue::new(),
             writing: None,
+            sent: 0,
         }
     }
 
@@ -122,6 +125,9 @@ impl<const CAP: usize> Outbox<CAP> {
             Lane::Control => self.control.advance(written),
             Lane::Data => self.data.advance(written),
         }
+        self.sent = self
+            .sent
+            .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
         self.writing = (left > 0).then_some(Frame {
             lane: frame.lane,
             left,
@@ -129,11 +135,19 @@ impl<const CAP: usize> Outbox<CAP> {
         });
     }
 
-    /// Drops everything queued.
+    /// The socket's stream position of the data queue's position `end`, which the last
+    /// write took: the bytes written since it, all from the data queue, are not counted.
+    pub(super) fn stream_position(&self, end: u64) -> u64 {
+        self.sent
+            .saturating_sub(self.data.written().saturating_sub(end))
+    }
+
+    /// Drops everything queued, and starts the count of bytes written again.
     pub(super) fn clear(&mut self) {
         self.control.clear();
         self.data.clear();
         self.writing = None;
+        self.sent = 0;
     }
 
     /// Exchanges contents with `other`, whose data queue has another capacity.
@@ -149,6 +163,7 @@ impl<const CAP: usize> Outbox<CAP> {
         self.data.swap(&mut other.data)?;
         core::mem::swap(&mut self.control, &mut other.control);
         core::mem::swap(&mut self.writing, &mut other.writing);
+        core::mem::swap(&mut self.sent, &mut other.sent);
         Ok(())
     }
 
@@ -249,6 +264,28 @@ mod tests {
         let written = u64::try_from(encoded(&[ack(), response(4)]).len()).ok();
         assert_eq!(end, written);
         assert!(outbox.data.written_through(end.unwrap_or(u64::MAX)));
+    }
+
+    /// A response's stream position counts every byte written ahead of it from either
+    /// queue, and none written after it.
+    #[test]
+    fn a_response_s_stream_position_counts_both_queues() {
+        let mut outbox = Outbox::<64>::new();
+        outbox.control.push(&ack()).ok();
+        drain(&mut outbox, 64);
+        let first = outbox.push(&response(4)).unwrap_or_default();
+        outbox.push(&response(4)).ok();
+        let (frame, _) = outbox.next();
+        outbox.advance(frame, usize::try_from(first).unwrap_or_default());
+        outbox.control.push(&ack()).ok();
+        drain(&mut outbox, 64);
+
+        let ack_len = u64::try_from(encoded(&[ack()]).len()).unwrap_or_default();
+        let second = first.saturating_mul(2);
+        assert_eq!(
+            outbox.stream_position(second),
+            ack_len.saturating_mul(2).saturating_add(second)
+        );
     }
 
     /// A response filling the whole data queue is queued beside acknowledgments, which

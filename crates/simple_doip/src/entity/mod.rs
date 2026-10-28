@@ -22,8 +22,10 @@ mod handler;
 mod io;
 mod outbox;
 mod table;
+mod transmit;
 
 use core::fmt;
+use core::marker::PhantomData;
 
 use core::future::{Future, pending, poll_fn};
 use core::pin::pin;
@@ -51,6 +53,7 @@ use io::{Io, drive};
 use table::{
     Activation, AliveCheck, AliveCheckScope, Arbitration, Phase, Slot, SlotRef, Stage,
 };
+pub use transmit::{ConfirmOn, OnTransmit, OnWrite, TransmitProgress};
 
 /// The reserve socket's buffers: a routing activation request or response, with room
 /// to spare for a header NACK.
@@ -67,6 +70,8 @@ const GENERAL_INACTIVITY: core::time::Duration = crate::TCP_TIMEOUT_GENERAL_INAC
 const ALIVE_CHECK: core::time::Duration = crate::TCP_TIMEOUT_ALIVE_CHECK;
 /// How long an abort may take before the socket is dropped.
 const ABORT_LIMIT: core::time::Duration = ALIVE_CHECK;
+/// How often an [`OnTransmit`] entity reads the progress of a socket a confirm waits on.
+const TRANSMIT_POLL: core::time::Duration = core::time::Duration::from_millis(1);
 
 /// When `timer`, started at `now`, expires: the end of time if that is past it.
 fn expiry(now: Instant, timer: core::time::Duration) -> Instant {
@@ -188,6 +193,10 @@ pub struct AlreadyStarted;
 ///   it sends, and a small one apart for its own acknowledgments and other control
 ///   frames; the reserve holds small ones only.
 /// - `TESTERS` is [`EntityConfig`]'s count of tester addresses.
+/// - `D` is what the entity does on UDP: [`NoDiscovery`] or [`Discovery`].
+/// - `C` is when it confirms a diagnostic message it sends: [`OnWrite`], once written
+///   to its socket, or [`OnTransmit`], once its socket reports it transmitted, as
+///   [`Entity::confirm_on_transmit`] chooses.
 ///
 /// The acceptor is borrowed for `'a` because every socket it accepts borrows it; bind
 /// it first with [`edge_nal::TcpBind::bind`]. A connection beyond the `MCTS + 1` the
@@ -240,6 +249,7 @@ pub struct Entity<
     const MAX_MESSAGE: usize,
     const TESTERS: usize = 1,
     D: Discover = NoDiscovery,
+    C: ConfirmOn<A::Socket<'a>> = OnWrite,
 > {
     acceptor: &'a A,
     address: EntityAddress,
@@ -252,13 +262,17 @@ pub struct Entity<
     /// Which source [`Self::wait`] polls first.
     turn: Turn,
     discovery: D,
+    confirm_on: PhantomData<C>,
 }
 
 /// A request awaiting its [`EntityEvent::Confirm`].
 #[derive(Clone, Copy)]
 struct PendingConfirm {
     connection: usize,
+    /// The data queue's position of the request's last byte.
     end: u64,
+    /// The socket's stream position of the request's last byte, once written.
+    stream_end: Option<u64>,
     sa: LogicalAddress,
     ta: LogicalAddress,
     ta_type: TaType,
@@ -348,7 +362,8 @@ impl<
     const MAX_MESSAGE: usize,
     const TESTERS: usize,
     D: Discover,
-> fmt::Debug for Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D>
+    C: ConfirmOn<A::Socket<'a>>,
+> fmt::Debug for Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D, C>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Entity")
@@ -452,14 +467,16 @@ impl<
     const TESTERS: usize,
     U: UdpSplit,
     I: VehicleIdentity,
-> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>>
+    C: ConfirmOn<A::Socket<'a>>,
+> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>, C>
 {
     /// An entity accepting connections from `acceptor`, whose discovery
     /// [`Self::start_discovery`] starts once the interface has a valid address.
     ///
     /// A `const fn`, for a target whose stack cannot hold an entity: it builds the entity
     /// as a `static`'s initializer, before it knows the identity it announces. Until
-    /// discovery starts the entity serves `TCP_DATA` alone.
+    /// discovery starts the entity serves `TCP_DATA` alone. It confirms as its type's `C`
+    /// says, [`OnWrite`] by default.
     ///
     /// The `static` is a `.data` image of the whole entity, buffers included: the entity
     /// takes its size in flash as well as in RAM. Its initializer is `const` only where
@@ -524,6 +541,41 @@ impl<
     const TESTERS: usize,
     D: Discover,
 > Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D>
+where
+    A::Socket<'a>: TransmitProgress,
+{
+    /// This entity, confirming each diagnostic message it sends once its socket reports
+    /// the message's last byte transmitted rather than once the socket has taken it:
+    /// [`OnTransmit`]. [`Entity::new_discovery_later`] builds such an entity in a `const`
+    /// context where its type names [`OnTransmit`].
+    #[must_use]
+    pub fn confirm_on_transmit(
+        self,
+    ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D, OnTransmit> {
+        Entity {
+            acceptor: self.acceptor,
+            address: self.address,
+            config: self.config,
+            connections: self.connections,
+            reserve: self.reserve,
+            arbitration: self.arbitration,
+            confirms: self.confirms,
+            turn: self.turn,
+            discovery: self.discovery,
+            confirm_on: PhantomData,
+        }
+    }
+}
+
+impl<
+    'a,
+    A: TcpAccept + 'a,
+    const MCTS: usize,
+    const MAX_MESSAGE: usize,
+    const TESTERS: usize,
+    D: Discover,
+    C: ConfirmOn<A::Socket<'a>>,
+> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D, C>
 {
     /// The entity every constructor builds, over `connections`, empty slots, with
     /// `discovery` as its UDP side.
@@ -554,6 +606,7 @@ impl<
             confirms: [None; CONFIRMS],
             turn: Turn::Connection(0),
             discovery,
+            confirm_on: PhantomData,
         }
     }
 
@@ -561,7 +614,7 @@ impl<
     fn replace_discovery<E: Discover>(
         self,
         discovery: E,
-    ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, E> {
+    ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, E, C> {
         Entity {
             acceptor: self.acceptor,
             address: self.address,
@@ -572,6 +625,7 @@ impl<
             confirms: self.confirms,
             turn: self.turn,
             discovery,
+            confirm_on: PhantomData,
         }
     }
 
@@ -650,12 +704,9 @@ impl<
             {
                 return None;
             }
-            let result = confirm.result.or_else(|| {
-                self.connections
-                    .get(confirm.connection)
-                    .filter(|slot| slot.out.data.written_through(confirm.end))
-                    .map(|_| DoIpResult::Ok)
-            })?;
+            let result = confirm
+                .result
+                .or_else(|| self.is_sent(confirm).then_some(DoIpResult::Ok))?;
             Some((at, result))
         })?;
         let held = self.confirms.get_mut(at..)?;
@@ -667,6 +718,49 @@ impl<
             ta_type: confirm.ta_type,
             result,
         })
+    }
+
+    /// Whether the request `confirm` awaits has left as `C` requires: written, and
+    /// transmitted for [`OnTransmit`].
+    fn is_sent(&self, confirm: &PendingConfirm) -> bool {
+        let Some(stream_end) = confirm.stream_end else {
+            return false;
+        };
+        self.connections
+            .get(confirm.connection)
+            .and_then(|slot| slot.open.as_ref())
+            .is_some_and(|open| C::through(&open.socket, stream_end))
+    }
+
+    /// When to read the sockets' transmit progress again: soon, while a request written
+    /// awaits it.
+    fn transmit_wake(&self, now: Instant) -> Option<Instant> {
+        self.confirms
+            .iter()
+            .flatten()
+            .any(|confirm| {
+                confirm.result.is_none()
+                    && confirm.stream_end.is_some()
+                    && !self.is_sent(confirm)
+            })
+            .then(|| expiry(now, TRANSMIT_POLL))
+    }
+
+    /// Places on the socket's stream the last byte of each request on connection `index`
+    /// that the last write finished.
+    fn stamp_written(&mut self, index: usize) {
+        let Some(slot) = self.connections.get(index) else {
+            return;
+        };
+        for confirm in self.confirms.iter_mut().flatten() {
+            if confirm.connection == index
+                && confirm.result.is_none()
+                && confirm.stream_end.is_none()
+                && slot.out.data.written_through(confirm.end)
+            {
+                confirm.stream_end = Some(slot.out.stream_position(confirm.end));
+            }
+        }
     }
 
     fn queue(
@@ -691,6 +785,7 @@ impl<
         let mut confirm = PendingConfirm {
             connection: MCTS,
             end: 0,
+            stream_end: None,
             sa,
             ta,
             ta_type,
@@ -766,6 +861,9 @@ impl<
     /// Applies what a socket did. Data either way restarts a registered socket's
     /// general inactivity timer (REQ 3.DoIP-080).
     fn apply(&mut self, at: SlotRef, io: Io, now: Instant) {
+        if let (Io::Wrote, SlotRef::Connection(index)) = (io, at) {
+            self.stamp_written(index);
+        }
         match io {
             Io::Wrote | Io::Read(_) => {
                 if let Some(open) = self.open_mut(at)
@@ -1356,7 +1454,8 @@ impl<
     const MAX_MESSAGE: usize,
     const TESTERS: usize,
     D: Discover,
-> DiagnosticEntity for Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D>
+    C: ConfirmOn<A::Socket<'a>>,
+> DiagnosticEntity for Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D, C>
 {
     type Error = Error<A::Error>;
 
@@ -1369,7 +1468,8 @@ impl<
     const MAX_PDU: usize = MAX_MESSAGE.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD);
 
     /// Queues `pdu` on the connection that registered `ta`. Its confirm is
-    /// [`DoIpResult::Ok`] once [`DiagnosticEntity::next_event`] has written it.
+    /// [`DoIpResult::Ok`] once [`DiagnosticEntity::next_event`] has written it, and for
+    /// an [`OnTransmit`] entity once its socket has transmitted it too.
     ///
     /// The entity's own logical address is its [`EntityAddress::physical`]; a request
     /// from any other `sa` sends nothing and is confirmed [`DoIpResult::UnknownSa`].
@@ -1441,10 +1541,15 @@ impl<
             if until.is_some_and(|until| until <= now) {
                 return Ok(EntityEvent::Deadline);
             }
-            let alarm = [self.next_wake(), self.discovery.next_wake(now), until]
-                .into_iter()
-                .flatten()
-                .min();
+            let alarm = [
+                self.next_wake(),
+                self.discovery.next_wake(now),
+                self.transmit_wake(now),
+                until,
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             let woke = self.wait(alarm, now).await;
             let now = Instant::now();
             match woke {
