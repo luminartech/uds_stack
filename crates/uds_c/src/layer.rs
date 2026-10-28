@@ -265,6 +265,13 @@ impl UdsAccess {
         }
     }
 
+    /// Whether every session the mask names is one of `allowed`.
+    pub(crate) fn sessions_within(self, allowed: Sessions) -> bool {
+        SESSION_BITS
+            .into_iter()
+            .all(|(bit, session)| self.sessions & bit == 0 || allowed.contains(session))
+    }
+
     /// Whether the security level is none or a requestSeed level.
     pub(crate) fn valid(self) -> bool {
         self.security_level == 0
