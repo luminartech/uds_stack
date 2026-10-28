@@ -37,7 +37,7 @@ pre-1.0 crates).
   every request for it is `serviceNotSupported` (0x11), as for a service the assembly
   does not list, ahead of every other check. Its answer must stay constant for the
   server's life. Without it every listed service is served, so existing assemblies are
-  unchanged.
+  unchanged. `ServiceSet::DECLINES` says whether an assembly was given one.
 
 ### Changed
 

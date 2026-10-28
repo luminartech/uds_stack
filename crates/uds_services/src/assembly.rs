@@ -336,6 +336,18 @@ macro_rules! __uds_may_pend {
     };
 }
 
+/// `ServiceSet::DECLINES`: whether the assembly was given `serves`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_declines {
+    () => {
+        false
+    };
+    ($serves:expr) => {
+        true
+    };
+}
+
 /// Emits the body of the two session hooks: a call to `on_transition` where the
 /// assembly lists `DiagnosticSessionControl`, nothing otherwise. Used once per listed
 /// service, so the call appears at most once.
@@ -686,7 +698,8 @@ macro_rules! __uds_assert {
 /// a service the list does not name, before any other check and without its trait being
 /// asked. The answer for each service must stay constant for the server's life: one that
 /// turned `false` mid-download would strand the transfer it opened. Without it, every
-/// listed service is served.
+/// listed service is served. [`ServiceSet::DECLINES`](crate::ServiceSet::DECLINES) says
+/// whether an assembly was given one.
 ///
 /// `peers = 1` is the only count that compiles: the driver keeps one slot for a
 /// `DiagnosticSessionControl` or `ECUReset` response awaiting its confirmation, and a
@@ -1043,6 +1056,8 @@ macro_rules! uds_server {
                 type Store = $crate::Store<IN_FLIGHT, CONCURRENT, RESPONSE>;
 
                 type State = $crate::State;
+
+                const DECLINES: bool = $crate::__uds_declines!($($serves)?);
 
                 async fn dispatch(
                     app: &mut $ty,

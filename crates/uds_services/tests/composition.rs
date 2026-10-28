@@ -871,4 +871,11 @@ mod declining {
         assert_answers(&[0x36, 0x01, 0xAA], &[0x7F, 0x36, 0x11]);
         assert_answers(&[0x37], &[0x7F, 0x37, 0x11]);
     }
+
+    /// `DECLINES` says whether the assembly was given `serves`.
+    #[test]
+    fn declines_reports_a_serves_function() {
+        const { assert!(DecliningServices::DECLINES) };
+        const { assert!(!super::EcuServices::DECLINES) };
+    }
 }

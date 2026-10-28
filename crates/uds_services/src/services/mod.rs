@@ -252,6 +252,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
     #[doc(hidden)]
     type State: ProtocolState;
 
+    /// Whether the assembly was given a `serves` function, which may decline a listed
+    /// service at run time; see [`crate::uds_server`]. An application that relies on
+    /// declining checks it, as a `const` assertion say.
+    const DECLINES: bool;
+
     /// Run the clause 8.7 pipeline for `request` up to its last stages, writing any
     /// response into `out`, and return the handler's outcome [`Unsettled`].
     ///
