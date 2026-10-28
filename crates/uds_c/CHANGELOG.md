@@ -44,17 +44,18 @@ pre-1.0 crates).
     companions) for the memory to apply.
   - `Firmware`, the server and its run future in one `static`, the one way to drive the
     server from one execution context: `arm` at start-up, then `poll` on each pass of
-    its loop, both `unsafe` on that promise. `poll` builds the run future again over
-    the same server after a transport error between requests (`RunError::Interrupted`),
-    and leaves the server unarmed after one mid-request (`RunError::Stopped`), which
-    `arm` then refuses. `poll` makes
-    the transitions through the layers of the server's own policy. Each poll makes a
-    reset or session change once its response is transmitted, as the firmware's
-    `uds_tcp_transmitted` reports for the connection's stream, and on
+    its loop, both `unsafe` on that promise. `poll` builds the run future again over the
+    same server after a transport error between requests (`RunError::Interrupted`), and
+    leaves the server unarmed after one mid-request (`RunError::Stopped`), which `arm`
+    then refuses: the firmware restarts, by resetting the ECU say, to serve again.
+    `poll` makes the transitions through the layers of the server's own policy. Each
+    poll makes a reset or session change once its response is transmitted, as the
+    firmware's `uds_tcp_transmitted` reports for the connection's stream, and on
     entering a session where `ControlDTCSetting` and `CommunicationControl` are not
     served, or after a reset that restarts the server whose execute returns, resumes
-    their state through their handlers (ISO 14229-1:2020 10.2), once. A reset runs before the default session it returns to.
-    `enableRapidPowerShutDown` and `disableRapidPowerShutDown` keep the server running.
+    their state through their handlers (ISO 14229-1:2020 10.2), once. A reset runs
+    before the default session it returns to. `enableRapidPowerShutDown` and
+    `disableRapidPowerShutDown` keep the server running.
   - `nal`, `edge-nal` sockets over the header's socket calls, and `doip`, the entity
     and transport over them. The entity confirms a response once the firmware's
     `uds_tcp_transmitted` reports it transmitted.

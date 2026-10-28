@@ -80,7 +80,8 @@ pub enum RunError<E> {
     #[error("the transport failed between requests")]
     Interrupted(#[source] E),
     /// The server stopped on a terminal transport error ([`StepError::Terminal`]), and
-    /// its run future was dropped. The server is never armed again.
+    /// its run future was dropped. The server is never armed again: to serve again, the
+    /// firmware restarts, by resetting the ECU say.
     #[error("the server stopped on a transport error")]
     Stopped(#[source] E),
 }
