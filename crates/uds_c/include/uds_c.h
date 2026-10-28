@@ -232,8 +232,9 @@ uint8_t uds_dtc_status_after_test_result(uint8_t status, bool failed);
 /**
  * @brief The status an operation cycle starts with, from the status the last
  *        one ended with: pendingDTC clears where that cycle tested the DTC
- *        without a failure, testFailed clears until the test reports again, and
- *        this cycle has not tested the DTC yet. Pure: any task may call it.
+ *        without a failure, testFailed keeps the last result until the test
+ *        reports again, and this cycle has not tested the DTC yet. Pure: any
+ *        task may call it.
  * @param status The status the last operation cycle ended with.
  * @return The status the new cycle starts with.
  */
