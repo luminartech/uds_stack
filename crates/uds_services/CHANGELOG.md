@@ -32,6 +32,12 @@ pre-1.0 crates).
   not made: its response is refused after all, its confirmation fails, the link closes
   first, the transport fails mid-request first or `Server::step` is dropped. It is told
   the active session, and does nothing by default.
+- `uds_server!` takes an optional `serves = f`, a `fn(&App, UdsServiceType) -> bool`
+  asked for every listed service: `false` declines the service at run time, so that
+  every request for it is `serviceNotSupported` (0x11), as for a service the assembly
+  does not list, ahead of every other check. Its answer must stay constant for the
+  server's life. Without it every listed service is served, so existing assemblies are
+  unchanged. `ServiceSet::DECLINES` says whether an assembly was given one.
 
 ### Changed
 
