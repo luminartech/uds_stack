@@ -39,9 +39,9 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     transport: T,
     /// The address every response is sent from (its `S_SA`, ``UDSS_LLR_0051``).
     own: Address,
-    /// The response awaiting its confirmation, if any: a `DiagnosticSessionControl`
-    /// response or an `ECUReset` one.
-    pending: Option<Pending>,
+    /// The response awaiting its confirmation, if any, a `DiagnosticSessionControl`
+    /// response or an `ECUReset` one, and the change of one whose confirmation failed.
+    pending: Unconfirmed,
     /// The change a handler accepted, a session it prepared or a reset, from the
     /// handler's end until its response is submitted, its completion reported or the
     /// change abandoned.
@@ -103,7 +103,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             session: SessionServer::new([Association::EMPTY; PEERS], params),
             transport,
             own,
-            pending: None,
+            pending: Unconfirmed::NONE,
             unmade: None,
             idle: true,
             params,
@@ -132,7 +132,10 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// close its connections while any response awaits its confirmation, or the
     /// server's record of what it awaits no longer matches the transport's.
     pub fn transport_mut(&mut self) -> Option<&mut T> {
-        self.pending.is_none().then_some(&mut self.transport)
+        self.pending
+            .awaited
+            .is_none()
+            .then_some(&mut self.transport)
     }
 
     /// Run [`ServiceSet::start_up`] on the first step, and again on the first step after a
@@ -249,7 +252,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // nor after the restart within this step. `stopped` is `None` here for as long as
         // uds_session yields no `Confirm` from a tick, a parameter change or an
         // indication; the check keeps 10.3.1 if one ever confirms a restart.
-        if stopped.is_some() || restarting(self.pending) {
+        if stopped.is_some() || restarting(self.pending.awaited) {
             return Ok(stopped.or(self.unanswered(ai).await?));
         }
         // The byte is kept as received because a negative response echoes it
@@ -317,17 +320,22 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         concluded.deferred
     }
 
-    /// Abandon what [`Stepping`] finds unmade: [`Self::unmade`] and, where the step
-    /// ended anywhere but between requests, the change awaiting its confirmation.
+    /// Abandon what [`Stepping`] finds unmade: [`Self::unmade`], the change whose
+    /// confirmation failed and, where the step ended anywhere but between requests, the
+    /// change awaiting its confirmation.
     #[cold]
     #[inline(never)]
     fn abandon_unmade(&mut self) {
         let unconfirmed = if self.idle {
             None
         } else {
-            self.pending.take().map(|p| p.effect)
+            self.pending.awaited.take().map(|p| p.effect)
         };
-        for effect in [self.unmade.take(), unconfirmed].into_iter().flatten() {
+        let failed = self.pending.failed.take();
+        for effect in [self.unmade.take(), failed, unconfirmed]
+            .into_iter()
+            .flatten()
+        {
             A::abandoned(&mut self.services, &self.state, effect);
         }
     }
@@ -387,9 +395,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 
 /// [`Server::step`]'s drop guard (``UDSSVC_ARCH_0046``): abandons what the step leaves
 /// unmade, whether it returns, fails or is dropped. That is the change a handler accepted
-/// whose response was neither submitted nor completed and, where the step ends anywhere
-/// but between requests, the change whose response awaits its confirmation, which an
-/// ended instance never takes.
+/// whose response was neither submitted nor completed, the change whose confirmation a
+/// drain reported failed and, where the step ends anywhere but between requests, the
+/// change whose response awaits its confirmation, which an ended instance never takes.
 struct Stepping<'s, A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     &'s mut Server<A, T, PEERS>,
 );
@@ -398,7 +406,11 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Drop
     for Stepping<'_, A, T, PEERS>
 {
     fn drop(&mut self) {
-        if self.0.unmade.is_some() || (!self.0.idle && self.0.pending.is_some()) {
+        let pending = self.0.pending;
+        if self.0.unmade.is_some()
+            || pending.failed.is_some()
+            || (!self.0.idle && pending.awaited.is_some())
+        {
             self.0.abandon_unmade();
         }
     }
@@ -456,7 +468,7 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     state: &mut A::State,
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     params: ServerParams,
     now: Timestamp,
 ) -> Result<Option<Stopped>, T::Error> {
@@ -500,6 +512,24 @@ struct Pending {
     effect: Effect,
 }
 
+/// What waits on a confirmation (``UDSS_LLR_0085``): the response in flight, and the
+/// change of one whose confirmation failed, which [`Stepping`] abandons as the step ends,
+/// whether it returns, fails or is dropped.
+#[derive(Debug, Clone, Copy)]
+struct Unconfirmed {
+    /// The response awaiting its confirmation, if any.
+    awaited: Option<Pending>,
+    /// The change of the response whose confirmation failed, until it is abandoned.
+    failed: Option<Effect>,
+}
+
+impl Unconfirmed {
+    const NONE: Self = Self {
+        awaited: None,
+        failed: None,
+    };
+}
+
 /// Where a response to `request` goes: the `Ai` `s_data_req` registers, and so the one
 /// the response's `DataConf` carries to match it. Sent from `own`, never from the
 /// request's `S_TA`, which for a functional request is the group address
@@ -522,7 +552,7 @@ struct Deferred {
     timed_out: bool,
     /// A response with an effect was confirmed sent, or its suppression completed.
     confirmed: Option<Effect>,
-    /// A response with an effect failed, or its session was overtaken by a timeout.
+    /// A confirmed session a later timeout overtook.
     abandoned: Option<Effect>,
 }
 
@@ -597,7 +627,7 @@ fn after_send(leaving: Option<Ai>, ai: Ai, data: &[u8]) -> AfterSend {
 async fn drain<'d, T: UdsTransport, const PEERS: usize>(
     mut reaction: uds_session::ServerReaction<'_, 'd, PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     leaving: Option<Ai>,
 ) -> Result<Drained<'d>, T::Error> {
     let mut found = Drained {
@@ -624,14 +654,14 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
                 // Only the selecting response's own confirmation settles the slot; a
                 // failed one clears it and leaves the session where it was
                 // (``UDSS_LLR_0085`` acts on a successful transmission only).
-                if let Some(p) = *pending
+                if let Some(p) = pending.awaited
                     && p.ai == ai
                 {
-                    *pending = None;
+                    pending.awaited = None;
                     if result == SResult::Ok {
                         found.deferred.confirmed = Some(p.effect);
                     } else {
-                        found.deferred.abandoned = Some(p.effect);
+                        pending.failed = Some(p.effect);
                     }
                 }
             }
@@ -804,7 +834,7 @@ async fn serve<
     mut handler: Pin<&mut H>,
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     concurrent: &mut [u8],
     serving: Serving,
 ) -> Result<Served, T::Error> {
@@ -899,7 +929,7 @@ async fn serve<
 async fn keep_alive<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     now: Timestamp,
     ai: Ai,
     data: &[u8],
@@ -918,7 +948,7 @@ async fn keep_alive<T: UdsTransport, const PEERS: usize>(
 async fn refuse_busy<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     now: Timestamp,
     own: Address,
     ai: Ai,
@@ -949,7 +979,7 @@ struct Concluded {
 async fn conclude<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     concurrent: &mut [u8],
     served: Served,
     serving: Serving,
@@ -985,7 +1015,7 @@ async fn conclude<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
 async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     concurrent: &mut [u8],
     outcome: Responded,
     serving: Serving,
@@ -1038,7 +1068,7 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     // `answer`'s doc.
     let handed_over = d.rejected.is_none() && effect != Effect::None;
     if handed_over {
-        *pending = Some(Pending {
+        pending.awaited = Some(Pending {
             ai: serving.reply_to,
             effect,
         });
@@ -1090,7 +1120,7 @@ fn selection(effect: Effect) -> Option<uds_session::SessionSelection> {
 async fn complete<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     ai: Ai,
     effect: Effect,
 ) -> Result<Deferred, T::Error> {
@@ -1130,7 +1160,7 @@ enum Awaited {
 async fn await_confirmation<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     concurrent: &mut [u8],
     serving: Serving,
     awaited: Awaited,
@@ -1202,7 +1232,7 @@ struct Overrun {
 async fn overrun_at<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     now: Timestamp,
     serving: Serving,
 ) -> Result<Overrun, T::Error> {
@@ -1226,7 +1256,7 @@ async fn overrun_at<T: UdsTransport, const PEERS: usize>(
 async fn answer_overrun<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     now: Timestamp,
     serving: Serving,
 ) -> Result<Overrun, T::Error> {
@@ -1255,7 +1285,7 @@ async fn answer_overrun<T: UdsTransport, const PEERS: usize>(
 async fn submit_pending<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    pending: &mut Option<Pending>,
+    pending: &mut Unconfirmed,
     now: Timestamp,
     serving: Serving,
 ) -> Result<Overrun, T::Error> {
