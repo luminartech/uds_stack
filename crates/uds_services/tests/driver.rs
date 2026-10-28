@@ -1430,6 +1430,37 @@ fn a_failed_confirmation_drained_before_a_transport_error_is_abandoned_once() {
     assert_eq!(app.transitions, [None, None]);
 }
 
+/// A session confirmed while another tester's change prepares, then overtaken by a
+/// `tS3_Server` expiry, is abandoned once the transport fails before either is applied,
+/// and the expiry is applied.
+#[test]
+fn a_confirmed_session_a_timeout_overtakes_is_abandoned_when_the_step_fails() {
+    let mut server = PreparingSrv::new(
+        Preparing::default(),
+        Script::new(&[
+            Step::Ind(request_from(TESTER), EXTENDED),
+            Step::Ind(request_from(OTHER_TESTER), EXTENDED),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+            Step::At(20_000),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
+    server.services().pends = 3;
+    assert_eq!(block_on(server.step()), Err(StepError::Terminal(())));
+    let app = server.services();
+    assert_eq!(app.prepared, 1, "the second prepare completed");
+    assert_eq!(app.abandoned, [ABANDONED, None]);
+    assert_eq!(
+        app.transitions,
+        [
+            Some((SessionTransition::DefaultToDefault, S::DefaultSession)),
+            None
+        ]
+    );
+}
+
 /// A transport failing between requests while the positive response awaits its
 /// confirmation is recoverable: nothing is abandoned, and the next step takes the
 /// confirmation and enters the session.

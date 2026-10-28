@@ -157,9 +157,10 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///   its confirmation keeps its change, which that confirmation makes, and `step` may
     ///   be called again.
     /// - [`StepError::Terminal`]: the transport failed while an event or a request was
-    ///   handled. The error unwinds through the drains, so a session-hook decision a
-    ///   drain recorded (a `tS3_Server` expiry, a confirmed session) may not have been
-    ///   applied, and the application's state and the session layer may disagree
+    ///   handled. A `tS3_Server` expiry the step's drains recorded is applied before it
+    ///   returns, and every change accepted and not made is abandoned, a confirmed session
+    ///   an expiry overtook included. A confirmation recorded and not yet applied is not
+    ///   made, so the application's state and the session layer may disagree
     ///   afterwards. **Do not call `step` on this instance again**; [`Self::into_parts`]
     ///   takes the services and the transport back out.
     ///
@@ -215,19 +216,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             TransportEvent::DataInd { ai, data } => (ai, Received::Whole(data)),
             TransportEvent::DataTooLong { ai, data, .. } => (ai, Received::Truncated(data)),
             TransportEvent::DataConf { ai, result } => {
-                // UDSS_LLR_0063 — one matching no association is rejected by the session
-                // layer; the drain reads the verdict and nothing changes.
-                let reaction = self.session.t_data_conf(now, ai, result);
-                let d =
-                    drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-                return Ok(apply::<A>(&mut self.services, &mut self.state, d.deferred));
+                return self.idle_event(now, Some((ai, result))).await;
             }
-            TransportEvent::Deadline => {
-                let reaction = self.session.tick(now);
-                let d =
-                    drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-                return Ok(apply::<A>(&mut self.services, &mut self.state, d.deferred));
-            }
+            TransportEvent::Deadline => return self.idle_event(now, None).await,
             // Periodic has no consumer; a Closed outside a handler ends nothing here.
             TransportEvent::Periodic { .. } | TransportEvent::Closed { .. } => {
                 return Ok(None);
@@ -255,7 +246,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // Dispatched only once indicated: the indication is what starts `tP2_Server`
         // (UDSS_LLR_0113), without which the 0x78 window does not exist.
         let d = drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-        stopped = stopped.or(apply::<A>(&mut self.services, &mut self.state, d.deferred));
+        stopped = stopped.or(apply::<A>(
+            &mut self.services,
+            &mut self.state,
+            &mut self.pending,
+            d.deferred,
+        ));
         let Some((ai, _)) = d.indication else {
             return Ok(stopped);
         };
@@ -298,6 +294,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         stopped = stopped.or(apply::<A>(
             &mut self.services,
             &mut self.state,
+            &mut self.pending,
             served.deferred,
         ));
         // `stopped` is `None` here for as long as `pending` is no restart while a handler
@@ -318,7 +315,29 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         )
         .await?;
         let deferred = self.hand_over(concluded);
-        Ok(stopped.or(apply::<A>(&mut self.services, &mut self.state, deferred)))
+        Ok(stopped.or(self.apply_deferred(deferred)))
+    }
+
+    /// A transport event between requests: the confirmation `confirmed` carries, or, for
+    /// `None`, a deadline. ``UDSS_LLR_0063`` — a confirmation matching no association is
+    /// rejected by the session layer; the drain reads the verdict and nothing changes.
+    async fn idle_event(
+        &mut self,
+        now: Timestamp,
+        confirmed: Option<(Ai, SResult)>,
+    ) -> Result<Option<Stopped>, T::Error> {
+        let reaction = match confirmed {
+            Some((ai, result)) => self.session.t_data_conf(now, ai, result),
+            None => self.session.tick(now),
+        };
+        let d = drain(reaction, &mut self.transport, &mut self.pending, None).await?;
+        let deferred = d.deferred;
+        Ok(self.apply_deferred(deferred))
+    }
+
+    /// [`apply`] what the drains recorded to this server's services and state.
+    fn apply_deferred(&mut self, d: Deferred) -> Option<Stopped> {
+        apply::<A>(&mut self.services, &mut self.state, &mut self.pending, d)
     }
 
     /// Stop tracking [`Self::unmade`] where `concluded` handed it over, from which on it
@@ -333,17 +352,23 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 
     /// Abandon what [`Stepping`] finds unmade: [`Self::unmade`], the change whose
     /// confirmation failed and, where the step ended anywhere but between requests, the
-    /// change awaiting its confirmation.
+    /// change awaiting its confirmation. A `tS3_Server` expiry the drains recorded and
+    /// the step did not apply is applied first, with the confirmed session it overtook
+    /// abandoned.
     #[cold]
     #[inline(never)]
     fn abandon_unmade(&mut self) {
+        let lost = core::mem::replace(&mut self.pending.unapplied, Deferred::NONE);
+        if lost.timed_out {
+            A::session_timed_out(&mut self.services, &mut self.state);
+        }
         let unconfirmed = if self.idle {
             None
         } else {
             self.pending.awaited.take().map(|p| p.effect)
         };
         let failed = self.pending.failed.take();
-        for effect in [self.unmade.take(), failed, unconfirmed]
+        for effect in [lost.abandoned, self.unmade.take(), failed, unconfirmed]
             .into_iter()
             .flatten()
         {
@@ -362,7 +387,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             Effect::None,
         )
         .await?;
-        Ok(apply::<A>(&mut self.services, &mut self.state, d))
+        Ok(self.apply_deferred(d))
     }
 
     /// Run until a restarting reset is confirmed, or the transport fails.
@@ -408,8 +433,10 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 /// [`Server::step`]'s drop guard (``UDSSVC_ARCH_0046``): abandons what the step leaves
 /// unmade, whether it returns, fails or is dropped. That is the change a handler accepted
 /// whose response was neither submitted nor completed, the change whose confirmation a
-/// drain reported failed and, where the step ends anywhere but between requests, the
-/// change whose response awaits its confirmation, which an ended instance never takes.
+/// drain reported failed, a confirmed session a `tS3_Server` expiry overtook and, where
+/// the step ends anywhere but between requests, the change whose response awaits its
+/// confirmation, which an ended instance never takes. An expiry the step's drains
+/// recorded and did not apply is applied first.
 struct Stepping<'s, A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     &'s mut Server<A, T, PEERS>,
 );
@@ -421,6 +448,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Drop
         let pending = self.0.pending;
         if self.0.unmade.is_some()
             || pending.failed.is_some()
+            || pending.unapplied.timed_out
             || (!self.0.idle && pending.awaited.is_some())
         {
             self.0.abandon_unmade();
@@ -529,7 +557,7 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     now: Timestamp,
 ) -> Result<Option<Stopped>, T::Error> {
     let tick = drain(session.tick(now), transport, pending, None).await?;
-    let mut stopped = apply::<A>(services, state, tick.deferred);
+    let mut stopped = apply::<A>(services, state, pending, tick.deferred);
     let Some(timing) = A::session_timing(services, state) else {
         return Ok(stopped);
     };
@@ -549,7 +577,7 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
             None,
         )
         .await?;
-        stopped = stopped.or(apply::<A>(services, state, d.deferred));
+        stopped = stopped.or(apply::<A>(services, state, pending, d.deferred));
     }
     Ok(stopped)
 }
@@ -568,21 +596,26 @@ struct Pending {
     effect: Effect,
 }
 
-/// What waits on a confirmation (``UDSS_LLR_0085``): the response in flight, and the
-/// change of one whose confirmation failed, which [`Stepping`] abandons as the step ends,
-/// whether it returns, fails or is dropped.
+/// What waits on a confirmation (``UDSS_LLR_0085``): the response in flight, the change
+/// of one whose confirmation failed, which [`Stepping`] abandons as the step ends,
+/// whether it returns, fails or is dropped, and what the drains recorded that [`apply`]
+/// has not applied yet.
 #[derive(Debug, Clone, Copy)]
 struct Unconfirmed {
     /// The response awaiting its confirmation, if any.
     awaited: Option<Pending>,
     /// The change of the response whose confirmation failed, until it is abandoned.
     failed: Option<Effect>,
+    /// Every drain's record since the last [`apply`], merged in arrival order: what a
+    /// step that fails or is dropped before applying them leaves to [`Stepping`].
+    unapplied: Deferred,
 }
 
 impl Unconfirmed {
     const NONE: Self = Self {
         awaited: None,
         failed: None,
+        unapplied: Deferred::NONE,
     };
 }
 
@@ -694,8 +727,8 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
     };
     for out in reaction.outputs() {
         match out {
-            // milestone-1 limit: an `Err` here drops what this drain recorded; see
-            // `Server::step`'s doc.
+            // milestone-1 limit: an `Err` here leaves a confirmation this step recorded
+            // unapplied; see `Server::step`'s doc.
             ServerOutput::Transmit { ai, data } => {
                 transport
                     .t_data_req(ai, data, after_send(leaving, ai, data))
@@ -716,12 +749,22 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
                     pending.awaited = None;
                     if result == SResult::Ok {
                         found.deferred.confirmed = Some(p.effect);
+                        pending.unapplied = pending.unapplied.merge(Deferred {
+                            confirmed: Some(p.effect),
+                            ..Deferred::NONE
+                        });
                     } else {
                         pending.failed = Some(p.effect);
                     }
                 }
             }
-            ServerOutput::SessionTimeout { .. } => found.deferred.timed_out = true,
+            ServerOutput::SessionTimeout { .. } => {
+                found.deferred.timed_out = true;
+                pending.unapplied = pending.unapplied.merge(Deferred {
+                    timed_out: true,
+                    ..Deferred::NONE
+                });
+            }
             ServerOutput::ResponseOverrun { .. } => found.overran = true,
             // A failed reception's `Indicate`, whose data means nothing (UDSS_LLR_0035),
             // and whatever else UDSS_LLR_0012's open enumeration adds.
@@ -750,8 +793,10 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
 fn apply<A: ServiceSet>(
     services: &mut A::App,
     state: &mut A::State,
+    pending: &mut Unconfirmed,
     d: Deferred,
 ) -> Option<Stopped> {
+    pending.unapplied = Deferred::NONE;
     if d.timed_out {
         A::session_timed_out(services, state);
     }
@@ -1186,11 +1231,13 @@ async fn complete<T: UdsTransport, const PEERS: usize>(
     };
     let reaction = session.completion_report(now, ai, class);
     let d = drain(reaction, transport, pending, None).await?;
-    Ok(d.deferred.merge(Deferred {
+    let reported = Deferred {
         timed_out: false,
         confirmed: (effect != Effect::None).then_some(effect),
         abandoned: None,
-    }))
+    };
+    pending.unapplied = pending.unapplied.merge(reported);
+    Ok(d.deferred.merge(reported))
 }
 
 /// Which confirmation [`await_confirmation`] waits for.
