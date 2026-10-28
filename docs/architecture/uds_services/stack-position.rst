@@ -335,11 +335,11 @@ Scope
      confirmation keeps its change, and ``step`` returns ``StepError::Recoverable``, after
      which the instance is stepped again.
    * **Cancelling a ``step`` or ``run`` future is not safe, except at the transport's
-     ``next_event``.** Dropped at any other await, the instance is left as a transport
-     error leaves it: outputs drained but not applied, a pending session selection
-     cleared without its confirmation applied, a handler dropped with its association
-     still outstanding, and the application's session state may disagree with the session
-     layer's. A future is to be dropped only between ``step`` calls. Tracked in
+     ``next_event`` between requests.** ``next_event`` is awaited mid-request too, and
+     dropped there, or at any other await, the instance is left as a terminal transport
+     error leaves it: a confirmation drained but not applied, a handler dropped with its
+     association still outstanding, and the application's session state may disagree with
+     the session layer's. A future is to be dropped only between ``step`` calls. Tracked in
      luminartech/uds_stack#19, together with recovery after an error.
    * **Waiting out a refused final response is unbounded.** A final response refused
      because its association, or every association, still awaits a confirmation is
