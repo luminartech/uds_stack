@@ -32,6 +32,9 @@ pub trait TableServer: sealed::Sealed {
     /// The layers the application serves, through which [`Firmware::poll`] makes the
     /// resets and session changes its responses confirmed.
     const LAYERS: &'static Layers;
+    /// Whether the assembly declines what the tables do not serve: was given
+    /// `serves = App::serves`. [`Firmware::arm`] fails to compile without it.
+    const DECLINES: bool;
 }
 
 impl<A, T, const PEERS: usize> sealed::Sealed for Server<A, T, PEERS>
@@ -50,6 +53,7 @@ where
 {
     type App = TableApp<P, RECORD, LEVELS>;
     const LAYERS: &'static Layers = P::LAYERS;
+    const DECLINES: bool = A::DECLINES;
 }
 
 /// A server and the run future [`Self::poll`] drives, in one `static`.
@@ -108,6 +112,11 @@ impl<S: TableServer, F> Firmware<S, F> {
     /// already. The [`Validated`] it takes is what [`TableApp::validate`] returned for
     /// the server's own application.
     ///
+    /// Fails to compile for a server whose assembly was not given
+    /// `serves = App::serves`, without which a service the tables do not serve is
+    /// refused only after the checks ahead of its handler, not `serviceNotSupported`
+    /// (0x11) before them.
+    ///
     /// # Safety
     ///
     /// The contract in [`Firmware`]'s `# Safety`.
@@ -117,6 +126,12 @@ impl<S: TableServer, F> Firmware<S, F> {
         start: impl FnOnce(&mut S),
         run: impl FnOnce(&'static mut S) -> F,
     ) -> bool {
+        const {
+            assert!(
+                S::DECLINES,
+                "the server's `uds_server!` needs `serves = App::serves`"
+            );
+        };
         // SAFETY: the contract makes this call the only one under way, so nothing else
         // reaches the slot.
         let slot = unsafe { &mut *self.run.get() };
@@ -219,6 +234,7 @@ mod tests {
     impl TableServer for Server {
         type App = TableApp<Empty>;
         const LAYERS: &'static Layers = &LAYERS;
+        const DECLINES: bool = true;
     }
 
     /// The server's run future: pending `pending` polls, then stopped on a reset, or on a

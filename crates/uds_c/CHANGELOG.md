@@ -20,7 +20,8 @@ pre-1.0 crates).
     tables at start-up, whose `Validated<App>` proof `Firmware::arm` takes for a server
     over that application; `Policy` states the sessions, their timing and the limits.
     A DTC, communication control or download service that no layer serves is
-    `serviceNotSupported` (0x11).
+    `serviceNotSupported` (0x11), the assembly given `serves = App::serves`, which
+    `Firmware::arm` requires at compile time.
   - Resets and session changes through every layer's `UdsTransitionHooks`: check and
     prepare before the positive response, execute after it, and abandon for a change
     prepared but not made; each hook is told the active session.
