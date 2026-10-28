@@ -175,11 +175,25 @@ pub enum TableError {
     },
 }
 
-/// Proof that [`TableApp::validate`] accepted the tables, which
-/// [`Firmware::arm`](crate::Firmware::arm) takes, so a server is armed only over tables
-/// checked at start-up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Validated(());
+/// Proof that [`TableApp::validate`] accepted the tables of the application `A`, which
+/// [`Firmware::arm`](crate::Firmware::arm) takes for a server over that same application,
+/// so a server is armed only over tables checked at start-up. Made by `validate` alone,
+/// and neither `Clone` nor `Copy`.
+pub struct Validated<A>(PhantomData<fn() -> A>);
+
+impl<A> fmt::Debug for Validated<A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Validated")
+    }
+}
+
+impl<A> PartialEq for Validated<A> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl<A> Eq for Validated<A> {}
 
 /// The entry a [`TableError`] names.
 #[non_exhaustive]
@@ -327,7 +341,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
     /// # Errors
     ///
     /// The first entry the server cannot serve safely, as a [`TableError`].
-    pub fn validate() -> Result<Validated, TableError> {
+    pub fn validate() -> Result<Validated<Self>, TableError> {
         let layers = P::LAYERS;
         if let Some(e) = layers.dids().find(|e| usize::from(e.len) > P::MAX_DID_LEN) {
             return Err(TableError::DidTooLong { did: e.did });
@@ -425,7 +439,7 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
         if let Some(level) = first_duplicate(|| layers.security_levels().map(|e| e.level)) {
             return Err(TableError::Duplicate(AccessOf::Level(level)));
         }
-        Ok(Validated(()))
+        Ok(Validated(PhantomData))
     }
 
     /// The record of `len` bytes a handler answers into, where `len` is within the

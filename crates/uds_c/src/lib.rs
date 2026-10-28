@@ -156,7 +156,7 @@ pub use dtc_status::{
     uds_dtc_status_after_test_result, uds_dtc_status_at_operation_cycle_start,
     uds_dtc_status_cleared,
 };
-pub use firmware::Firmware;
+pub use firmware::{Firmware, TableServer};
 pub use layer::{
     Layers, UdsAccess, UdsCommControlFn, UdsDidEntry, UdsDidReadFn, UdsDidWriteFn,
     UdsDtcClearFn, UdsDtcGetFn, UdsDtcHooks, UdsDtcSettingFn, UdsDtcSnapshotCountFn,

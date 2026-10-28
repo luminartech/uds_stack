@@ -17,7 +17,8 @@ pre-1.0 crates).
     a `Layers` lists them.
   - `TableApp<P: Policy>`, an application implementing every `uds_services` service
     trait over the layers, built as a `const`, with `TableApp::validate` to refuse
-    tables at start-up, whose `Validated` proof `Firmware::arm` takes; `Policy` states the sessions, their timing and the limits.
+    tables at start-up, whose `Validated<App>` proof `Firmware::arm` takes for a server
+    over that application; `Policy` states the sessions, their timing and the limits.
     A DTC, communication control or download service that no layer serves is
     `serviceNotSupported` (0x11).
   - Resets and session changes through every layer's `UdsTransitionHooks`: check and
@@ -37,7 +38,8 @@ pre-1.0 crates).
   - `Firmware`, the server and its run future in one `static`, the one way to drive the
     server from one execution context: `arm` at start-up, then `poll` on each pass of
     its loop, both `unsafe` on that promise; `arm` again where a transport error
-    stopped it. Each poll makes a reset or session change once `uds_tcp_write` has
+    stopped it. `poll` makes the transitions through the layers of the server's own
+    policy. Each poll makes a reset or session change once `uds_tcp_write` has
     taken its response, and on entering a session where `ControlDTCSetting` and
     `CommunicationControl` are not served, or after a reset that restarts the server
     whose execute returns, resumes their state through their handlers (ISO 14229-1:2020

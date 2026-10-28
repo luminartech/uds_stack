@@ -95,12 +95,12 @@ The server is built in place in a `uds_c::Firmware` `static`, with
 `uds_c::doip::transport`. A `static` needs its run future's type named, which takes the
 nightly `type_alias_impl_trait` feature in the firmware's crate; this crate itself
 builds on stable. At start-up the firmware calls `App::validate()` and hands the
-`Validated` proof it returns to `Firmware::arm`, whose closures start discovery with
-`uds_c::doip::start_discovery` and build the run future; on every pass of its loop it
-calls `Firmware::poll(&LAYERS, run)`, which makes the resets and session changes whose
-responses have been sent, then polls the server once. `Firmware` is the one way to drive
-the server. Both calls are `unsafe`: the firmware promises to make them from that loop
-alone.
+`Validated<App>` proof it returns to `Firmware::arm`, whose closures start discovery with
+`uds_c::doip::start_discovery` and build the run future. On every pass of its loop it
+calls `Firmware::poll(run)`, which makes the resets and session changes whose positive
+responses `uds_tcp_write` has taken, through the server's own layers, then polls the
+server once. `Firmware` is the one way to drive the server. Both calls are `unsafe`: the
+firmware promises to make them from that loop alone.
 
 ## Status
 
