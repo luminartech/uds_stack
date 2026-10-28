@@ -19,9 +19,9 @@ pre-1.0 crates).
     trait over the layers, built as a `const`, with `TableApp::validate` to refuse
     tables at start-up, whose `Validated<App>` proof `Firmware::arm` takes for a server
     over that application; `Policy` states the sessions, their timing and the limits.
-    `validate` refuses a download access naming a session outside
-    `Policy::TRANSFER_SESSIONS` (`TableError::TransferSessions`), where no download is
-    served.
+    `validate` refuses the access of a layer serving downloads where it names a
+    session outside `Policy::TRANSFER_SESSIONS` (`TableError::TransferSessions`), in
+    which no download is served.
     A DTC, communication control or download service that no layer serves is
     `serviceNotSupported` (0x11), the assembly given `serves = App::serves`, which
     `Firmware::arm` requires at compile time. The server has one network and one DTC

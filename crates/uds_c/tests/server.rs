@@ -1086,7 +1086,8 @@ fn a_service_a_second_layer_serves_is_refused() {
 }
 
 /// A download access naming a session outside the policy's transfer sessions, where no
-/// download is ever served, is refused at start-up.
+/// download is ever served, is refused at start-up; a layer that serves no download is
+/// not held to them.
 #[test]
 fn a_download_access_outside_the_transfer_sessions_is_refused() {
     static EXTENDED: UdsLayer = UdsLayer {
@@ -1101,11 +1102,25 @@ fn a_download_access_outside_the_transfer_sessions_is_refused() {
         },
         ..layer_of(&[])
     };
-    validated_only!(ExtendedDownload, EXTENDED);
+    static NO_DOWNLOAD: UdsLayer = UdsLayer {
+        transfer: uds_c::UdsTransferHooks {
+            access: UdsAccess {
+                sessions: 0x07,
+                security_level: 0,
+            },
+            begin: None,
+            block: None,
+            finish: None,
+        },
+        ..layer_of(&[])
+    };
+    validated_only!(ExtendedDownload, NO_DOWNLOAD, EXTENDED);
+    validated_only!(NoDownload, NO_DOWNLOAD);
     assert_eq!(
         TableApp::<ExtendedDownload>::validate(),
-        Err(TableError::TransferSessions(AccessOf::Transfer(0)))
+        Err(TableError::TransferSessions(AccessOf::Transfer(1)))
     );
+    assert!(TableApp::<NoDownload>::validate().is_ok());
 }
 
 unsafe extern "C" fn seed_nothing(_op: u8, _option: *const u8, _option_len: usize) -> u8 {

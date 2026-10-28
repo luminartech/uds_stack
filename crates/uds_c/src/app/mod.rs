@@ -179,12 +179,12 @@ pub enum TableError {
     },
 }
 
-/// Refuses the first download access naming a session outside `sessions`, the policy's
-/// [`Policy::TRANSFER_SESSIONS`].
+/// Refuses the first download access, of a layer that serves downloads, naming a session
+/// outside `sessions`, the policy's [`Policy::TRANSFER_SESSIONS`].
 fn within_transfer_sessions(layers: &Layers, sessions: Sessions) -> Result<(), TableError> {
     match layers
-        .transfer_accesses()
-        .position(|a| !a.sessions_within(sessions))
+        .transfer_hooks()
+        .position(|t| t.begin.is_some() && !t.access.sessions_within(sessions))
     {
         Some(index) => Err(TableError::TransferSessions(AccessOf::Transfer(index))),
         None => Ok(()),
@@ -346,10 +346,10 @@ impl<P: Policy, const RECORD: usize, const LEVELS: usize> TableApp<P, RECORD, LE
     /// Checks the layers once, before the server starts: every record within the
     /// policy's limits, every security level a requestSeed sub-function allowing at
     /// least one attempt and at most `LEVELS` of them, every access naming such a level
-    /// or none, every download access within [`Policy::TRANSFER_SESSIONS`], every entry
-    /// with the handlers it needs, no identifier twice, at most one
-    /// layer serving the DTC memory, DTC setting, communication control and downloads
-    /// each, and the memory's snapshot and clear in its own layer.
+    /// or none, every served download's access within [`Policy::TRANSFER_SESSIONS`],
+    /// every entry with the handlers it needs, no identifier twice, at most one layer
+    /// serving the DTC memory, DTC setting, communication control and downloads each,
+    /// and the memory's snapshot and clear in its own layer.
     ///
     /// The server serves tables that fail this without undefined behavior, failing
     /// closed: a record past a limit is answered `generalReject` (0x10), an invalid
