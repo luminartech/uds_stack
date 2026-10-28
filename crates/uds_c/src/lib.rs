@@ -129,8 +129,9 @@
 //! checks the tables with [`TableApp::validate`] and hands the [`Validated`] proof it
 //! returns to [`Firmware::arm`], whose closures start discovery with
 //! [`doip::start_discovery`] and build the run future; on each pass of its loop it calls
-//! [`Firmware::poll`]. The crate's integration tests drive the server the same way, over
-//! a simulated C side.
+//! [`Firmware::poll`]. `arm` fails to compile for an assembly not given
+//! `serves = App::serves`, as above. The crate's integration tests drive the server the
+//! same way, over a simulated C side.
 
 #![no_std]
 

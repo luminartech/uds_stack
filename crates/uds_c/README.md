@@ -99,8 +99,9 @@ builds on stable. At start-up the firmware calls `App::validate()` and hands the
 `uds_c::doip::start_discovery` and build the run future. On every pass of its loop it
 calls `Firmware::poll(run)`, which makes the resets and session changes whose positive
 responses `uds_tcp_write` has taken, through the server's own layers, then polls the
-server once. `Firmware` is the one way to drive the server. Both calls are `unsafe`: the
-firmware promises to make them from that loop alone.
+server once. `Firmware` is the one way to drive the server, and `serves = App::serves`
+is required: `Firmware::arm` fails to compile for an assembly without it. Both calls are
+`unsafe`: the firmware promises to make them from that loop alone.
 
 ## Status
 
