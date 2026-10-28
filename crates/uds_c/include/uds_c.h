@@ -10,6 +10,11 @@
  * never writes server memory. Every call runs in one execution context, the
  * one that polls the server; none is ISR-safe, but for the DTC status
  * transitions, which are pure.
+ *
+ * A socket call failing between requests costs nothing: the server serves on.
+ * One failing mid-request stops the server for good (RunError::Stopped on the
+ * Rust side), and the firmware must restart, by resetting the ECU say, for it
+ * to serve again.
  */
 #ifndef UDS_C_H
 #define UDS_C_H

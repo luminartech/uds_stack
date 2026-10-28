@@ -102,10 +102,11 @@ responses the stack has transmitted, as `uds_tcp_transmitted` reports, through t
 server's own layers, then polls the server once. A transport error between requests,
 `RunError::Interrupted`, is recovered from: `poll` builds the run future again over the
 same server, which serves on with nothing lost. A transport error mid-request,
-`RunError::Stopped`, is terminal: the server is left unarmed, `arm` refuses it from then
-on, and it serves again only once the firmware restarts. `Firmware` is the one way to drive the server, and `serves = App::serves`
-is required: `Firmware::arm` fails to compile for an assembly without it. Both calls are
-`unsafe`: the firmware promises to make them from that loop alone.
+`RunError::Stopped`, is terminal: the server is left unarmed and `arm` refuses it from
+then on, so the firmware must restart, by resetting the ECU say, to serve again.
+`Firmware` is the one way to drive the server, and `serves = App::serves` is required:
+`Firmware::arm` fails to compile for an assembly without it. Both calls are `unsafe`:
+the firmware promises to make them from that loop alone.
 
 ## Status
 
