@@ -293,7 +293,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             return Ok(stopped.or(self.unanswered(serving.ai).await?));
         }
         let serving = serving.leaving_if::<A>(&self.services, &served);
-        let deferred = conclude::<A, _, PEERS>(
+        let concluded = conclude::<A, _, PEERS>(
             &mut self.session,
             &mut self.transport,
             &mut self.pending,
@@ -303,20 +303,18 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             &mut sink,
         )
         .await?;
-        self.hand_over(serving.reply_to, deferred);
+        let deferred = self.hand_over(concluded);
         Ok(stopped.or(apply::<A>(&mut self.services, &mut self.state, deferred)))
     }
 
-    /// Stop tracking [`Self::unmade`] where its response was submitted to `reply_to` or
-    /// its completion recorded in `deferred`, from which on it is confirmed or abandoned.
-    /// One lost is left for [`Stepping`] to abandon.
-    fn hand_over(&mut self, reply_to: Ai, deferred: Deferred) {
-        let submitted = self
-            .pending
-            .is_some_and(|p| p.ai == reply_to && Some(p.effect) == self.unmade);
-        if submitted || deferred.confirmed == self.unmade {
+    /// Stop tracking [`Self::unmade`] where `concluded` handed it over, from which on it
+    /// is confirmed or abandoned; one lost is left for [`Stepping`] to abandon. Returns
+    /// what the conclusion recorded.
+    fn hand_over(&mut self, concluded: Concluded) -> Deferred {
+        if concluded.handed_over {
             self.unmade = None;
         }
+        concluded.deferred
     }
 
     /// Abandon what [`Stepping`] finds unmade: [`Self::unmade`] and, where the step
@@ -935,6 +933,16 @@ async fn refuse_busy<T: UdsTransport, const PEERS: usize>(
     Ok(drain(reaction, transport, pending, None).await?.deferred)
 }
 
+/// What [`conclude`] recorded, and whether it handed the request's own change over: its
+/// response submitted into `pending`, or its completion reported with it selected.
+/// Matched by this request alone, so an earlier identical change in `pending` or
+/// confirmed meanwhile never stands in for one whose response was lost.
+#[derive(Debug, Clone, Copy)]
+struct Concluded {
+    deferred: Deferred,
+    handed_over: bool,
+}
+
 /// End the request once its handling has: settle and answer it, or, where the link closed
 /// first, report it over with nothing selected (``UDSS_LLR_0074``), no response being
 /// sendable and none having been decided against.
@@ -946,7 +954,7 @@ async fn conclude<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     served: Served,
     serving: Serving,
     sink: &mut ResponseSink<'_>,
-) -> Result<Deferred, T::Error> {
+) -> Result<Concluded, T::Error> {
     match served.ended {
         Ended::Finished(unsettled) => {
             // UDSSVC_ARCH_0016 — the driver settles: rule 3's input is final only now
@@ -958,15 +966,17 @@ async fn conclude<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
             )
             .await
         }
-        Ended::Closed => {
-            complete(session, transport, pending, serving.ai, Effect::None).await
-        }
+        Ended::Closed => Ok(Concluded {
+            deferred: complete(session, transport, pending, serving.ai, Effect::None)
+                .await?,
+            handed_over: false,
+        }),
     }
 }
 
 /// Submit the handler's outcome: a final response, or the completion report a
 /// suppressed request owes. Returns what the application must hear about, for the caller
-/// to [`apply`].
+/// to [`apply`], and whether the outcome's change was handed over.
 ///
 /// A final response refused under ``UDSS_LLR_0061`` (the 0x78's `DataConf` not yet
 /// drained) or ``UDSS_LLR_0062`` (every association awaiting a confirmation) is waited
@@ -980,10 +990,13 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     outcome: Responded,
     serving: Serving,
     response: &[u8],
-) -> Result<Deferred, T::Error> {
+) -> Result<Concluded, T::Error> {
     let effect = outcome.effect();
     if let Responded::Suppressed { .. } = outcome {
-        return complete(session, transport, pending, serving.ai, effect).await;
+        return Ok(Concluded {
+            deferred: complete(session, transport, pending, serving.ai, effect).await?,
+            handed_over: effect != Effect::None,
+        });
     }
     let now = transport.now();
     let reaction =
@@ -1006,7 +1019,10 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
             // The link closed first, as in `serve`'s `Ended::Closed`.
             let closed =
                 complete(session, transport, pending, serving.ai, Effect::None).await?;
-            return Ok(deferred.merge(closed));
+            return Ok(Concluded {
+                deferred: deferred.merge(closed),
+                handed_over: false,
+            });
         };
         deferred = deferred.merge(waited);
         let now = transport.now();
@@ -1015,23 +1031,22 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         d = drain(reaction, transport, pending, serving.leaving).await?;
         deferred = deferred.merge(d.deferred);
     }
-    match d.rejected {
-        // Recorded only once the submission is accepted, so a refused response never
-        // leaves a pending selection behind, and never disturbs one already in
-        // flight. `reply_to` is the association `t_data_conf` will match.
-        None => {
-            if effect != Effect::None {
-                *pending = Some(Pending {
-                    ai: serving.reply_to,
-                    effect,
-                });
-            }
-        }
-        // UDSSVC_ARCH_0040: a final response refused for any other cause, or refused
-        // again after waiting one out, is lost. See `answer`'s doc.
-        Some(_refused) => {}
+    // Recorded only once the submission is accepted, so a refused response never leaves
+    // a pending selection behind, and never disturbs one already in flight. `reply_to`
+    // is the association `t_data_conf` will match. UDSSVC_ARCH_0040: a final response
+    // refused for any other cause, or refused again after waiting one out, is lost. See
+    // `answer`'s doc.
+    let handed_over = d.rejected.is_none() && effect != Effect::None;
+    if handed_over {
+        *pending = Some(Pending {
+            ai: serving.reply_to,
+            effect,
+        });
     }
-    Ok(deferred)
+    Ok(Concluded {
+        deferred,
+        handed_over,
+    })
 }
 
 /// The final response's submission, built in one place because [`answer`] may make it
