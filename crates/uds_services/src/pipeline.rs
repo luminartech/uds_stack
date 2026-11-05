@@ -140,8 +140,9 @@ pub enum Stage<'a> {
 ///
 /// 1. No service identifier at all: [`Stage::Empty`] (``UDSSVC_ARCH_0005``; the standard
 ///    does not model the case).
-/// 2. Service identifier supported? An unmodeled byte, or a service the assembly list
-///    does not name, settles `serviceNotSupported` (0x11).
+/// 2. Service identifier supported? An unmodeled byte, a service the assembly list does
+///    not name, or a listed one the application's `serves` declines, settles
+///    `serviceNotSupported` (0x11): whatever `supports` refuses.
 /// 3. Supported in the active session? Table 23's refusals settle
 ///    `serviceNotSupportedInActiveSession` (0x7F). Figure 5's authentication check
 ///    (0x34), between 2 and 3, is unconditionally true.

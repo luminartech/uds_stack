@@ -1,7 +1,8 @@
 //! Assembly, and the const arithmetic it performs.
 //!
-//! ``UDSSVC_ARCH_0013``: a server is assembled by naming its services, and that list is
-//! what `serviceNotSupported` (0x11) is decided from.
+//! ``UDSSVC_ARCH_0013``: a server is assembled by naming its services, and that list,
+//! narrowed by the application's optional `serves`, is what `serviceNotSupported` (0x11)
+//! is decided from.
 //!
 //! Assembly is a macro because at its expansion site the types are concrete, so
 //! `<Ecu as DataTransfer>::MAX_BLOCK_LEN` is an ordinary const and folding a list of them
@@ -332,6 +333,18 @@ macro_rules! __uds_may_pend {
     };
     ($ty:ty, $svc:ident) => {
         <$ty as $crate::$svc>::MAY_RESPOND_PENDING
+    };
+}
+
+/// `ServiceSet::DECLINES`: whether the assembly was given `serves`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_declines {
+    () => {
+        false
+    };
+    ($serves:expr) => {
+        true
     };
 }
 
@@ -678,6 +691,16 @@ macro_rules! __uds_assert {
 /// to the invoking module. The application type may come from any crate, so one
 /// application shared by firmware, a simulator and tests is assembled in each.
 ///
+/// `serves = f`, optional, names a `fn(&App, UdsServiceType) -> bool` asked for every
+/// listed service, for an application that learns only at run time which it serves, from
+/// tables it is given, say. `false` declines the service: ISO 14229-1:2020 8.7.2 Figure 5,
+/// ``UDSSVC_ARCH_0006``, settles every request for it `serviceNotSupported` (0x11), as for
+/// a service the list does not name, before any other check and without its trait being
+/// asked. The answer for each service must stay constant for the server's life: one that
+/// turned `false` mid-download would strand the transfer it opened. Without it, every
+/// listed service is served. [`ServiceSet::DECLINES`](crate::ServiceSet::DECLINES) says
+/// whether an assembly was given one.
+///
 /// `peers = 1` is the only count that compiles: the driver keeps one slot for a
 /// `DiagnosticSessionControl` or `ECUReset` response awaiting its confirmation, and a
 /// second tester's selecting response could overwrite it while the first is still
@@ -976,7 +999,8 @@ macro_rules! uds_server {
         transport = $transport:ty,
         peers = $peers:expr,
         services = $services:ident,
-        server = $server:ident $(,)?
+        server = $server:ident
+        $(, serves = $serves:expr)? $(,)?
     ) => {
         /// The assembled services of this application, on which `uds_server!`
         /// implements `ServiceSet`. Never a value: it names the assembly in types.
@@ -1033,6 +1057,8 @@ macro_rules! uds_server {
 
                 type State = $crate::State;
 
+                const DECLINES: bool = $crate::__uds_declines!($($serves)?);
+
                 async fn dispatch(
                     app: &mut $ty,
                     state: &mut Self::State,
@@ -1057,6 +1083,14 @@ macro_rules! uds_server {
                                 $crate::Sessions::ALL,
                             ))
                         };
+                        let supports = |service: $crate::UdsServiceType| {
+                            <Self as $crate::ServiceSet>::supports(service)
+                                $( && {
+                                    let serves: fn(&$ty, $crate::UdsServiceType) -> bool =
+                                        $serves;
+                                    serves(app, service)
+                                } )?
+                        };
                         #[allow(unused_variables, reason = "used only by some assemblies")]
                         let ahead = |service: $crate::UdsServiceType,
                                      active: $crate::DiagnosticSessionType,
@@ -1070,7 +1104,7 @@ macro_rules! uds_server {
                         let (sid, decoded) = match $crate::pipeline::begin_with(
                             state,
                             received.bytes(),
-                            <Self as $crate::ServiceSet>::supports,
+                            supports,
                             access,
                             ahead,
                         ) {

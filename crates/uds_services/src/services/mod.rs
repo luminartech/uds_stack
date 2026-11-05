@@ -252,6 +252,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
     #[doc(hidden)]
     type State: ProtocolState;
 
+    /// Whether the assembly was given a `serves` function, which may decline a listed
+    /// service at run time; see [`crate::uds_server`]. An application that relies on
+    /// declining checks it, as a `const` assertion say.
+    const DECLINES: bool;
+
     /// Run the clause 8.7 pipeline for `request` up to its last stages, writing any
     /// response into `out`, and return the handler's outcome [`Unsettled`].
     ///
@@ -384,9 +389,12 @@ pub trait ServiceSet: crate::sealed::Sealed {
     #[doc(hidden)]
     fn leaves_running_software(app: &Self::App, session: DiagnosticSessionType) -> bool;
 
-    /// Whether this server implements `service` at all: ``UDSSVC_ARCH_0006``, Figure 5's
-    /// first mandatory check. A byte that names no service arrives as
+    /// Whether the assembly lists `service`. A byte that names no service arrives as
     /// [`UdsServiceType::UnsupportedDiagnosticService`], which no assembly list contains.
+    ///
+    /// ``UDSSVC_ARCH_0006``: Figure 5's first mandatory check refuses a service this does
+    /// not list, and a listed one the assembly's `serves` (see [`crate::uds_server`])
+    /// declines, so this alone does not predict `serviceNotSupported` (0x11).
     #[doc(hidden)]
     fn supports(service: UdsServiceType) -> bool;
 
