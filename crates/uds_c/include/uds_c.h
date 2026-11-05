@@ -1,0 +1,598 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+/**
+ * @file uds_c.h
+ * @brief The C side of a uds_stack UDS server: the tables and handlers C
+ *        firmware provides, the record copy it answers through, and the
+ *        socket and clock calls it implements.
+ *
+ * The server owns every request and response buffer. A handler reads its
+ * request through const pointers and answers through uds_record_copy; it
+ * never writes server memory. Every call runs in one execution context, the
+ * one that polls the server; none is ISR-safe, but for the DTC status
+ * transitions, which are pure.
+ *
+ * A socket call failing between requests costs nothing: the server serves on.
+ * One failing mid-request stops the server for good (RunError::Stopped on the
+ * Rust side), and the firmware must restart, by resetting the ECU say, for it
+ * to serve again.
+ */
+#ifndef UDS_C_H
+#define UDS_C_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Negative response codes (ISO 14229-1:2020 Table A.1). */
+
+/**
+ * @brief A handler's result: 0x00 is the standard's positiveResponse row,
+ *        never a negative code on the wire, so it is the success value.
+ */
+typedef uint8_t UdsNrc;
+
+#define UDS_NRC_POSITIVE_RESPONSE ((UdsNrc) 0x00U)
+#define UDS_NRC_GENERAL_REJECT ((UdsNrc) 0x10U)
+#define UDS_NRC_SERVICE_NOT_SUPPORTED ((UdsNrc) 0x11U)
+#define UDS_NRC_SUBFUNCTION_NOT_SUPPORTED ((UdsNrc) 0x12U)
+#define UDS_NRC_INCORRECT_LENGTH_OR_FORMAT ((UdsNrc) 0x13U)
+#define UDS_NRC_RESPONSE_TOO_LONG ((UdsNrc) 0x14U)
+#define UDS_NRC_BUSY_REPEAT_REQUEST ((UdsNrc) 0x21U)
+#define UDS_NRC_CONDITIONS_NOT_CORRECT ((UdsNrc) 0x22U)
+#define UDS_NRC_REQUEST_SEQUENCE_ERROR ((UdsNrc) 0x24U)
+#define UDS_NRC_REQUEST_OUT_OF_RANGE ((UdsNrc) 0x31U)
+#define UDS_NRC_SECURITY_ACCESS_DENIED ((UdsNrc) 0x33U)
+#define UDS_NRC_INVALID_KEY ((UdsNrc) 0x35U)
+#define UDS_NRC_EXCEEDED_NUMBER_OF_ATTEMPTS ((UdsNrc) 0x36U)
+#define UDS_NRC_REQUIRED_TIME_DELAY_NOT_EXPIRED ((UdsNrc) 0x37U)
+#define UDS_NRC_UPLOAD_DOWNLOAD_NOT_ACCEPTED ((UdsNrc) 0x70U)
+#define UDS_NRC_TRANSFER_DATA_SUSPENDED ((UdsNrc) 0x71U)
+#define UDS_NRC_GENERAL_PROGRAMMING_FAILURE ((UdsNrc) 0x72U)
+#define UDS_NRC_WRONG_BLOCK_SEQUENCE_COUNTER ((UdsNrc) 0x73U)
+#define UDS_NRC_RESPONSE_PENDING ((UdsNrc) 0x78U)
+#define UDS_NRC_SUBFUNCTION_NOT_SUPPORTED_IN_ACTIVE_SESSION ((UdsNrc) 0x7EU)
+#define UDS_NRC_SERVICE_NOT_SUPPORTED_IN_ACTIVE_SESSION ((UdsNrc) 0x7FU)
+
+/* Operation status */
+
+/**
+ * @brief How the server calls a handler that may take time: INITIAL first;
+ *        PENDING on each later poll while it returns UDS_NRC_RESPONSE_PENDING
+ *        (the server sends the 0x78s); CANCEL once if the request is
+ *        abandoned meanwhile, whose result is ignored.
+ */
+typedef uint8_t UdsOpStatus;
+
+#define UDS_OP_INITIAL ((UdsOpStatus) 0x00U)
+#define UDS_OP_PENDING ((UdsOpStatus) 0x01U)
+#define UDS_OP_CANCEL ((UdsOpStatus) 0x02U)
+
+/* Sessions and access */
+
+/* Session bits of an access mask; not the 0x10 sub-function values. */
+#define UDS_SESSION_MASK_DEFAULT (0x01U)
+#define UDS_SESSION_MASK_PROGRAMMING (0x02U)
+#define UDS_SESSION_MASK_EXTENDED (0x04U)
+#define UDS_SESSION_MASK_ALL (0x07U)
+
+/* DiagnosticSessionControl sub-functions (ISO 14229-1 Table 25). */
+#define UDS_DSC_DEFAULT_SESSION (0x01U)
+#define UDS_DSC_PROGRAMMING_SESSION (0x02U)
+#define UDS_DSC_EXTENDED_SESSION (0x03U)
+
+/* EcuReset sub-function hardReset (ISO 14229-1 Table 34). */
+#define UDS_ECU_RESET_HARD (0x01U)
+
+/**
+ * @brief The sessions (UDS_SESSION_MASK_* bits) an operation is available
+ *        in, and the security level (its requestSeed value) that must be
+ *        unlocked for it, 0 for none.
+ */
+typedef struct
+{
+    uint8_t sessions;
+    uint8_t security_level;
+} UdsAccess;
+
+/* Records: the data a handler answers with */
+
+/**
+ * @brief Copies `len` bytes from `src` into the record of the request being
+ *        served, at byte `offset`. The server owns the record and bounds it
+ *        by the identifier's table entry (a DID's `len`, a routine's
+ *        `status_len`, a level's `seed_len`); what a pending handler copied
+ *        stays until the request completes. Valid only inside a handler that
+ *        answers with a record.
+ * @return true once copied; false, copying nothing, outside such a handler,
+ *         for a NULL `src`, or for a copy past the bound.
+ */
+bool uds_record_copy(size_t offset, uint8_t const *src, size_t len);
+
+/**
+ * @brief Copies `value` big-endian, the byte order of UDS records, into the
+ *        record at byte `offset`: two, four or eight bytes, bounded as
+ *        uds_record_copy bounds them. A float goes as its IEEE 754 bits.
+ * @return As uds_record_copy.
+ */
+bool uds_record_copy_16_be(size_t offset, uint16_t value);
+/** @copydoc uds_record_copy_16_be */
+bool uds_record_copy_32_be(size_t offset, uint32_t value);
+/** @copydoc uds_record_copy_16_be */
+bool uds_record_copy_64_be(size_t offset, uint64_t value);
+
+/* ReadDataByIdentifier (0x22) and WriteDataByIdentifier (0x2E) */
+
+/**
+ * @brief Serves one DID: copies its record (the entry's `len` bytes, zero
+ *        where left unfilled) and returns UDS_NRC_POSITIVE_RESPONSE,
+ *        UDS_NRC_RESPONSE_PENDING, or the NRC to answer.
+ */
+typedef UdsNrc (*UdsDidReadFn)(UdsOpStatus op);
+
+/** @brief Stores one DID's record, exactly the entry's `len` bytes. */
+typedef UdsNrc (*UdsDidWriteFn)(UdsOpStatus op, uint8_t const *data, size_t len);
+
+/** @brief One DID. */
+typedef struct
+{
+    uint16_t      did;
+    uint8_t       read_sessions; /* UDS_SESSION_MASK_* bits */
+    UdsDidReadFn  read;          /* NULL: not readable */
+    UdsAccess     write_access;
+    uint16_t      len;   /* the record a read answers and a write carries */
+    UdsDidWriteFn write; /* NULL: not writable */
+} UdsDidEntry;
+
+/* RoutineControl (0x31) */
+
+/**
+ * @brief Starts, stops or reports a routine with its option record; copies
+ *        its status record, up to the entry's `status_len` bytes, of which
+ *        the response carries as many as were copied.
+ */
+typedef UdsNrc (*UdsRoutineFn)(UdsOpStatus op, uint8_t const *option, size_t option_len);
+
+/** @brief One routine; a NULL step is not supported. */
+typedef struct
+{
+    uint16_t     rid;
+    uint16_t     status_len; /* the longest status record a step answers */
+    UdsAccess    access;
+    UdsRoutineFn start;
+    UdsRoutineFn stop;
+    UdsRoutineFn results;
+} UdsRidEntry;
+
+/* SecurityAccess (0x27) */
+
+/**
+ * @brief Copies the seed, the level's `seed_len` bytes, for a requestSeed. A
+ *        seed left all zero, the value reserved for an unlocked level, is
+ *        answered UDS_NRC_CONDITIONS_NOT_CORRECT.
+ */
+typedef UdsNrc (*UdsSeedFn)(UdsOpStatus op, uint8_t const *option, size_t option_len);
+
+/**
+ * @brief Judges a sendKey: UDS_NRC_POSITIVE_RESPONSE for the right key,
+ *        UDS_NRC_INVALID_KEY for a wrong one (counted towards the level's
+ *        delay), UDS_NRC_RESPONSE_PENDING, or another NRC refusing it.
+ */
+typedef UdsNrc (*UdsKeyFn)(UdsOpStatus op, uint8_t const *key, size_t key_len);
+
+/** @brief One security level. */
+typedef struct
+{
+    uint8_t   level;         /* requestSeed sub-function, odd */
+    uint8_t   sessions;      /* UDS_SESSION_MASK_* bits */
+    uint8_t   attempt_limit; /* failed keys before the delay */
+    uint8_t   seed_len;      /* the seed's length */
+    uint32_t  delay_ms;      /* lockout after attempt_limit failures */
+    UdsSeedFn seed;
+    UdsKeyFn  key;
+} UdsSecurityLevel;
+
+/* ReadDTCInformation (0x19), ClearDiagnosticInformation (0x14), ControlDTCSetting (0x85)
+ *
+ * A layer keeps a DTC memory: each DTC's number, its status byte and one
+ * snapshot record of identifiers. The server encodes the 0x19 reports from it
+ * (0x01, 0x02, 0x03, 0x04 and 0x0A), reporting as its
+ * DTCStatusAvailabilityMask the bits its Rust Policy declares, by default the
+ * status bits below; a memory that sets warningIndicatorRequested (0x80)
+ * declares that bit too. The memory updates each status with the transitions
+ * below, so it applies ISO 14229-1 Annex D rather than restating it. */
+
+/* A DTC's status bits (ISO 14229-1:2020 Annex D.2), those the transitions
+ * maintain. */
+#define UDS_DTC_TEST_FAILED (0x01U)
+#define UDS_DTC_TEST_FAILED_THIS_OPERATION_CYCLE (0x02U)
+#define UDS_DTC_PENDING (0x04U)
+#define UDS_DTC_CONFIRMED (0x08U)
+#define UDS_DTC_TEST_NOT_COMPLETED_SINCE_LAST_CLEAR (0x10U)
+#define UDS_DTC_TEST_FAILED_SINCE_LAST_CLEAR (0x20U)
+#define UDS_DTC_TEST_NOT_COMPLETED_THIS_OPERATION_CYCLE (0x40U)
+
+/**
+ * @brief A DTC's status after ClearDiagnosticInformation, and a new DTC's:
+ *        not tested since the clear nor in this operation cycle. Pure: any
+ *        task may call it.
+ * @return The status byte.
+ */
+uint8_t uds_dtc_status_cleared(void);
+
+/**
+ * @brief The status after a matured test result: a failure sets testFailed,
+ *        testFailedThisOperationCycle, pendingDTC, confirmedDTC and
+ *        testFailedSinceLastClear, a pass clears testFailed, and either marks
+ *        the test completed. Pure: any task may call it.
+ * @param status The DTC's status.
+ * @param failed True for a failed result, false for a passed one.
+ * @return The new status.
+ */
+uint8_t uds_dtc_status_after_test_result(uint8_t status, bool failed);
+
+/**
+ * @brief The status an operation cycle starts with, from the status the last
+ *        one ended with: pendingDTC clears where that cycle tested the DTC
+ *        without a failure, testFailed keeps the last result until the test
+ *        reports again, and this cycle has not tested the DTC yet. Pure: any
+ *        task may call it.
+ * @param status The status the last operation cycle ended with.
+ * @return The status the new cycle starts with.
+ */
+uint8_t uds_dtc_status_at_operation_cycle_start(uint8_t status);
+
+/**
+ * @brief DTC `index`'s number and status; false past the last DTC, which ends
+ *        the DTCs the server reads from index 0 up. The number is the DTC's
+ *        three bytes, 0x00HHMMLL: the server ignores the top byte.
+ */
+typedef bool (*UdsDtcGetFn)(size_t index, uint32_t *dtc, uint8_t *status);
+
+/** @brief The number of identifiers in DTC `index`'s snapshot record; 0 where it holds none. */
+typedef size_t (*UdsDtcSnapshotCountFn)(size_t index);
+
+/**
+ * @brief Identifier `item` of DTC `index`'s snapshot record and its data:
+ *        `*data` points to `*len` bytes that stay valid until the server's next
+ *        call into the layer, and may be NULL where `*len` is 0. False where
+ *        there is no such item, which, for an
+ *        item below UdsDtcSnapshotCountFn's count, answers the snapshot
+ *        request with generalReject (0x10). A record longer than the response
+ *        buffer is answered with responseTooLong (0x14).
+ */
+typedef bool (*UdsDtcSnapshotItemFn)(size_t index, size_t item, uint16_t *did, uint8_t const **data, size_t *len);
+
+/** @brief A clear of every DTC, for UdsDtcClearFn's `index`. */
+#define UDS_DTC_ALL (SIZE_MAX)
+
+/**
+ * @brief Clears DTC `index`, or every DTC for UDS_DTC_ALL, setting each
+ *        status to uds_dtc_status_cleared(): the server has matched the
+ *        request's groupOfDTC to the memory, answering requestOutOfRange for
+ *        one it does not hold, or a memorySelection, without this being called.
+ */
+typedef UdsNrc (*UdsDtcClearFn)(UdsOpStatus op, size_t index);
+
+/**
+ * @brief Turns DTC status updates on (0x01) or off (0x02). Entering a session
+ *        where ControlDTCSetting is not served (any but the extended and
+ *        programming sessions), or a reset that restarts the server (any but
+ *        0x04 and 0x05) whose execute returns, calls it once more with 0x01
+ *        and UDS_OP_INITIAL, between polls of the server (ISO 14229-1 10.2):
+ *        it cannot wait, so a response-pending answer is canceled at once.
+ *        It applies to every DTC: the server has one DTC group, and answers a
+ *        request carrying a DTCSettingControlOptionRecord
+ *        incorrectMessageLengthOrInvalidFormat (0x13) without calling it.
+ */
+typedef UdsNrc (*UdsDtcSettingFn)(UdsOpStatus op, uint8_t setting_type);
+
+/**
+ * @brief A layer's DTC memory and handlers; NULL: not served by this layer.
+ *        One layer keeps the memory 0x19 reads, with `get`, and its
+ *        `snapshot_*` and `clear` serve 0x19 04 and 0x14; the server's start
+ *        refuses a second memory, or those hooks without `get`. One layer
+ *        serves 0x85, with `setting`: the start refuses a second.
+ */
+typedef struct
+{
+    UdsDtcGetFn           get;
+    UdsDtcSnapshotCountFn snapshot_count;
+    UdsDtcSnapshotItemFn  snapshot_item;
+    UdsDtcClearFn         clear;
+    UdsDtcSettingFn       setting;
+} UdsDtcHooks;
+
+/* CommunicationControl (0x28) */
+
+/**
+ * @brief Enables or disables reception and transmission of `communication_type`.
+ *        Entering a session where CommunicationControl is not served (any but
+ *        the extended and programming sessions), or a reset that restarts the
+ *        server (any but 0x04 and 0x05) whose execute returns, calls it once
+ *        more with enableRxAndTx (0x00) for every communication type (0x03)
+ *        and UDS_OP_INITIAL, ISO 14229-1 10.2: it cannot wait, so a
+ *        response-pending answer is canceled at once. It applies to every
+ *        network: the server has one, and answers a subnet other than 0x0 (all
+ *        networks) and 0xF (the one the request came on) requestOutOfRange
+ *        (0x31) without calling it.
+ */
+typedef UdsNrc (*UdsCommControlFn)(UdsOpStatus op, uint8_t control_type, uint8_t communication_type);
+
+/* RequestDownload (0x34), TransferData (0x36), RequestTransferExit (0x37) */
+
+/** @brief Accepts a download of `size` bytes to `address` in `data_format`. */
+typedef UdsNrc (*UdsTransferBeginFn)(UdsOpStatus op, uint32_t address, uint32_t size, uint8_t data_format);
+
+/** @brief Stores the next block of the download. */
+typedef UdsNrc (*UdsTransferBlockFn)(UdsOpStatus op, uint8_t const *data, size_t len);
+
+/** @brief Completes the download; called only after an accepted begin. */
+typedef UdsNrc (*UdsTransferFinishFn)(UdsOpStatus op);
+
+/**
+ * @brief A layer's download handlers; NULL: not served by this layer. One
+ *        layer serves downloads, with `begin`: the server's start refuses a
+ *        second. Downloads are served only in the policy's TRANSFER_SESSIONS,
+ *        the programming session by default, so the server's start refuses the
+ *        serving layer's `access` naming a session outside them; a layer
+ *        without `begin` is not checked.
+ */
+typedef struct
+{
+    UdsAccess           access;
+    UdsTransferBeginFn  begin;
+    UdsTransferBlockFn  block;
+    UdsTransferFinishFn finish;
+} UdsTransferHooks;
+
+/* EcuReset (0x11) and DiagnosticSessionControl (0x10)
+ *
+ * A transition's hooks are told the session the server is in,
+ * `active_session`, as a UDS_DSC_* value, and the sub-function requested:
+ * the session or the reset type. */
+
+/**
+ * @brief Whether the transition to `sub_function` may be made from
+ *        `active_session`: 0x00 or the NRC refusing it, at once.
+ *        UDS_NRC_RESPONSE_PENDING is answered generalReject.
+ */
+typedef UdsNrc (*UdsTransitionCheckFn)(uint8_t active_session, uint8_t sub_function);
+
+/**
+ * @brief Brings the system to where the transition can be made: 0x00 once
+ *        done, UDS_NRC_RESPONSE_PENDING meanwhile, or the NRC refusing it. A
+ *        prepare that refuses, or is canceled with UDS_OP_CANCEL, leaves the
+ *        system valid in `active_session`; one that returned 0x00 is undone by
+ *        the layer's abandon where the transition is not made after all.
+ */
+typedef UdsNrc (*UdsTransitionPrepareFn)(UdsOpStatus op, uint8_t active_session, uint8_t sub_function);
+
+/**
+ * @brief Undoes the layer's prepare, which returned 0x00, of a transition that
+ *        is not made after all:
+ *        - a later layer's prepare refused it, or was canceled with
+ *          UDS_OP_CANCEL;
+ *        - the positive response was refused after all (responseTooLong,
+ *          say);
+ *        - its confirmation failed;
+ *        - the requesting client's link closed first;
+ *        - for a session change, tS3_Server expired first, a confirmed change
+ *          that a tS3_Server timeout overtakes in the same poll included;
+ *        - the transport failed, stopping the server;
+ *        - the server's run future was dropped first.
+ *        The server stays in `active_session`, the session it is in as abandon
+ *        runs: UDS_DSC_DEFAULT_SESSION after a tS3_Server expiry. Abandon runs
+ *        within the poll that finds the transition not made, so before the
+ *        execute(UDS_DSC_DEFAULT_SESSION) that an expiry defers to the next.
+ */
+typedef void (*UdsTransitionAbandonFn)(uint8_t active_session, uint8_t sub_function);
+
+/**
+ * @brief Makes the transition, once uds_tcp_transmitted reports its positive
+ *        response transmitted. A session's also runs, with
+ *        UDS_DSC_DEFAULT_SESSION, when the server returns to the default
+ *        session without a request: on tS3_Server expiry, or after a reset
+ *        that restarts the server from another session, once every layer's
+ *        execute of that reset has returned.
+ */
+typedef void (*UdsTransitionExecuteFn)(uint8_t sub_function);
+
+/**
+ * @brief A layer's say in one service's transitions. The server asks every
+ *        layer's check, then every layer's prepare, sends the positive
+ *        response, then runs every layer's execute, the last layer's first.
+ *        Where the transition is not made after a prepare, it runs the abandon
+ *        of every layer prepared, the last layer's first. Every hook may be
+ *        NULL, and an empty function behaves as a NULL hook: a NULL check or
+ *        prepare answers 0x00 at once.
+ */
+typedef struct
+{
+    UdsTransitionCheckFn   check;
+    UdsTransitionPrepareFn prepare;
+    UdsTransitionExecuteFn execute;
+    UdsTransitionAbandonFn abandon;
+} UdsTransitionHooks;
+
+/* Layers */
+
+/**
+ * @brief One layer of services: a table per identifier-based service and
+ *        handlers for the others, NULL or empty where the layer serves none.
+ *        The server searches its layers in the order given, so an earlier
+ *        layer's entry wins; a later layer adds services but never replaces
+ *        one. A DTC, communication control or download service that no layer
+ *        serves is answered serviceNotSupported, and the server's start
+ *        refuses one that two layers serve. So a service hook (`dtc`,
+ *        `comm_control`, `transfer`) or an identifier entry is set only in the
+ *        layer that serves it: NULL, or no entry, is what answers
+ *        serviceNotSupported or requestOutOfRange. The transition hooks
+ *        (`session`, `reset`) are every layer's.
+ */
+typedef struct
+{
+    UdsDidEntry const      *dids;
+    size_t                  did_count;
+    UdsRidEntry const      *rids;
+    size_t                  rid_count;
+    UdsSecurityLevel const *security_levels;
+    size_t                  security_level_count;
+    UdsDtcHooks             dtc;
+    UdsCommControlFn        comm_control;
+    UdsTransferHooks        transfer;
+    UdsTransitionHooks      session; /* DiagnosticSessionControl (0x10) */
+    UdsTransitionHooks      reset;   /* EcuReset (0x11) */
+} UdsLayer;
+
+/* Sockets and clock, implemented by the firmware */
+
+/** Socket call result: nothing to do yet; the server calls again later. */
+#define UDS_SOCK_WOULD_BLOCK ((int32_t) -1)
+/** Socket call result: the socket is gone or the stack failed. */
+#define UDS_SOCK_ERR ((int32_t) -2)
+
+/* A call that returns UDS_SOCK_WOULD_BLOCK has changed nothing, so the server
+ * may abandon it and call again. uds_udp_send sends or fails at once, so the
+ * server takes any negative result from it, UDS_SOCK_WOULD_BLOCK included, as
+ * a failure. `sock` is the index uds_tcp_accept handed out, valid until
+ * uds_tcp_release. Addresses are IPv4, host byte order. */
+
+/**
+ * @brief Hands out an accepted connection.
+ * @param[out] peer_addr The peer's address, written on success.
+ * @param[out] peer_port The peer's port, written on success.
+ * @return The new connection's socket index, 0 or more; UDS_SOCK_WOULD_BLOCK
+ *         while none is waiting; UDS_SOCK_ERR if the listener failed.
+ */
+int32_t uds_tcp_accept(uint32_t *peer_addr, uint16_t *peer_port);
+
+/**
+ * @brief Whether a read of `sock` would complete now.
+ * @param sock The connection's socket index.
+ * @return true where data, the end of the stream or an error is waiting.
+ */
+bool uds_tcp_readable(int32_t sock);
+
+/**
+ * @brief Copies received bytes out.
+ * @param sock The connection's socket index.
+ * @param[out] buf Where the bytes go; `cap` bytes are writable.
+ * @param cap The most bytes to copy.
+ * @return The count copied, at most `cap`; 0 at the end of the stream;
+ *         UDS_SOCK_WOULD_BLOCK while nothing is waiting; or UDS_SOCK_ERR.
+ */
+int32_t uds_tcp_read(int32_t sock, uint8_t *buf, size_t cap);
+
+/**
+ * @brief Hands bytes to the firmware's TCP/IP stack to send. The bytes taken
+ *        are the stack's to send without a further call from the server (with
+ *        lwIP, tcp_write and then tcp_output). A response taken whole is
+ *        confirmed once uds_tcp_transmitted reports it transmitted, and the
+ *        reset or session change it answers is made on the next poll.
+ * @param sock The connection's socket index.
+ * @param buf The bytes; `len` bytes are readable, and are copied before return.
+ * @param len How many bytes to send.
+ * @return The count taken, at most `len` (a partial write takes fewer, 0 for a
+ *         `len` of 0); UDS_SOCK_WOULD_BLOCK while none can be taken; or
+ *         UDS_SOCK_ERR.
+ */
+int32_t uds_tcp_write(int32_t sock, uint8_t const *buf, size_t len);
+
+/**
+ * @brief How much of the connection's stream the stack has transmitted. The
+ *        server confirms a response once this reaches the response's last
+ *        byte, so a reset's execute runs only after the response is on the
+ *        wire; until then it calls again on later polls. A connection that
+ *        closes first confirms every response uds_tcp_write took whole.
+ * @param sock The connection's socket index.
+ * @return The bytes transmitted, counted from the first byte uds_tcp_write
+ *         took on `sock`: never decreasing, and at most the bytes taken. A
+ *         stack that cannot tell returns the bytes taken so far.
+ */
+uint64_t uds_tcp_transmitted(int32_t sock);
+
+/**
+ * @brief Closes the connection. Idempotent.
+ * @param sock The connection's socket index.
+ * @param reset true to reset the connection, false to close it gracefully.
+ */
+void uds_tcp_close(int32_t sock, bool reset);
+
+/**
+ * @brief The server dropped the socket: resets it if still open and frees the
+ *        index, which uds_tcp_accept may hand out again.
+ * @param sock The connection's socket index.
+ */
+void uds_tcp_release(int32_t sock);
+
+/**
+ * @brief Whether a datagram is queued.
+ * @return true where uds_udp_recv would return one.
+ */
+bool uds_udp_readable(void);
+
+/**
+ * @brief Takes the oldest queued datagram.
+ * @param[out] buf Where the datagram goes; `cap` bytes are writable.
+ * @param cap The most bytes to copy; a longer datagram is truncated to it.
+ * @param[out] src_addr The sender's address, written on success.
+ * @param[out] src_port The sender's port, written on success.
+ * @return The length copied, at most `cap`; UDS_SOCK_WOULD_BLOCK while none
+ *         is queued; or UDS_SOCK_ERR.
+ */
+int32_t uds_udp_recv(uint8_t *buf, size_t cap, uint32_t *src_addr, uint16_t *src_port);
+
+/**
+ * @brief Sends one datagram, at once.
+ * @param dst_addr The destination address.
+ * @param dst_port The destination port.
+ * @param buf The datagram; `len` bytes are readable, and are copied before return.
+ * @param len The datagram's length.
+ * @return 0 once sent; UDS_SOCK_ERR if it cannot be.
+ */
+int32_t uds_udp_send(uint32_t dst_addr, uint16_t dst_port, uint8_t const *buf, size_t len);
+
+/**
+ * @brief The time, called from the server's context only.
+ * @return Monotonic milliseconds, which may wrap.
+ */
+uint32_t uds_now_ms(void);
+
+/* Layout checks. The uds_c crate reads these structures with the same sizes and
+ * offsets, and asserts them for a 32-bit target as well. */
+
+#ifdef __cplusplus
+#define UDS_C_STATIC_ASSERT(condition, message) static_assert(condition, message)
+#else
+#define UDS_C_STATIC_ASSERT(condition, message) _Static_assert(condition, message)
+#endif
+
+#if UINTPTR_MAX == 0xFFFFFFFFU
+UDS_C_STATIC_ASSERT(sizeof(UdsAccess) == 2U, "UdsAccess layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsDidEntry) == 16U, "UdsDidEntry layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsDidEntry, len) == 10U, "UdsDidEntry layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsRidEntry) == 20U, "UdsRidEntry layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsRidEntry, start) == 8U, "UdsRidEntry layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsSecurityLevel) == 16U, "UdsSecurityLevel layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsSecurityLevel, delay_ms) == 4U, "UdsSecurityLevel layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsDtcHooks) == 20U, "UdsDtcHooks layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsTransferHooks) == 16U, "UdsTransferHooks layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsTransitionHooks) == 16U, "UdsTransitionHooks layout");
+UDS_C_STATIC_ASSERT(sizeof(UdsLayer) == 96U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsLayer, dtc) == 24U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsLayer, transfer) == 48U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsLayer, session) == 64U, "UdsLayer layout");
+UDS_C_STATIC_ASSERT(offsetof(UdsLayer, reset) == 80U, "UdsLayer layout");
+#endif
+
+#undef UDS_C_STATIC_ASSERT
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* UDS_C_H */

@@ -44,7 +44,8 @@ use crate::{LogicalAddress, TaType};
 pub enum DoIpResult {
     /// `DoIP_OK`: the service completed. A tester's request is confirmed so on the
     /// entity's positive acknowledgment (code `0x00`, REQ 7.DoIP-067), an entity's
-    /// response once its last byte is written.
+    /// response once its last byte is written, or, where the entity confirms on
+    /// transmission, transmitted.
     Ok,
     /// `DoIP_HDR_ERROR`, defined by name only. A tester's request is confirmed so on a
     /// generic header NACK for an incorrect pattern, an unknown payload type or an

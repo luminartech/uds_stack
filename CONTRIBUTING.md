@@ -78,7 +78,7 @@ so the type decides the next version.
 
 **The crates release in lockstep.** There is one version, `[workspace.package]`
 in the root `Cargo.toml`, which every crate inherits; every release publishes all
-five at it and is tagged once, `v<version>`. A crate's own `CHANGELOG.md` says what
+six at it and is tagged once, `v<version>`. A crate's own `CHANGELOG.md` says what
 changed in that crate; it is written by hand, under `## [Unreleased]`, in the change
 that makes the change. The `<crate>/v<version>` tags in the history are from before
 the consolidation.
@@ -87,10 +87,13 @@ the consolidation.
 by convenience. If a change would make a crate read a standard it does not own,
 the boundary is wrong and the change belongs elsewhere. Each seam is declared
 by the crate that calls through it, so every Cargo edge runs from implementor
-to declarer.
+to declarer. `uds_c` is the one crate scoped by an interface rather than a
+standard: the C ABI firmware serves the stack through. It implements the
+protocol crates' traits and reads no standard of its own.
 
 **One lint standard, declared once.** `[workspace.lints]` in the root
-`Cargo.toml` holds it, and every crate opts in with `[lints] workspace = true`.
+`Cargo.toml` holds it, and every crate opts in with `[lints] workspace = true`,
+save the C binding below.
 It denies `unwrap`, `expect`, `panic`, `unreachable`, `todo`, `unimplemented`,
 `indexing_slicing`, silent arithmetic and `as` casts, denies `clippy::pedantic`,
 and **forbids `unsafe`** — forbid rather than deny, so it cannot be switched off
@@ -100,14 +103,19 @@ safety-related component, and every byte these crates decode comes off a wire.
 Cargo will not let a crate inherit that table and add to it, so the table is the
 whole policy. A crate that needs to differ says so as a crate-root attribute in
 its own `lib.rs`, carrying a reason — visible in the file a reader opens first,
-rather than buried in a manifest. Two such derogations exist today, both
-recorded there:
+rather than buried in a manifest. Three derogations exist today, two of them
+recorded there, and one is in a manifest:
 
 - `uds_protocol` and `simple_doip` allow `indexing_slicing`, silent arithmetic
   and `as` casts. A zero-copy decoder indexes borrowed slices and computes
   offsets on every path, and both crates predate the standard: 162 and 29
   production sites respectively. These are gaps to close, not exemptions.
-- The same two relax panic freedom **in test code only** — `#![cfg_attr(test, allow(…))]`, so production builds stay strict. Integration tests and examples
+- `uds_c`, the C binding, restates the table in its manifest with `unsafe_code`
+  at `deny` rather than `forbid`: it declares and calls C, which no attribute can
+  allow under `forbid`. Each of its modules that does so allows `unsafe_code` with a
+  reason, and `tools/check_governance.py` holds the restated table to the
+  workspace's, entry for entry.
+- `uds_protocol` and `simple_doip` also relax panic freedom **in test code only** — `#![cfg_attr(test, allow(…))]`, so production builds stay strict. Integration tests and examples
   are separate crates, so each states its own relaxation at the top of the file.
 
 A local `allow` or `expect` carrying a reviewed justification is a legitimate

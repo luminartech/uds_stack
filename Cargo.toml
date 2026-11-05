@@ -3,16 +3,22 @@
 resolver = "3"
 members = ["crates/*", "examples/*", "testing/*"]
 # A bare `cargo` command at this root, which is how CI's reusable workflow runs every job,
-# covers the crates alone. The embassy-net adapter and the loopback test crate enable
-# simple_doip's `connection` feature, and as default members they would unify that feature
-# into every bare run, Miri's included. The embedded probe is an empty binary on a host,
-# so a bare run has nothing of it to check; CI's `embedded` job builds it for bare metal.
-# `--workspace`, as the justfile passes, still covers all three.
-default-members = ["crates/*"]
+# covers the protocol crates alone. uds_c, the embassy-net adapter and the loopback test
+# crate enable simple_doip's `connection` feature, and as default members they would unify
+# that feature into every bare run, Miri's included. The embedded probe is an empty binary
+# on a host, so a bare run has nothing of it to check; CI's `embedded` job builds it for
+# bare metal. `--workspace`, as the justfile passes, still covers all four.
+default-members = [
+    "crates/uds_protocol",
+    "crates/uds_session",
+    "crates/uds_services",
+    "crates/simple_doip",
+    "crates/uds_on_ip",
+]
 
-# The stack's version. The five crates release in lockstep, so the version is declared once
+# The stack's version. The six crates release in lockstep, so the version is declared once
 # and every crate inherits it with `version.workspace = true`; release-plz bumps this line
-# and all five move together. See release-plz.toml.
+# and all six move together. See release-plz.toml.
 [workspace.package]
 version = "0.7.0"
 # One MSRV for the whole stack, so CI runs one MSRV check. It is the highest MSRV of any
@@ -23,7 +29,7 @@ rust-version = "1.91"
 repository = "https://github.com/luminartech/uds_stack"
 homepage = "https://luminartech.github.io/uds_stack/"
 
-# Shared dependency versions. Declared once so a bump is one edit, and so the five
+# Shared dependency versions. Declared once so a bump is one edit, and so the six
 # crates cannot silently drift onto different majors of the same library.
 #
 # The inter-crate entries carry BOTH `path` and `version`. `path` is what makes a
@@ -36,6 +42,7 @@ uds_protocol = { path = "crates/uds_protocol", version = "0.7.0", default-featur
 uds_session = { path = "crates/uds_session", version = "0.7.0", default-features = false }
 uds_services = { path = "crates/uds_services", version = "0.7.0", default-features = false }
 simple_doip = { path = "crates/simple_doip", version = "0.7.0", default-features = false }
+uds_on_ip = { path = "crates/uds_on_ip", version = "0.7.0", default-features = false }
 
 # External. `automotive-wire-codec` is deliberately NOT a workspace member: it serves
 # simple_someip as well and is released on its own cadence.
@@ -90,7 +97,8 @@ serde_json = "1"
 # `forbid`, not `deny`: deny can be switched off locally with an `allow`, forbid
 # cannot, which is the point. Scope it honestly -- this forbids `unsafe` in these
 # crates' own sources. Dependencies, `core` included, are unaffected and are covered
-# separately by dependency review.
+# separately by dependency review. uds_c, the C binding, restates this table with this
+# one entry at `deny`; tools/check_governance.py admits no other difference.
 unsafe_code = "forbid"
 missing_docs = "deny"
 missing_debug_implementations = "deny"

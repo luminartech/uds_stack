@@ -1,0 +1,69 @@
+[package]
+name = "uds_c"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+description = "A uds_stack UDS server over DoIP for C firmware: table-driven services over C handlers, and edge-nal sockets over a C socket ABI"
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["uds", "doip", "ffi", "automotive", "no-std"]
+categories = ["embedded", "no-std", "external-ffi-bindings"]
+
+# The `time-driver` feature adds the clock macro; docs.rs shows it with the rest.
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+# The server's application traits, which `TableApp` implements over the C tables.
+uds_services = { workspace = true }
+# The DoIP transport and entity the C sockets carry.
+uds_on_ip = { workspace = true, features = ["connection"] }
+simple_doip = { workspace = true, features = ["connection"] }
+# The socket traits `nal` implements over the C socket calls.
+edge-nal = { workspace = true }
+embedded-io-async = { workspace = true }
+# The security delays read the clock the server runs on.
+embassy-time = { workspace = true }
+# The `time-driver` feature: `embassy-time`'s clock over `uds_now_ms`.
+embassy-time-driver = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+uds_protocol = { workspace = true }
+# The same time driver the workspace's other host tests use: a workspace test build links
+# one, so the crate's own clock is tested by calling it rather than by installing it.
+embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
+# mock-driver takes its lock through critical-section, which a host test must supply.
+critical-section = { workspace = true, features = ["std"] }
+
+[features]
+default = []
+# `uds_c::time_driver!`, which installs the clock over `uds_now_ms` as the image's
+# `embassy-time` driver. A binary links one driver, so the binary opts in.
+time-driver = ["dep:embassy-time-driver"]
+
+[[test]]
+name = "clock"
+required-features = ["time-driver"]
+
+# The workspace lint standard with `unsafe_code` at `deny` rather than `forbid`: a C
+# binding declares and calls C, and each module that does says so with a scoped `allow`.
+# tools/check_governance.py holds this table to the workspace's, entry for entry.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+as_conversions = "deny"

@@ -5,10 +5,11 @@
 #
 # rust-ci.yml's commands are crate-shaped (no `--workspace`, no `package`/`members` input).
 # This is a *virtual* workspace manifest (no root [package]), so a bare `cargo <cmd>` with
-# no `-p` at the root runs on its default members, `crates/*`: the five crates. The
-# example member, examples/embassy-net-entity, is built by the hand-rolled `embedded` job
-# below instead, and the loopback test member, testing/doip-loopback, is run by the
-# hand-rolled `loopback` job. The `embedded` job also builds, lints and size-checks the
+# no `-p` at the root runs on its default members: the five protocol crates. The C
+# binding, crates/uds_c, is linted, tested and documented by the hand-rolled `uds-c` job
+# below. The example member, examples/embassy-net-entity, is built by the hand-rolled
+# `embedded` job instead, and the loopback test member, testing/doip-loopback, is run by
+# the hand-rolled `loopback` job. The `embedded` job also builds, lints and size-checks the
 # embedded probe, testing/embedded-probe. See the root Cargo.toml for why none of the
 # three is a default member. The one job the reusable workflow genuinely cannot reach is
 # fuzzing: its fuzz-tests job runs `cargo fuzz build`/`list`/`run` at the checkout root,
@@ -74,11 +75,13 @@ jobs:
 
       # Empty: the whole workspace. The same input scopes both cargo-semver-checks and the
       # PR publish dry run. For the dry run, the whole workspace is the only scope that
-      # works: a bare `cargo publish --dry-run` at this virtual root packages all five
-      # crates together, which is how the in-workspace `^0.7.0` requirements resolve before
-      # any of them is on crates.io. A single crate cannot be dry-run on its own here, and
-      # a list cannot be passed at all -- rust-ci.yml hands the value to one `--package`,
-      # and cargo rejects `a,b` as a package name.
+      # works: a bare `cargo publish --dry-run` at this virtual root packages the five
+      # default members together, which is how the in-workspace `^0.7.0` requirements
+      # resolve before any of them is on crates.io. uds_c, not a default member, is
+      # packaged by the `uds-c` job below and released by release-plz with the rest. A
+      # single crate cannot be dry-run on its own here, and a list cannot be passed at
+      # all -- rust-ci.yml hands the value to one `--package`, and cargo rejects `a,b` as
+      # a package name.
       package: ''
 
       # Off until 0.7.0 is on crates.io. uds_session, uds_services and uds_on_ip have no
@@ -128,6 +131,7 @@ jobs:
           --strict crates/uds_session
           --strict crates/uds_protocol
           --strict crates/uds_services
+          --strict crates/uds_c
 
   # ===================================================================================
   # Fuzz Tests (hand-rolled: the reusable workflow's fuzz-tests job cannot reach these)
@@ -316,6 +320,60 @@ jobs:
         run: cargo test -p doip-loopback
 
   # ===================================================================================
+  # C binding (hand-rolled: the reusable workflow tests default members only)
+  # ===================================================================================
+  # crates/uds_c enables simple_doip's `connection` feature, so it is not a default member,
+  # for the reason the loopback crate is not. Its tests serve a tester over a simulated C
+  # side, and one compiles include/uds_c.h with the runner's C compiler to compare every
+  # layout with Rust's; under Miri, which cannot run that compiler, the others run.
+  uds-c:
+    name: C binding (uds_c)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Lint the C binding
+        run: cargo clippy -p uds_c --all-targets --all-features -- -D warnings
+      - name: Test the C binding
+        run: cargo test -p uds_c --all-features
+      - name: Document the C binding
+        env:
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D warnings
+        run: cargo doc -p uds_c --all-features --no-deps
+      # Packaged and built with the workspace crates whose unreleased APIs and features
+      # it uses, which cargo then takes from these packages rather than crates.io.
+      - name: Package the C binding
+        run: cargo package -p simple_doip -p uds_services -p uds_on_ip -p uds_c
+
+  # Tree borrows, for the reason the connection tests use it: the entity's select.
+  uds-c-miri:
+    name: Miri (uds_c)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: nightly
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the C binding's tests under Miri
+        env:
+          MIRIFLAGS: -Zmiri-tree-borrows
+        run: cargo miri test -p uds_c --all-features --lib --test server --test clock
+
+  # ===================================================================================
   # Embedded (hand-rolled: the reusable workflow checks default members on the host)
   # ===================================================================================
   # rust-ci.yml runs bare cargo at the root, which builds default members only, so it
@@ -355,6 +413,11 @@ jobs:
             -- -D warnings
           cargo +stable clippy -p embedded-probe --target thumbv7em-none-eabihf \
             --features run-time -- -D warnings
+      # Its layout checks compile only where pointers are 32 bits wide.
+      - name: Lint the C binding for bare metal
+        run: >-
+          cargo +stable clippy -p uds_c --target thumbv7em-none-eabihf --all-features
+          -- -D warnings
       - name: Document the embassy-net adapter
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D warnings

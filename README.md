@@ -19,10 +19,13 @@ have to read another standard to do its job has the wrong boundary.
 | [`uds_services`](crates/uds_services) | ISO 14229-1 (behavior) | Everything in ISO 14229-1 that is not the format: typed service dispatch over caller-defined identifiers, and the clause 8.7 response rules. Declares the transport seam and implements no transport. |
 | [`simple_doip`](crates/simple_doip)   | ISO 13400-2            | DoIP. A `no_std`, zero-copy protocol core, and a `no_std` tester and entity over `edge-nal` sockets.                                                                                                  |
 | [`uds_on_ip`](crates/uds_on_ip)       | ISO 14229-5            | The UDSonIP application profile, and the mapping of UDS onto DoIP.                                                                                                                                    |
+| [`uds_c`](crates/uds_c)               | none: a C ABI          | A server for C firmware: services served from tables of C handlers, and DoIP over the firmware's sockets. Its C contract is `include/uds_c.h`.                                                        |
 
 ISO 14229-1 is the one document too large for that rule to settle on its own,
 so it is the stack's only split: `uds_protocol` owns its format, `uds_services`
 owns everything else in it. Every other standard is owned whole.
+`uds_c` owns no standard: it binds C firmware to the stack, implementing the
+traits the protocol crates declare over the firmware's tables and sockets.
 
 The wire codec these share, [`automotive-wire-codec`][awc], is released
 separately: it serves protocols outside this stack as well.
@@ -45,8 +48,9 @@ maturities.
 | `uds_session`  | Implemented: the server and client roles.                                   |
 | `uds_on_ip`    | Alpha: the server and client transports are implemented.                    |
 | `uds_services` | Alpha: the server stages every service; `DataTransfer` stages the download. |
+| `uds_c`        | Alpha: every service `uds_services` stages, served from C tables.           |
 
-The five crates release in lockstep: one version for the whole stack, every
+The six crates release in lockstep: one version for the whole stack, every
 crate published at it together, one `v<version>` tag.
 
 ## Documentation
@@ -62,7 +66,7 @@ The two are joined by need IDs, which appear in `Implements:` and `Verifies:`
 annotations in the source.
 
 The [stack architecture](https://luminartech.github.io/uds_stack/architecture/index.html)
-describes how the five crates fit together: the crate map, the seams and who
+describes how the six crates fit together: the crate map, the seams and who
 owns which timer. It holds `uds_services`' own architecture, and says where
 each other crate's lives today: `simple_doip` and `uds_on_ip` still carry an
 `ARCHITECTURE.md`, which is provisional and moves into the sphinx-needs set in
