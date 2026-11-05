@@ -28,6 +28,49 @@ pre-1.0 crates).
   the limit. `Some(0)` accepts none; `None`, the default, accepts every one, as before.
   The failed request's channel is reset, as after a timeout. Functionally addressed
   requests are not under it.
+- `EcuReset::abandon`, called in place of `confirmed` where a reset `reset` accepted is
+  not made: its response is refused after all, its confirmation fails, the link closes
+  first, the transport fails mid-request first or `Server::step` is dropped. It is told
+  the active session, and does nothing by default.
+
+### Changed
+
+- **Breaking.** `Server::step` and `Server::run` fail with the new `StepError`, which
+  carries the transport's error and says whether the server may be stepped again. A
+  transport failing while the server awaits its next event between requests is
+  `StepError::Recoverable`: nothing is half done there, a response awaiting its
+  confirmation keeps its change, which the confirmation the next step takes makes, and
+  `step` or `run` may be called again. A transport failing while an event or a request
+  is handled is `StepError::Terminal`, terminal for the instance as every error was
+  before. `StepError::is_recoverable` tells them apart and `StepError::into_inner`
+  returns the transport's error. Migrate: match the two variants, or take the error out
+  with `into_inner` where both end the server.
+
+- **Breaking.** `DiagnosticSessionControl` has a required `prepare` and a required
+  `MAY_RESPOND_PENDING`. `prepare` is awaited once a session change is admitted and
+  before its positive response: `Ok` lets the response follow, and a code refuses the
+  change, such as `conditionsNotCorrect` (0x22). `prepare` is told the requested and the
+  active session. The session is still entered, and `on_transition` called, only on the
+  positive response's confirmation; where a change `prepare` accepted is not made, the
+  new `abandon`, which does nothing by default, is called instead. `MAY_RESPOND_PENDING`
+  says whether the server answers response-pending while `prepare` runs. Migrate: add
+  both to each implementation, where the server needs no preparation as
+
+  ```rust
+  const MAY_RESPOND_PENDING: bool = false;
+
+  fn prepare(
+      &mut self,
+      _session: DiagnosticSessionType,
+      _active: DiagnosticSessionType,
+  ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>> {
+      core::future::ready(Ok(()))
+  }
+  ```
+
+- **Breaking.** `EcuReset::reset` is told the active session too, as `prepare` is:
+  `reset(&mut self, kind: ResetType, active: DiagnosticSessionType)`. Migrate: add the
+  parameter to each implementation.
 
 ## [0.7.0] — 2026-10-16
 

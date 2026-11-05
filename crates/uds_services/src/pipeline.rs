@@ -80,6 +80,29 @@ pub fn restart(state: &mut State) -> Option<Entered> {
     entered
 }
 
+/// Tell `services` the session change to `session` it prepared is not made, from the
+/// session `state` is in. Read through here for the reason [`transition`] writes through
+/// here.
+#[doc(hidden)]
+pub fn abandon_session<A: DiagnosticSessionControl>(
+    services: &mut A,
+    state: &State,
+    session: DiagnosticSessionType,
+) {
+    services.abandon(session, state.session());
+}
+
+/// Tell `services` the reset `kind` it accepted is not made, from the session `state` is
+/// in, read through here as [`abandon_session`] reads it.
+#[doc(hidden)]
+pub fn abandon_reset<A: EcuReset>(
+    services: &mut A,
+    state: &State,
+    kind: uds_protocol::ResetType,
+) {
+    services.abandon(kind, state.session());
+}
+
 /// The `P2` pair of the session `state` is in, as `services` states it. Read through here
 /// for the reason [`transition`] writes through here: `State`'s accessors stay
 /// crate-private.
@@ -708,17 +731,20 @@ pub async fn clear_diagnostic_information<A: ClearDiagnosticInformation>(
 }
 
 /// ISO 14229-1:2020 clause 10.2: `DiagnosticSessionControl`'s own stage
-/// (``UDSSVC_ARCH_0035``): the positive response carries the session and the
+/// (``UDSSVC_ARCH_0035``): once [`DiagnosticSessionControl::prepare`] accepts the change
+/// (``UDSSVC_ARCH_0046``), the positive response carries the session and the
 /// application's [`SessionTiming`](crate::SessionTiming), in Table 29's wire form, and
 /// the session is selected. Whether the session is supported at all (0x12) and from the
 /// active one (0x7E) was settled by [`begin`] before the request was decoded.
 #[doc(hidden)]
-pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
+pub async fn diagnostic_session_control<A: DiagnosticSessionControl>(
     services: &mut A,
+    state: &State,
     request: &DiagnosticSessionControlRequest,
     out: &mut ResponseSink<'_>,
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
     let session = request.session_type;
+    services.prepare(session, state.session()).await?;
     let timing = services.timing(session);
     let _ = out.write_all(&[0x50]);
     let _ = uds_protocol::DiagnosticSessionControlResponse::new(
@@ -739,11 +765,12 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
 #[doc(hidden)]
 pub async fn ecu_reset<A: EcuReset>(
     services: &mut A,
+    state: &State,
     request: &EcuResetRequest,
     out: &mut ResponseSink<'_>,
 ) -> Result<Effect, NegativeResponseCode> {
     let kind = request.reset_type;
-    let after = services.reset(kind).await?;
+    let after = services.reset(kind, state.session()).await?;
     let _ = out.write_all(&[0x51, u8::from(kind)]);
     if kind == uds_protocol::ResetType::EnableRapidPowerShutDown {
         let _ = out.write_all(&[services.power_down_time()]);
@@ -1296,6 +1323,7 @@ mod tests {
         }
     }
     impl crate::DiagnosticSessionControl for Ecu {
+        const MAY_RESPOND_PENDING: bool = false;
         const MAX_RESPONSE_LEN: usize = 0;
         fn supports(&self, s: S) -> bool {
             matches!(
@@ -1316,6 +1344,13 @@ mod tests {
                 p2_server_max_ms: 50,
                 p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             }
+        }
+        fn prepare(
+            &mut self,
+            _s: S,
+            _active: S,
+        ) -> impl core::future::Future<Output = Result<(), N>> {
+            core::future::ready(Ok(()))
         }
         fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
     }
@@ -1381,7 +1416,10 @@ mod tests {
             false,
             S::ExtendedDiagnosticSession,
         );
-        let r = super::diagnostic_session_control(&mut Ecu, &req, &mut out);
+        let state = State::INITIAL;
+        let r = block_on(super::diagnostic_session_control(
+            &mut Ecu, &state, &req, &mut out,
+        ));
         assert_eq!(r, Ok(Some(S::ExtendedDiagnosticSession)));
         assert_eq!(out.written_bytes(), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
     }
@@ -1389,6 +1427,7 @@ mod tests {
     /// An application whose timing is the widest Table 29's wire form carries.
     struct Odd;
     impl crate::DiagnosticSessionControl for Odd {
+        const MAY_RESPOND_PENDING: bool = false;
         const MAX_RESPONSE_LEN: usize = 0;
         fn supports(&self, _s: S) -> bool {
             true
@@ -1405,6 +1444,13 @@ mod tests {
                 p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(u16::MAX),
             }
         }
+        fn prepare(
+            &mut self,
+            _s: S,
+            _active: S,
+        ) -> impl core::future::Future<Output = Result<(), N>> {
+            core::future::ready(Ok(()))
+        }
         fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
     }
 
@@ -1417,9 +1463,57 @@ mod tests {
             false,
             S::ExtendedDiagnosticSession,
         );
-        let r = super::diagnostic_session_control(&mut Odd, &req, &mut out);
+        let state = State::INITIAL;
+        let r = block_on(super::diagnostic_session_control(
+            &mut Odd, &state, &req, &mut out,
+        ));
         assert_eq!(r, Ok(Some(S::ExtendedDiagnosticSession)));
         assert_eq!(out.written_bytes(), &[0x50, 0x03, 0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    /// An application whose state does not allow a session change now.
+    struct Busy;
+    impl crate::DiagnosticSessionControl for Busy {
+        const MAY_RESPOND_PENDING: bool = false;
+        const MAX_RESPONSE_LEN: usize = 0;
+        fn supports(&self, _s: S) -> bool {
+            true
+        }
+        fn supported_from(&self, _s: S, _active: S) -> bool {
+            true
+        }
+        fn leaves_running_software(&self, _s: S) -> bool {
+            false
+        }
+        fn timing(&self, s: S) -> crate::SessionTiming {
+            Ecu.timing(s)
+        }
+        fn prepare(
+            &mut self,
+            _s: S,
+            _active: S,
+        ) -> impl core::future::Future<Output = Result<(), N>> {
+            core::future::ready(Err(N::ConditionsNotCorrect))
+        }
+        fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
+    }
+
+    /// ISO 14229-1:2020 clause 10.2.4: a refused `prepare` is the request's negative
+    /// response, so no positive response is written and no session is selected.
+    #[test]
+    fn dsc_refused_by_prepare_is_conditions_not_correct() {
+        let mut buf = [0_u8; 8];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let req = uds_protocol::DiagnosticSessionControlRequest::new(
+            false,
+            S::ExtendedDiagnosticSession,
+        );
+        let state = State::INITIAL;
+        let r = block_on(super::diagnostic_session_control(
+            &mut Busy, &state, &req, &mut out,
+        ));
+        assert_eq!(r, Err(N::ConditionsNotCorrect));
+        assert_eq!(out.written_bytes(), b"");
     }
 
     /// Clause 10.7 — `TesterPresent` answers `7E 00` and tells the application.

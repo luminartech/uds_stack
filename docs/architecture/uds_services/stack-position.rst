@@ -322,20 +322,24 @@ Scope
    **Four milestone-1 limits of the driver**, stated here because the code cites this
    element for them:
 
-   * **A transport error is terminal for the server instance.** It unwinds through the
-     drains with ``?``, so a session-hook decision a drain had already recorded — a
-     ``tS3_Server`` expiry, a confirmed session — may not have been applied, and the
-     consuming application's session state and the session layer's may disagree from then
-     on. The instance is not to be stepped again. This crate offers no way to recover it
-     in place: the transport and the services cannot be taken back out of it. Carrying the
-     recorded decisions across the error, so that stepping again is correct, is the
-     follow-up that retires this limit.
+   * **A transport error mid-request is terminal for the server instance.** It unwinds
+     through the drains with ``?``. The step's guard applies a ``tS3_Server`` expiry the
+     drains recorded and abandons every change accepted and not made, but a confirmed
+     session or reset recorded and not yet applied is not made, so the consuming
+     application's session state and the session layer's may disagree from then on. The
+     instance is not to be stepped again. This crate offers no way to recover it in place:
+     ``Server::into_parts`` takes the services and the transport back out, and a new
+     instance is built from them. Carrying the recorded decisions across the error, so
+     that stepping again is correct, is the follow-up that retires this limit. An error at the transport's ``next_event``
+     between requests is not terminal: nothing is half done there, a response awaiting its
+     confirmation keeps its change, and ``step`` returns ``StepError::Recoverable``, after
+     which the instance is stepped again.
    * **Cancelling a ``step`` or ``run`` future is not safe, except at the transport's
-     ``next_event``.** Dropped at any other await, the instance is left as a transport
-     error leaves it: outputs drained but not applied, a pending session selection
-     cleared without its confirmation applied, a handler dropped with its association
-     still outstanding, and the application's session state may disagree with the session
-     layer's. A future is to be dropped only between ``step`` calls. Tracked in
+     ``next_event`` between requests.** ``next_event`` is awaited mid-request too, and
+     dropped there, or at any other await, the instance is left as a terminal transport
+     error leaves it: a confirmation drained but not applied, a handler dropped with its
+     association still outstanding, and the application's session state may disagree with
+     the session layer's. A future is to be dropped only between ``step`` calls. Tracked in
      luminartech/uds_stack#19, together with recovery after an error.
    * **Waiting out a refused final response is unbounded.** A final response refused
      because its association, or every association, still awaits a confirmation is

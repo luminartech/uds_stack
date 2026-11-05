@@ -44,6 +44,7 @@ type Transport = DoIpTransport<SensorEntity<MAX_MESSAGE>, 2>;
 struct Ecu;
 
 impl DiagnosticSessionControl for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
     const MAX_RESPONSE_LEN: usize = 0;
     fn supports(&self, s: S) -> bool {
         matches!(
@@ -65,6 +66,13 @@ impl DiagnosticSessionControl for Ecu {
             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
+    fn prepare(
+        &mut self,
+        _s: S,
+        _active: S,
+    ) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        core::future::ready(Ok(()))
+    }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _relocked: bool) {}
 }
 
@@ -73,7 +81,11 @@ impl EcuReset for Ecu {
     fn access(&self, _kind: ResetType) -> Option<Access> {
         Some(Access::new(Sessions::ALL))
     }
-    fn reset(&mut self, _kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
+    fn reset(
+        &mut self,
+        _kind: ResetType,
+        _active: uds_services::DiagnosticSessionType,
+    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
         core::future::ready(Ok(AfterReset::Restart))
     }
     fn confirmed(&mut self, _kind: ResetType) {}

@@ -97,6 +97,7 @@ impl ReadDataByIdentifier for Ecu {
     }
 }
 impl DiagnosticSessionControl for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
     const MAX_RESPONSE_LEN: usize = 0;
     fn supports(&self, s: S) -> bool {
         matches!(
@@ -122,6 +123,13 @@ impl DiagnosticSessionControl for Ecu {
             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
+    fn prepare(
+        &mut self,
+        _s: S,
+        _active: S,
+    ) -> impl core::future::Future<Output = Result<(), Nrc>> {
+        core::future::ready(Ok(()))
+    }
     fn on_transition(&mut self, t: SessionTransition, entered: S, _relocked: bool) {
         self.transitions.push(t);
         self.entered.push(entered);
@@ -132,7 +140,7 @@ impl EcuReset for Ecu {
     fn access(&self, _kind: ResetType) -> Option<Access> {
         Some(Access::new(Sessions::ALL))
     }
-    async fn reset(&mut self, _kind: ResetType) -> Result<AfterReset, Nrc> {
+    async fn reset(&mut self, _kind: ResetType, _active: S) -> Result<AfterReset, Nrc> {
         PendN(core::mem::take(&mut self.reset_slow)).await;
         Ok(AfterReset::Restart)
     }

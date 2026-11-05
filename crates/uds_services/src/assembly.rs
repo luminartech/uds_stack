@@ -325,12 +325,9 @@ macro_rules! __uds_response_bound {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_may_pend {
-    // Neither service can be in progress when a deadline passes (see their trait docs),
-    // so neither declares the constant.
+    // TesterPresent cannot be in progress when a deadline passes (see its trait docs), so
+    // it declares no constant.
     ($ty:ty, TesterPresent) => {
-        false
-    };
-    ($ty:ty, DiagnosticSessionControl) => {
         false
     };
     ($ty:ty, $svc:ident) => {
@@ -364,6 +361,24 @@ macro_rules! __uds_reset_hook {
         <<Self as $crate::ServiceSet>::App as $crate::EcuReset>::confirmed($self, $kind);
     };
     ($self:ident, $kind:ident, $svc:ident) => {};
+}
+
+/// `ServiceSet::abandoned`'s call into the application, for one listed service: only
+/// `DiagnosticSessionControl` and `EcuReset` accept a change before their response.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_abandon_hook {
+    ($self:ident, $state:ident, $effect:ident, DiagnosticSessionControl) => {
+        if let $crate::Effect::Session(session) = $effect {
+            $crate::pipeline::abandon_session($self, $state, session);
+        }
+    };
+    ($self:ident, $state:ident, $effect:ident, EcuReset) => {
+        if let $crate::Effect::Reset { kind, .. } = $effect {
+            $crate::pipeline::abandon_reset($self, $state, kind);
+        }
+    };
+    ($self:ident, $state:ident, $effect:ident, $svc:ident) => {};
 }
 
 /// The `P2` pair of the session in force, for one listed service: only
@@ -536,7 +551,8 @@ macro_rules! __uds_stage {
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
         if let $crate::Request::DiagnosticSessionControl(ref r) = $req {
-            return $crate::pipeline::diagnostic_session_control($self, r, $out)
+            return $crate::pipeline::diagnostic_session_control($self, $state, r, $out)
+                .await
                 .map($crate::Effect::from);
         }
     };
@@ -547,7 +563,7 @@ macro_rules! __uds_stage {
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, EcuReset) => {
         if let $crate::Request::EcuReset(ref r) = $req {
-            return $crate::pipeline::ecu_reset($self, r, $out).await;
+            return $crate::pipeline::ecu_reset($self, $state, r, $out).await;
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, SecurityAccess) => {
@@ -1161,6 +1177,19 @@ macro_rules! uds_server {
                             $( $crate::__uds_session_hook!(app, entered, $svc); )+
                         }
                     }
+                }
+
+                #[allow(
+                    unused_variables,
+                    reason = "only an assembly with DiagnosticSessionControl or EcuReset \
+                              reads them"
+                )]
+                fn abandoned(
+                    app: &mut $ty,
+                    state: &Self::State,
+                    effect: $crate::Effect,
+                ) {
+                    $( $crate::__uds_abandon_hook!(app, state, effect, $svc); )+
                 }
 
                 #[allow(
