@@ -15,6 +15,10 @@ authors = [
     "Justin Kovacich <justin_kovacich@microvision.com>",
 ]
 
+# docs.rs builds default features only; `connection` is additive.
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 # Versions live in the workspace root's [workspace.dependencies]; this crate
 # just points `path` at its siblings for the workspace build.
@@ -36,11 +40,18 @@ uds_services = { workspace = true }
 
 thiserror = { workspace = true }
 
-# No [features] table. This crate is no_std and allocation-free in every
-# configuration, and nothing in src/ reads a cfg: an application enables
-# simple_doip's and uds_protocol's features on those crates directly. No runtime
-# is named anywhere: an `async fn` implies neither std nor an executor, so a
+# `connection` only: names simple_doip's `entity::Entity`, whose acceptor bound is
+# edge-nal's.
+edge-nal = { workspace = true, optional = true }
+
+# This crate is no_std and allocation-free in every configuration: an application
+# enables simple_doip's and uds_protocol's features on those crates directly. No
+# runtime is named anywhere: an `async fn` implies neither std nor an executor, so a
 # bare-metal target such as the AURIX TC4x, a qualification target, stays reachable.
+[features]
+default = []
+# `DoIpTransport::start_discovery`, for simple_doip's `entity::Entity`.
+connection = ["simple_doip/connection", "dep:edge-nal"]
 
 [lints]
 workspace = true

@@ -10,14 +10,17 @@ Nothing else in the gate notices a change that costs flash or RAM.
 They are held differently:
 
   * **RAM** must match the baseline exactly: static RAM (``data`` and ``bss``),
-    ``main``'s frame, which holds the server while it is built and the future ``run``
-    returns, and the client transport, which a tester holds by value. A change either
-    way is recorded in the commit that makes it. The match can be exact because the
-    toolchain is pinned; layouts, inlining and which statics survive linking all move
-    with the compiler, so a toolchain bump re-records the baseline.
-  * **Flash** (``text``) may move by up to ``TEXT_TOLERANCE_PERCENT`` either way before the
-    check fails, because code size moves with inlining decisions a change did not intend.
-    A larger shrink fails too, so that the smaller baseline is recorded and later growth
+    ``main``'s frame, which holds the future ``run`` returns and, where the server is
+    built at run time, the server while it is built, and the client transport, which a
+    tester holds by value. A change either way is recorded in the commit that makes it.
+    The match can be exact because the toolchain is pinned; layouts, inlining and which
+    statics survive linking all move with the compiler, so a toolchain bump re-records
+    the baseline.
+  * **Flash** is ``text`` and ``data``: ``data`` is also the initializer image copied to
+    RAM at start-up, a server built in place included, so it is held exactly, as RAM.
+    ``text`` may move by up to ``TEXT_TOLERANCE_PERCENT`` either way before the check
+    fails, because code size moves with inlining decisions a change did not intend. A
+    larger shrink fails too, so that the smaller baseline is recorded and later growth
     is measured from it.
 
 The stack ``main``'s callees use is not measured; ``main``'s own frame is, because it is
