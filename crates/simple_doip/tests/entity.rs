@@ -10,6 +10,7 @@ mod support;
 
 use std::pin::pin;
 
+use embassy_futures::select::{Either, select};
 use embassy_time::Duration;
 use simple_doip::entity::{
     AddressError, Entity, EntityAddress, Error, NoDiscovery, OnTransmit,
@@ -22,7 +23,7 @@ use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::{
     ENTITY, MockError, MockPeer, MockStack, TESTER, ack, activation_response_for, advance,
     alive_check_request, alive_check_response, clock, diagnostic, header_nack, nack,
-    poll_times, raw, until_stalled,
+    poll_times, raw, run, until_stalled,
 };
 use support::the_tester;
 
@@ -453,6 +454,31 @@ fn a_judged_socket_that_keeps_sending_does_not_hold_off_the_deadlines() {
 
     assert_eq!(events(&mut entity), []);
     assert!(peer.is_closed());
+}
+
+/// A peer that keeps sending frames that raise no event does not hold the thread
+/// `next_event` runs on: a future polled beside it runs before the frames are all read.
+#[test]
+fn frames_that_raise_no_event_do_not_starve_a_concurrent_future() {
+    let _clock = clock();
+    let stack = MockStack::eager(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.send(&alive_check_response().repeat(600));
+
+    let mut buf = [0u8; 64];
+    let raced = run(select(entity.next_event(&mut buf, None), async {
+        peer.all_read()
+    }));
+    let Either::Second(all_read) = raced else {
+        panic!("next_event returned {raced:?}");
+    };
+    assert!(!all_read);
+
+    assert_eq!(events(&mut entity), []);
+    assert!(peer.all_read());
+    assert!(!peer.is_shut());
+    assert_eq!(peer.take_written(), []);
 }
 
 // --- Figure 16, the generic header handler -----------------------------------------------

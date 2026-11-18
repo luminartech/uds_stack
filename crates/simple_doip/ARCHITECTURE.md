@@ -238,6 +238,9 @@ stateDiagram-v2
   caller slow to call `next_event` again does not cost a tester its registration.
   It reads at most that socket's receive buffer's worth per deadline, so a peer that
   keeps sending holds off neither the deadline nor the caller's.
+- **`next_event` yields while input keeps arriving.** It returns `Pending`, woken to
+  run again, at least once every 64 frames and socket operations, so frames that
+  raise no event cannot hold a single-threaded executor's other tasks off.
 - **No socket waits on another.** Each socket's write and read wait together, on
   the two halves `edge_nal::TcpSplit::split` gives, and `wait` polls the
   connections, the reserve and the acceptor in turn, starting after whichever won
