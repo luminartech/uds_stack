@@ -39,6 +39,14 @@ changed rather than what was announced at the time.
   rebuilt in the other type, and that constant is the default it named.
 - `EntityAddress::new` is a `const fn`, so an entity's addresses can be a `const`.
 
+### Fixed
+
+- `Entity::next_event` returns `Pending`, woken to run again, at least once every 64
+  frames it handles and socket operations it completes. Previously a peer that kept
+  sending frames that raise no event, such as alive check responses or generic header
+  NACKs, kept it running for as long as the input lasted, and on a single-threaded
+  executor no other task ran meanwhile.
+
 ## [0.7.0] — 2026-10-16
 
 0.7.0 replaces the async client, the async server and the bare-metal entity with a

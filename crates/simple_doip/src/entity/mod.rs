@@ -33,6 +33,7 @@ use core::task::{Context, Poll};
 use edge_nal::{TcpAccept, UdpSplit};
 
 use embassy_futures::select::{Either, select, select_array};
+use embassy_futures::yield_now;
 use embassy_time::{Instant, Timer};
 
 use crate::messages::{
@@ -72,6 +73,8 @@ const ALIVE_CHECK: core::time::Duration = crate::TCP_TIMEOUT_ALIVE_CHECK;
 const ABORT_LIMIT: core::time::Duration = ALIVE_CHECK;
 /// How often an [`OnTransmit`] entity reads the progress of a socket a confirm waits on.
 const TRANSMIT_POLL: core::time::Duration = core::time::Duration::from_millis(1);
+/// How many frames and socket operations `next_event` handles between two yields.
+const PASSES_BETWEEN_YIELDS: u8 = 64;
 
 /// When `timer`, started at `now`, expires: the end of time if that is past it.
 fn expiry(now: Instant, timer: core::time::Duration) -> Instant {
@@ -1506,6 +1509,10 @@ impl<
     /// handler refuses itself, acknowledges each diagnostic message it indicates, and
     /// closes sockets whose timers expire.
     ///
+    /// It returns `Pending`, and wakes itself, at least once every 64 frames it handles
+    /// and socket operations it completes, so a peer that keeps sending frames that
+    /// raise no event cannot hold a single-threaded executor.
+    ///
     /// # Errors
     ///
     /// [`Error::Accept`] where the acceptor fails.
@@ -1515,7 +1522,13 @@ impl<
         deadline: Option<Timestamp>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
         let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
+        let mut passes: u8 = 0;
         loop {
+            if passes == PASSES_BETWEEN_YIELDS {
+                yield_now().await;
+                passes = 0;
+            }
+            passes = passes.saturating_add(1);
             let now = Instant::now();
             self.discovery.tick(now);
             if let Some(event) = self.owed_event() {
