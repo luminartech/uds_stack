@@ -115,7 +115,8 @@ impl ServerParams {
     /// ```
     ///
     /// Nor can a set that passed be changed into one that would not: the fields are read
-    /// through their getters and set through [`crate::Server::set_parameter`] alone.
+    /// through their getters and set through [`crate::Server::set_parameter`] alone, which
+    /// refuses a setting that would leave the set ill formed (``UDSS_LLR_0188``).
     ///
     /// ```compile_fail
     /// use uds_session::ServerParams;

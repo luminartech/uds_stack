@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/) (treating
 `0.x` breaking changes as minor bumps, per the Cargo/SemVer convention for
 pre-1.0 crates).
 
+## [Unreleased]
+
+### Added
+
+- `Cause::LeadOutOfRange`.
+
+### Changed
+
+- `Server::set_parameter` rejects a setting after which the set would no longer be
+  `ServerParams::is_well_formed`, with `Cause::LeadOutOfRange`, and leaves every
+  parameter as it was. Previously it applied the setting, and an out-of-range
+  response-pending lead then reported every `tP2_Server` overrun on the first timestamp
+  after the request, or the `tP2*_Server` overrun before a further response-pending
+  message was admissible. A caller that sets several parameters to reach a new set sets
+  them in an order whose every intermediate set is well formed.
+
 ## [0.7.0] — 2026-10-16
 
 First release. `uds_session` implements ISO 14229-2:2021, the UDS session layer, as a

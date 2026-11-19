@@ -1010,7 +1010,7 @@ mod completion {
 
 mod lead {
     use super::*;
-    use uds_session::ServerParameter;
+    use uds_session::{Cause, ServerParameter};
 
     fn server_with(params: ServerParams) -> Server<2> {
         Server::new([Association::EMPTY, Association::EMPTY], params)
@@ -1092,20 +1092,41 @@ mod lead {
         assert!(ok.is_ok());
     }
 
-    /// ``UDSS_LLR_0186`` — a lead not less than `tP2_Server_Max` saturates: the overrun
-    /// is indicated on the first timestamp supplied after the request, never before it.
-    /// `ServerParams::new` refuses such a lead, and setting it again is how one arrives.
+    /// ``UDSS_LLR_0188`` — a setting that would leave the lead out of range is rejected,
+    /// whichever parameter it sets, and the window keeps the lead it had.
     #[test]
-    fn a_lead_not_less_than_the_window_indicates_on_the_first_tick() {
-        let mut s = server_with(PARAMS);
-        let (_, ok) = outputs(
-            s.set_parameter(Timestamp(0), ServerParameter::ResponsePendingLead(50)),
-        );
-        assert!(ok.is_ok());
-        request(&mut s, Timestamp(100));
-        assert_eq!(s.next_deadline(), Some(Timestamp(100)));
-        let (out, _) = outputs(s.tick(Timestamp(100)));
-        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+    fn a_setting_that_leaves_the_lead_out_of_range_is_rejected() {
+        // PARAMS_LEAD: P2 50 ms and lead 10 ms. A P2* of 14 ms has a spacing of 5 ms.
+        for parameter in [
+            ServerParameter::ResponsePendingLead(50),
+            ServerParameter::P2ServerMax(10),
+            ServerParameter::P2StarServerMax(14),
+        ] {
+            let mut s = server_with(PARAMS_LEAD);
+            let (out, result) = outputs(s.set_parameter(Timestamp(0), parameter));
+            assert_eq!(out, [None, None, None, None], "{parameter:?}");
+            assert!(
+                result.is_err_and(|e| e.contains(Cause::LeadOutOfRange)),
+                "{parameter:?}"
+            );
+            request(&mut s, Timestamp(100));
+            assert_eq!(s.next_deadline(), Some(Timestamp(140)), "{parameter:?}");
+        }
+    }
+
+    /// ``UDSS_LLR_0188`` — the range's edges are admitted: a lead one less than
+    /// `tP2_Server_Max`, and one equal to `tP2*_Server_Max` less the spacing.
+    #[test]
+    fn a_lead_at_the_edge_of_the_range_is_admitted() {
+        for parameter in [
+            ServerParameter::ResponsePendingLead(49),
+            ServerParameter::P2ServerMax(11),
+            ServerParameter::P2StarServerMax(15),
+        ] {
+            let mut s = server_with(PARAMS_LEAD);
+            let (_, result) = outputs(s.set_parameter(Timestamp(0), parameter));
+            assert!(result.is_ok(), "{parameter:?}");
+        }
     }
 
     /// ``UDSS_LLR_0043``, ``UDSS_LLR_0186`` — the lead is taken when the window opens,
