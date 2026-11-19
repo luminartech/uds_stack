@@ -314,20 +314,27 @@ impl<const A: usize> Server<A> {
     /// with, so a change never moves a window already open. ``UDSS_LLR_0010`` makes this
     /// an act of the caller rather than a primitive, which is why it takes a timestamp
     /// and why ``UDSS_LLR_0081`` orders that timestamp's expiries ahead of it.
+    ///
+    /// Rejected with [`Cause::LeadOutOfRange`], every parameter left as it was, where the
+    /// set would no longer be [`ServerParams::is_well_formed`] (``UDSS_LLR_0188``).
     pub fn set_parameter(
         &mut self,
         now: Timestamp,
         parameter: ServerParameter,
     ) -> ServerReaction<'_, 'static, A> {
         self.expire(now);
+        let mut params = self.params;
         match parameter {
-            ServerParameter::S3Server(v) => self.params.s3_server = v,
-            ServerParameter::P2ServerMax(v) => self.params.p2_server_max = v,
-            ServerParameter::P2StarServerMax(v) => self.params.p2_star_server_max = v,
-            ServerParameter::ResponsePendingLead(v) => {
-                self.params.response_pending_lead = v;
-            }
+            ServerParameter::S3Server(v) => params.s3_server = v,
+            ServerParameter::P2ServerMax(v) => params.p2_server_max = v,
+            ServerParameter::P2StarServerMax(v) => params.p2_star_server_max = v,
+            ServerParameter::ResponsePendingLead(v) => params.response_pending_lead = v,
         }
+        if !params.is_well_formed() {
+            let rejection = Rejection::new(Cause::LeadOutOfRange); // UDSS_LLR_0188
+            return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
+        }
+        self.params = params;
         Reaction::new(self, [None, None], Ok(()))
     }
 

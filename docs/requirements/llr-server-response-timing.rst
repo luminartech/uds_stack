@@ -725,6 +725,26 @@ Enhanced response timing
    every second one the indication prompts would be refused. The bounds are checked by a
    query rather than at creation because creation is infallible for statically placed
    servers; a lead outside them is still well defined, by the saturation stated above.
+   ``UDSS_LLR_0188`` keeps a set that starts in range in range.
+
+.. llr:: A setting that leaves the response-pending lead out of range is rejected
+   :id: UDSS_LLR_0188
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; p2_server; service-interface
+
+   The session layer shall reject, as ``UDSS_LLR_0015`` in :doc:`llr-service-interface`
+   defines, a setting under ``UDSS_LLR_0043`` of ``tP2_Server_Max``, ``tP2*_Server_Max``
+   or the response-pending lead after which the lead would not be in the range
+   ``UDSS_LLR_0186`` states, and shall leave every parameter as it was before the setting.
+
+   Rationale: a lead out of range mistimes every overrun ``UDSS_LLR_0117`` indicates, as
+   ``UDSS_LLR_0186`` explains, and nothing the server later does reports it; a refused
+   setting reaches the caller who made it, while the server goes on with the set it had.
+   A setting is judged by the set it would leave, so a change of a window is refused as
+   readily as a change of the lead.
 
 .. llr:: A response-pending message is rejected while one is unconfirmed
    :id: UDSS_LLR_0118

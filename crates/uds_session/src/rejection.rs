@@ -137,6 +137,9 @@ causes! {
     /// issued. ``UDSS_LLR_0121`` forbids reissue, so the client cannot open a channel
     /// again; it is recovered by creating the client anew.
     ChannelHandlesSpent = 12 => "every channel handle has been issued",
+    /// ``UDSS_LLR_0188`` — a parameter setting after which the response-pending lead of
+    /// ``UDSS_LLR_0186`` would not fit the response windows.
+    LeadOutOfRange = 13 => "the response-pending lead would not fit the response windows",
 }
 
 /// Why an input was refused, and what the refusing requirement asked the report to carry.
