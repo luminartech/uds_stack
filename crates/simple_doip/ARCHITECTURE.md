@@ -174,9 +174,11 @@ stateDiagram-v2
   again is answered at once: `0x10` for its own address (REQ 3.DoIP-089), `0x02` and
   a close for another. Otherwise an address registered on another socket has that
   socket alive-checked, and a full table has every registered socket alive-checked.
-  Those that answer within `T_TCP_Alive_Check` keep their registration, and the
-  newcomer is refused `0x03` or `0x01`; those that do not are aborted, and the
-  newcomer is registered (REQ 3.DoIP-092 to 096). One arbitration runs at a time:
+  Those that answer within `T_TCP_Alive_Check` of their request being written keep
+  their registration, and the newcomer is refused `0x03` or `0x01`; those that do
+  not are aborted, and the newcomer is registered (REQ 3.DoIP-092 to 096). A request
+  a socket cannot take within `T_TCP_Alive_Check` counts as unanswered, since Table
+  12 has the timer elapse when the stack cannot deliver it. One arbitration runs at a time:
   another socket's activation waits for it. A newcomer on the reserve is exchanged
   into an `Initialized` slot when it is registered; an `Initialized` socket whose
   unread input or output keeps it from moving into the reserve is aborted once the
@@ -897,10 +899,6 @@ choosing the crate; the mechanics are here:
 
 ### 7.3 The entity
 
-- `T_TCP_Alive_Check` runs from when an arbitration starts, not from when its alive
-  check request is written, so a request held back by a full transmit queue has less
-  of it. Table 12's note that the timer elapses when the stack cannot deliver makes
-  that a holder's loss either way.
 - The authentication and confirmation sub-states of a registered connection are
   passed through on the spot (REQ 3.DoIP-129, 130).
 - Discovery is IPv4 only (§2.5.2), and an entity sends no sync status byte unless its

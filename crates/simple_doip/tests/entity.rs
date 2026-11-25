@@ -1970,6 +1970,106 @@ fn the_largest_pdu_is_written_behind_two_acknowledgments() {
     assert_eq!(peer.take_written(), written);
 }
 
+/// Table 12: `T_TCP_Alive_Check` runs from the alive check request being written, so the
+/// time it spends queued on a slow socket does not count against the tester's answer.
+#[test]
+fn an_alive_check_is_timed_from_the_request_being_written() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    holder.stall_writes();
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+
+    advance(ms(400));
+    holder.resume_writes();
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(holder.take_written(), alive_check_request());
+
+    advance(ms(499));
+    assert_eq!(events(&mut entity), []);
+    assert!(!holder.is_shut());
+    holder.send(&alive_check_response());
+    assert_eq!(events(&mut entity), []);
+
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, 0x03)
+    );
+    assert!(!holder.is_shut());
+}
+
+/// Table 12 and REQ 3.DoIP-092: a holder silent for `T_TCP_Alive_Check` after its
+/// request was written is aborted then, however long the request waited to be written.
+#[test]
+fn a_holder_silent_after_a_late_written_request_is_aborted() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    holder.stall_writes();
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    advance(ms(400));
+    holder.resume_writes();
+    assert_eq!(events(&mut entity), []);
+
+    advance(ms(499));
+    assert_eq!(events(&mut entity), []);
+    assert!(!holder.is_shut());
+
+    advance(ms(1));
+    assert_eq!(events(&mut entity), []);
+    assert!(holder.is_aborted());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
+/// Table 12: an alive check request that leaves in one write with a response queued
+/// after it is timed from the write that finishes it, not from one that starts it.
+#[test]
+fn an_alive_check_sent_with_a_response_is_timed_from_its_last_byte() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    holder.stall_writes();
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    request(&mut entity, TESTER, &[0x62, 0x01]).unwrap();
+    holder.resume_writes();
+    holder.stall_writes_after(4);
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(holder.take_written().len(), 4);
+
+    advance(ms(400));
+    holder.resume_writes();
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
+    );
+    let mut rest = alive_check_request();
+    rest.extend(diagnostic(ENTITY, TESTER, &[0x62, 0x01]));
+    assert_eq!(holder.take_written(), rest.get(4..).unwrap());
+
+    advance(ms(499));
+    assert_eq!(events(&mut entity), []);
+    assert!(!holder.is_shut());
+    advance(ms(1));
+    assert_eq!(events(&mut entity), []);
+    assert!(holder.is_aborted());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
 /// REQ 3.DoIP-092: a tester that has stopped reading gives way to one activating its
 /// address once `T_TCP_Alive_Check` elapses, however full its queue. Its requests are
 /// confirmed in order: the one it never read `NoSocket`, the one with no room

@@ -104,7 +104,12 @@ pub(super) fn handle<S, const CAP: usize>(
         }
         (_, Ok(Payload::AliveCheckResponse(_))) => {
             if let Phase::Registered { alive_check, .. } = &mut open.phase
-                && matches!(alive_check, AliveCheck::Due | AliveCheck::Asked)
+                && matches!(
+                    alive_check,
+                    AliveCheck::Due { .. }
+                        | AliveCheck::Queued { .. }
+                        | AliveCheck::Asked { .. }
+                )
             {
                 *alive_check = AliveCheck::Answered;
             }
