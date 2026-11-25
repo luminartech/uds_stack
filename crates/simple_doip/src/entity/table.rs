@@ -89,13 +89,38 @@ pub(super) enum Phase {
 }
 
 /// A registered socket's part in an [`Arbitration`].
+///
+/// `T_TCP_Alive_Check` runs from the request's last byte being written. A request not
+/// written by `by`, `T_TCP_Alive_Check` after the check began, counts as unanswered, so
+/// a socket that has stopped taking data cannot hold the arbitration.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum AliveCheck {
     NotAsked,
     /// To be sent an alive check request once its transmit queue has room.
-    Due,
-    Asked,
+    Due {
+        by: Instant,
+    },
+    /// The request is queued, its last byte at control queue position `through`.
+    Queued {
+        through: u64,
+        by: Instant,
+    },
+    /// The request is written; the response is due by `deadline`.
+    Asked {
+        deadline: Instant,
+    },
     Answered,
+}
+
+impl AliveCheck {
+    /// When an unanswered check fails: None for one not begun or answered.
+    pub(super) fn expiry(self) -> Option<Instant> {
+        match self {
+            Self::Due { by } | Self::Queued { by, .. } => Some(by),
+            Self::Asked { deadline } => Some(deadline),
+            Self::NotAsked | Self::Answered => None,
+        }
+    }
 }
 
 /// The routing activation Figure 26 is deciding, held across `next_event` calls.
@@ -108,11 +133,9 @@ pub(super) struct Arbitration {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Stage {
-    /// Figure 27 or 28, until `T_TCP_Alive_Check` expires at `deadline`.
-    AliveCheck {
-        scope: AliveCheckScope,
-        deadline: Instant,
-    },
+    /// Figure 27 or 28, until each socket checked has answered or its
+    /// [`AliveCheck::expiry`] has passed.
+    AliveCheck { scope: AliveCheckScope },
     /// Accepted, waiting for a connection slot to take the reserve socket. At `deadline`
     /// the unregistered sockets whose buffers keep it out are aborted, and there is
     /// none after.

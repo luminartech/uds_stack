@@ -39,6 +39,14 @@ changed rather than what was announced at the time.
   rebuilt in the other type, and that constant is the default it named.
 - `EntityAddress::new` is a `const fn`, so an entity's addresses can be a `const`.
 
+### Fixed
+
+- An entity times `T_TCP_Alive_Check` from its alive check request being written, as
+  ISO 13400-2:2019 Table 12 defines it, where it timed it from the routing activation
+  that started the arbitration. A tester whose request waited behind a frame being
+  written keeps the full 500 ms to answer. A request the socket cannot take within
+  `T_TCP_Alive_Check` still counts as unanswered.
+
 ## [0.7.0] — 2026-10-16
 
 0.7.0 replaces the async client, the async server and the bare-metal entity with a

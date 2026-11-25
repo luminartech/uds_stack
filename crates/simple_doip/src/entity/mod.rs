@@ -863,6 +863,7 @@ impl<
     fn apply(&mut self, at: SlotRef, io: Io, now: Instant) {
         if let (Io::Wrote, SlotRef::Connection(index)) = (io, at) {
             self.stamp_written(index);
+            self.start_alive_check(index, now);
         }
         match io {
             Io::Wrote | Io::Read(_) => {
@@ -902,7 +903,7 @@ impl<
     }
 
     /// The earliest instant a socket timer, or the arbitration, needs the entity again.
-    fn next_wake(&self) -> Option<Instant> {
+    fn next_wake(&self, now: Instant) -> Option<Instant> {
         let sockets = self
             .connections
             .iter()
@@ -912,12 +913,18 @@ impl<
         let arbitration = match self.arbitration {
             Some(Arbitration {
                 stage:
-                    Stage::AliveCheck { deadline, .. }
-                    | Stage::Assign {
+                    Stage::Assign {
                         deadline: Some(deadline),
                     },
                 ..
             }) => Some(deadline),
+            Some(Arbitration {
+                stage: Stage::AliveCheck { .. },
+                ..
+            }) => (0..MCTS)
+                .filter_map(|index| self.alive_check_expiry(index))
+                .filter(|expiry| *expiry > now)
+                .min(),
             _ => None,
         };
         sockets.chain(arbitration).min()
@@ -1016,13 +1023,13 @@ impl<
             return self.respond(at, request, code, now);
         }
         let deadline = expiry(now, ALIVE_CHECK);
+        let due = AliveCheck::Due { by: deadline };
         let stage = if let Some(holder) = self.holder_of(request.sa) {
             if let Some(slot) = self.connections.get_mut(holder) {
-                slot.set_alive_check(AliveCheck::Due);
+                slot.set_alive_check(due);
             }
             Stage::AliveCheck {
                 scope: AliveCheckScope::SocketOfSa,
-                deadline,
             }
         } else if self.registered_count() < MCTS {
             if self.assign(at, request, now) {
@@ -1033,11 +1040,10 @@ impl<
             }
         } else {
             for slot in &mut self.connections {
-                slot.set_alive_check(AliveCheck::Due);
+                slot.set_alive_check(due);
             }
             Stage::AliveCheck {
                 scope: AliveCheckScope::AllRegistered,
-                deadline,
             }
         };
         self.arbitration = Some(Arbitration {
@@ -1052,16 +1058,32 @@ impl<
     /// (REQ 3.DoIP-134: registered sockets only).
     fn send_alive_checks(&mut self) {
         for slot in &mut self.connections {
-            if slot.alive_check() == Some(AliveCheck::Due)
+            if let Some(AliveCheck::Due { by }) = slot.alive_check()
                 && slot.out.control.has_room_for(ALIVE_CHECK_REQUEST)
                 && let Some(open) = slot.open.as_ref()
-            {
-                slot.out
+                && let Ok(through) = slot
+                    .out
                     .control
                     .push(&Message::alive_check_request(open.version))
-                    .ok();
-                slot.set_alive_check(AliveCheck::Asked);
+            {
+                slot.set_alive_check(AliveCheck::Queued { through, by });
             }
+        }
+    }
+
+    /// Starts `T_TCP_Alive_Check` on the socket at `index` once its request's last byte
+    /// is written, by `now`, and before the check counts as unanswered.
+    fn start_alive_check(&mut self, index: usize, now: Instant) {
+        let Some(slot) = self.connections.get_mut(index) else {
+            return;
+        };
+        if let Some(AliveCheck::Queued { through, by }) = slot.alive_check()
+            && now < by
+            && slot.out.control_written_through(through)
+        {
+            slot.set_alive_check(AliveCheck::Asked {
+                deadline: expiry(now, ALIVE_CHECK),
+            });
         }
     }
 
@@ -1077,6 +1099,19 @@ impl<
             .get(index)
             .and_then(Slot::alive_check)
             .is_some_and(|check| check != AliveCheck::Answered)
+    }
+
+    /// When the socket at `index` fails its alive check if it stays silent.
+    fn alive_check_expiry(&self, index: usize) -> Option<Instant> {
+        self.connections
+            .get(index)
+            .and_then(Slot::alive_check)
+            .and_then(AliveCheck::expiry)
+    }
+
+    fn has_failed_alive_check(&self, index: usize, now: Instant) -> bool {
+        self.alive_check_expiry(index)
+            .is_some_and(|expiry| expiry <= now)
     }
 
     /// Moves the arbitration on as far as `now` allows (Figures 26 to 28). A failed
@@ -1098,7 +1133,6 @@ impl<
             Stage::Assign { deadline } => Stage::Assign { deadline },
             Stage::AliveCheck {
                 scope: AliveCheckScope::SocketOfSa,
-                deadline,
             } => match self.holder_of(request.sa) {
                 None => assign,
                 Some(holder) if !self.is_silent(holder) => {
@@ -1110,7 +1144,7 @@ impl<
                         now,
                     );
                 }
-                Some(holder) if deadline <= now => {
+                Some(holder) if self.has_failed_alive_check(holder, now) => {
                     self.finalize(SlotRef::Connection(holder), true, now);
                     assign
                 }
@@ -1118,10 +1152,12 @@ impl<
             },
             Stage::AliveCheck {
                 scope: AliveCheckScope::AllRegistered,
-                deadline,
             } => {
                 let silent: usize =
                     (0..MCTS).filter(|index| self.is_silent(*index)).count();
+                let waiting = (0..MCTS).any(|index| {
+                    self.is_silent(index) && !self.has_failed_alive_check(index, now)
+                });
                 if self.registered_count() < MCTS {
                     assign
                 } else if silent == 0 {
@@ -1132,7 +1168,7 @@ impl<
                         Code::DeniedAllTcpSocketsRegisteredAndActive,
                         now,
                     );
-                } else if deadline <= now {
+                } else if !waiting {
                     for index in 0..MCTS {
                         if self.is_silent(index) {
                             self.finalize(SlotRef::Connection(index), true, now);
@@ -1243,10 +1279,12 @@ impl<
             (
                 SlotRef::Connection(index),
                 Some(Arbitration {
-                    stage: Stage::AliveCheck { deadline, .. },
+                    stage: Stage::AliveCheck { .. },
                     ..
                 }),
-            ) if deadline <= now && self.is_silent(index) => Some(deadline),
+            ) if self.is_silent(index) => self
+                .alive_check_expiry(index)
+                .filter(|expiry| *expiry <= now),
             _ => None,
         };
         timer.or(alive_check)
@@ -1542,7 +1580,7 @@ impl<
                 return Ok(EntityEvent::Deadline);
             }
             let alarm = [
-                self.next_wake(),
+                self.next_wake(now),
                 self.discovery.next_wake(now),
                 self.transmit_wake(now),
                 until,

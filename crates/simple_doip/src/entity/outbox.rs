@@ -39,6 +39,17 @@ pub(super) struct Outbox<const CAP: usize> {
     writing: Option<Frame>,
     /// The bytes written from both queues since the socket was opened.
     sent: u64,
+    /// The entity's own frames [`Self::push`] last moved into the data queue.
+    moved: Option<Moved>,
+}
+
+/// The control queue's bytes after position `from` through `to`, moved to the data
+/// queue's positions after `at`.
+#[derive(Clone, Copy)]
+struct Moved {
+    from: u64,
+    to: u64,
+    at: u64,
 }
 
 /// What [`Outbox::next`] gave to write: the queue it is in, how many bytes, and whether
@@ -63,6 +74,7 @@ impl<const CAP: usize> Outbox<CAP> {
             data: TxQueue::new(),
             writing: None,
             sent: 0,
+            moved: None,
         }
     }
 
@@ -84,8 +96,21 @@ impl<const CAP: usize> Outbox<CAP> {
             && self.data.has_room_for(ahead.len().saturating_add(size))
         {
             let moved = ahead.len();
+            let from = self.control.written();
+            let at = self.data.written();
+            debug_assert!(
+                self.moved.is_none_or(|last| self.data.written_through(
+                    last.at.saturating_add(last.to.saturating_sub(last.from))
+                )),
+                "a move is made only once every earlier one is written"
+            );
             self.data.push_encoded(ahead)?;
             self.control.advance(moved);
+            self.moved = Some(Moved {
+                from,
+                to: self.control.written(),
+                at,
+            });
         }
         self.data.push(message)
     }
@@ -142,12 +167,24 @@ impl<const CAP: usize> Outbox<CAP> {
             .saturating_sub(self.data.written().saturating_sub(end))
     }
 
+    /// Whether the entity's own frame [`TxQueue::push`] placed at control queue position
+    /// `through` has been written, wherever [`Self::push`] has since moved it.
+    pub(super) fn control_written_through(&self, through: u64) -> bool {
+        match self.moved {
+            Some(Moved { from, to, at }) if through > from && through <= to => self
+                .data
+                .written_through(at.saturating_add(through.saturating_sub(from))),
+            _ => self.control.written_through(through),
+        }
+    }
+
     /// Drops everything queued, and starts the count of bytes written again.
     pub(super) fn clear(&mut self) {
         self.control.clear();
         self.data.clear();
         self.writing = None;
         self.sent = 0;
+        self.moved = None;
     }
 
     /// Exchanges contents with `other`, whose data queue has another capacity.
@@ -164,6 +201,7 @@ impl<const CAP: usize> Outbox<CAP> {
         core::mem::swap(&mut self.control, &mut other.control);
         core::mem::swap(&mut self.writing, &mut other.writing);
         core::mem::swap(&mut self.sent, &mut other.sent);
+        core::mem::swap(&mut self.moved, &mut other.moved);
         Ok(())
     }
 
@@ -360,6 +398,34 @@ mod tests {
 
     /// A write that stops on a frame boundary lets the entity's frame queued meanwhile
     /// go next.
+    #[test]
+    fn an_own_frame_is_written_when_its_last_byte_is() {
+        let mut outbox = Outbox::<256>::new();
+        let through = outbox.control.push(&ack()).unwrap();
+        assert!(!outbox.control_written_through(through));
+        let (frame, next) = outbox.next();
+        let short = next.len().saturating_sub(1);
+        outbox.advance(frame, short);
+        assert!(!outbox.control_written_through(through));
+        let (frame, _) = outbox.next();
+        outbox.advance(frame, 1);
+        assert!(outbox.control_written_through(through));
+    }
+
+    #[test]
+    fn an_own_frame_moved_beside_a_response_is_written_with_it() {
+        let mut outbox = Outbox::<256>::new();
+        let through = outbox.control.push(&ack()).unwrap();
+        outbox.push(&response(8)).unwrap();
+        assert!(outbox.control.pending().is_empty());
+        assert!(!outbox.control_written_through(through));
+        let (frame, _) = outbox.next();
+        outbox.advance(frame, 1);
+        assert!(!outbox.control_written_through(through));
+        drain(&mut outbox, 256);
+        assert!(outbox.control_written_through(through));
+    }
+
     #[test]
     fn an_own_frame_goes_between_two_responses() {
         let mut outbox = Outbox::<64>::new();
